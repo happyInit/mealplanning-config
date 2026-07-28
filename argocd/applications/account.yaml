@@ -8,7 +8,7 @@ metadata:
 spec:
   project: mealplanning
   source:
-    repoURL: https://github.com/happyInit/mealplanning-config
+    repoURL: git@github.com:happyInit/mealplanning-config.git
     targetRevision: main
     path: services/account/overlays/onprem     # ← Jenkins 가 :sha 를 커밋하는 자리(6단계)
   destination:
