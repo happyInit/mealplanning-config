@@ -7,4 +7,5 @@ resources:
 #    :latest 금지 — ArgoCD 가 감지할 변경이 없다(플랜 §7.4).
 images:
   - name: 192.168.0.10/mealplanning/mp-account-service
-    newTag: "1.1.9"
+    # 🔴 실제 Harbor 태그는 :sha + :latest 뿐 (:1.1.9 릴리스 런 미실시). 현재 :latest 가 가리키는 sha 로 핀.
+    newTag: "6f51dd39ddd2d5e1ddd9de602bc634813aac82c5"
