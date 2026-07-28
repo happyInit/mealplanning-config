@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# account base — 환경 공통 매니페스트.
+# TODO(다음 조각): 정본(PSS restricted·.8 좌표·fb-secrets) 맞춰 아래를 추가한다.
+# resources:
+#   - deployment.yaml       # PSS restricted securityContext + startup/readiness/liveness probe
+#   - service.yaml          # ClusterIP · port name: http (Istio L7 판별)
+#   - httproute.yaml        # /api/auth · /api/users → account:8004
+#   - networkpolicy.yaml    # ingress: GW+backend / egress: data(.8 ipBlock P1)·DNS·istiod
+#   - externalsecret.yaml   # JWT_SECRET·PGPASSWORD (fb-secrets → app ns)
+resources: []

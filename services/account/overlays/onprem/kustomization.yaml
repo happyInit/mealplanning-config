@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: app
+resources:
+  - ../../base
+# 🔴 Jenkins 가 아래 newTag 를 :sha 로 커밋한다(6단계). 지금은 베이스라인 placeholder.
+#    :latest 금지 — ArgoCD 가 감지할 변경이 없다(플랜 §7.4).
+images:
+  - name: 192.168.0.10/mealplanning/mp-account
+    newTag: "1.1.9"

@@ -1,0 +1,7 @@
+# 🔴 비밀은 이 레포에 두지 않는다 — 전부 ESO(fb-secrets). 혹시라도 실수 방지.
+*.env
+*.key
+*.pem
+secrets.y*ml
+kubeconfig*
+admin.conf
