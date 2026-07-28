@@ -1,0 +1,20 @@
+# child app — 공개 게이트웨이(.14) + nginx /api/* 13경로를 대체하는 HTTPRoute 10개.
+# Gateway 는 인프라 소유 오브젝트지만(object_spec §5.1 역할분담) HTTPRoute 와 우선순위가
+# 리스너 전역으로 맞물려 있어 **한 단위로 검토·배포**한다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gateway
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # 없으면 Application 삭제해도 리소스가 유령으로 남음(status §4.2)
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: gateway
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  # 수동 sync — 유입 전환 전까지 사람이 판단해서 반영한다(플랜 §7.4).

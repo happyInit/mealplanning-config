@@ -1,0 +1,173 @@
+# nginx `/api/*` location 13개 → HTTPRoute (object_spec §5.3 대응표 그대로)
+#
+# 원본 = food-budget-app `frontend/nginx.conf`. 옮기며 바뀌는 것 세 가지:
+#   ① `/internal/metrics/*` 9개는 **옮기지 않는다** — Prometheus 가 클러스터 안에서 파드를 직접
+#      긁으므로(ServiceMonitor) compose 시절의 우회가 통째로 소멸한다(§5.4).
+#   ② SPA 폴백(`try_files`)은 **nginx 에 남는다** — Gateway 는 파일시스템을 모른다. 여기서는
+#      `/` → frontend Service 까지만 보내고 그 안에서 nginx 가 계속한다(§5.5).
+#   ③ 프록시 헤더(X-Forwarded-*)는 Envoy 가 붙인다 — nginx 의 proxy_set_header 는 불요.
+#
+# ⚠️ **매칭 의미 차이**: nginx 는 문자열 프리픽스, Gateway API 는 **경로 세그먼트** 단위다.
+#    `/api/recipesXYZ` 가 nginx 에서는 recipe 로 갔지만 여기서는 404 다(§5.3 — Gateway 쪽이 더 엄격).
+#    우선순위는 스펙이 정의한다(정확 매치 > 긴 prefix) — `/api/recipes/book` 이 `/api/recipes` 를 이긴다.
+---
+# 레시피북 — nginx 3 location(/book·/mine·/shared)이 한 Route 의 3 matches 로
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-recipebook-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/recipes/book }
+        - path: { type: PathPrefix, value: /api/recipes/mine }
+        - path: { type: PathPrefix, value: /api/recipes/shared }
+      backendRefs:
+        - name: recipebook
+          port: 8006
+---
+# 레시피 — 위 3개보다 짧은 prefix 라 스펙상 뒤로 밀린다(순서 무관)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-recipe-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/recipes }
+      backendRefs:
+        - name: recipe
+          port: 8001
+---
+# 챗봇 — /api/mealplan/assistant 만 chat 으로(아래 mealplan 보다 긴 prefix)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-chat-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/mealplan/assistant }
+      backendRefs:
+        - name: chat
+          port: 8003
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-mealplan-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/mealplan }
+        - path: { type: PathPrefix, value: /api/expenses }
+      backendRefs:
+        - name: mealplan
+          port: 8007
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-notify-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/notifications }
+      backendRefs:
+        - name: notify
+          port: 8008
+---
+# OCR 엔진(업로드·폴링) — /api/pantry 보다 긴 prefix 라 먼저 잡힌다.
+# 🔴 15MB 업로드 경로. nginx 의 client_max_body_size 15m 이 여기서 사라지므로 실측 검증 대상(§5.6).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-ocr-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/pantry/ocr }
+      backendRefs:
+        - name: ocr
+          port: 8010
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-pantry-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/pantry }
+      backendRefs:
+        - name: pantry
+          port: 8005
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-account-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/auth }
+        - path: { type: PathPrefix, value: /api/users }
+      backendRefs:
+        - name: account
+          port: 8004
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-price-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/prices }
+      backendRefs:
+        - name: price
+          port: 8002
+---
+# SPA — 가장 짧은 prefix 라 위 어느 것에도 안 걸린 요청만 온다.
+# ranking-serving 은 mealplan 이 내부에서 부르는 소비자라 Route 가 없다(§5.3 표).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-frontend-route
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: frontend
+          port: 80

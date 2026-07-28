@@ -1,0 +1,29 @@
+# 공개 게이트웨이 — .14 (플랜 §3.3 "LoadBalancer 는 게이트웨이 전용, 상시 2개" 중 1번)
+#
+# 🔴 Gateway 하나 = LoadBalancer Service 하나다. istiod 가 이 리소스를 보고 Envoy Deployment +
+#    Service(type: LoadBalancer)를 대신 만들고, MetalLB 가 거기에 .14 를 붙인다(object_spec §5.2).
+#    그래서 개별 서비스를 LoadBalancer 로 노출하지 않는다 — EKS 이식 시 교체 대상을 상수 2 로 묶는 규칙.
+#
+# 🔴 MetalLB 풀이 autoAssign:false 라 주소 풀 주석이 **없으면 영원히 Pending** 이다(P1 핸드오프 3-②).
+#    자동 생성되는 Service 에 주석을 전달하는 경로가 spec.infrastructure.annotations.
+#
+# TLS: 지금은 HTTP 80 만. 현행 .9 nginx 가 평문이라 **유입 전환 시 회귀 위험 0** 을 우선했다.
+#      스펙(object_spec §5.2)의 HTTPS 443 종단 + 80 리다이렉트는 라우팅 검증 후 별건으로 얹는다.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mp-gw-public
+  namespace: app
+spec:
+  gatewayClassName: istio
+  infrastructure:
+    annotations:
+      metallb.universe.tf/address-pool: gateway-pool
+      metallb.universe.tf/loadBalancerIPs: 192.168.0.14
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same          # HTTPRoute·Service 가 전부 app ns → ReferenceGrant 불요(§5.7)
