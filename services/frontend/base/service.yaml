@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend            # §2.3: Service 는 bare (향후 Gateway HTTPRoute 의 backendRef)
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80              # 통상 웹 포트로 노출 → 컨테이너 8080
+      targetPort: 8080
+      appProtocol: http

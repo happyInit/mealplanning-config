@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# frontend base — nginx 정적 서빙 + /api 리버스프록시. 비밀 없음(ExternalSecret 없음).
+resources:
+  - deployment.yaml
+  - service.yaml
