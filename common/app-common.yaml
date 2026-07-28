@@ -11,6 +11,15 @@ data:
   PGUSER: fbapp              # 비밀 아님(비번만 Secret) — account config.py 필드명과 일치
   ESHOST: "192.168.0.8"
   ESPORT: "9200"
+  # Redis(chat 세션·레이트리밋) · Kafka(mealplan 이벤트) — P1 과도기 VM(.8) 재사용. P2 에 Service DNS 로 교체.
+  REDISHOST: "192.168.0.8"
+  REDISPORT: "6379"
+  KAFKA_BOOTSTRAP: "192.168.0.8:9092"
+  # 🔴 크로스서비스 URL 계약 — Service 가 bare(§2.3)라 bare 이름으로 도달. 코드 기본값과 같지만 명시로 박아 계약을 고정.
+  #    mealplan→account/pantry/ranking, chat→account/pantry 가 이 값을 읽는다.
+  ACCOUNT_BASE_URL: "http://account:8004"
+  PANTRY_BASE_URL: "http://pantry:8005"
+  RANKING_SERVING_URL: "http://ranking-serving:8009"
   ENVIRONMENT: production
   LOG_LEVEL: INFO
   # OTEL_EXPORTER_OTLP_ENDPOINT: 관측 콜렉터 확정 후 추가(§9) — 지금은 미주입(앱은 없으면 OTEL 비활성)

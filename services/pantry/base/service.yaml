@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pantry            # §2.3: Service 는 bare — DNS 계약(호출자·nginx가 이 이름을 씀)
+  labels:
+    app: pantry
+spec:
+  type: ClusterIP
+  selector:
+    app: pantry
+  ports:
+    - name: http
+      port: 8005
+      targetPort: 8005
+      appProtocol: http

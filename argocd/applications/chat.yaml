@@ -1,0 +1,18 @@
+# child Application — root app-of-apps 가 집어 mp-chat 를 배포.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mp-chat
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # 🔴 없으면 삭제 시 유령 리소스
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: services/chat/overlays/onprem
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  # 배선만 — auto-sync OFF(§7.4). 수동 sync 로 검증.

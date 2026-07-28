@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: app
+resources:
+  - ../../base
+# EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
+images:
+  - name: 192.168.0.10/mealplanning/mp-ranking-serving
+    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-ranking-serving
+    newTag: "a2268432159f3093e6ef85478393102260939c7b"

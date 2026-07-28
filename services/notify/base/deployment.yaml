@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-notify            # §2.3: 워크로드 오브젝트는 mp- 접두사
+  labels:
+    app: notify              # §2.3: 라벨은 bare(논리 신원·Service selector·OTEL)
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notify
+  template:
+    metadata:
+      labels:
+        app: notify
+        tier: backend
+    spec:
+      automountServiceAccountToken: false    # 앱은 K8s API 안 씀 → 토큰=공격표면
+      securityContext:                       # 🔴 PSS restricted (app ns enforce)
+        runAsNonRoot: true
+        runAsUser: 10001                     # 이미지 svc 유저(Dockerfile USER 10001)
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: notify
+          image: 192.168.0.10/mealplanning/mp-notify-service:d20d3fdb3a4fe05d852bde354cca7991e11c6d59   # overlay가 :sha로 재확인(CI 커밋 지점)
+          ports:
+            - name: http                     # 🔴 Istio L7 판별 = 포트 이름
+              containerPort: 8008
+              appProtocol: http
+          envFrom:
+            - configMapRef:
+                name: app-common             # PG·ES·Redis·Kafka·크로스서비스 URL(§2.3)
+            - secretRef:
+                name: mp-notify-secrets
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: notify
+          startupProbe:
+            httpGet: { path: /health, port: 8008 }
+            periodSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet: { path: /health, port: 8008 }
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 8008 }
+            periodSeconds: 30
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec: { command: ["sleep", "5"] }
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi                  # OOM 보호(compose mem_limit 정합)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true     # compose read_only:true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: notify            # §2.3: Service 는 bare — DNS 계약(호출자·nginx가 이 이름을 씀)
+  labels:
+    app: notify
+spec:
+  type: ClusterIP
+  selector:
+    app: notify
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008
+      appProtocol: http

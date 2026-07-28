@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: recipe            # §2.3: Service 는 bare — DNS 계약(호출자·nginx가 이 이름을 씀)
+  labels:
+    app: recipe
+spec:
+  type: ClusterIP
+  selector:
+    app: recipe
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+      appProtocol: http

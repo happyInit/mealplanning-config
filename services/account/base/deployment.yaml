@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: account
+  name: mp-account            # §2.3: 워크로드 오브젝트는 mp- 접두사
   labels:
-    app: account
+    app: account              # §2.3: 라벨은 bare(논리 신원·Service selector·OTEL)
     tier: backend            # NetworkPolicy 가 ns 아닌 이 라벨로 선택(object_spec §1.3)
 spec:
   replicas: 1                # P1 베이스라인. account HPA 는 P3(Pooler 후, §9.2)
@@ -36,7 +36,7 @@ spec:
             - configMapRef:                  # PGHOST(.8)·ESHOST·OTEL 등 — app 이전 단계 생성
                 name: app-common
             - secretRef:                     # JWT_SECRET·PGPASSWORD (ExternalSecret←fb-secrets)
-                name: account-secrets
+                name: mp-account-secrets
           env:
             - name: OTEL_SERVICE_NAME
               value: account

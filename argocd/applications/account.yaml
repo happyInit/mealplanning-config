@@ -3,7 +3,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: account
+  name: mp-account
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io   # 🔴 없으면 Application 삭제해도 리소스가 유령으로 남음(status §4.2 트랩)
