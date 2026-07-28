@@ -1,0 +1,32 @@
+# 앱 서비스 지표 수집 — compose 시절 `/internal/metrics/*` 9개 location 의 대체물.
+#
+# 왜 사라졌나: `.9` 에서는 서비스 포트를 호스트에 노출하지 않으려고 nginx 가 `.11` 에게만
+# 내부 /metrics 를 프록시해 줬다(IP allowlist). K8s 에서는 Prometheus 가 클러스터 안에 있어
+# 파드를 직접 긁으므로 그 우회가 통째로 소멸한다(object_spec §5.4).
+#
+# 🔴 `.9` 해체의 선행조건이다 — `.11` 이 보던 fastapi 9종 타깃이 `.9` 와 함께 사라지는데,
+#    이게 없으면 클러스터에도 앱 지표가 없어 **양쪽 다 공백**이 된다.
+#    수집한 지표는 kube-prometheus-stack 의 remoteWrite 로 `.11` 에 밀어 넣어 알림 규칙을 살린다.
+#
+# 대상에서 빠지는 둘(실측 근거):
+#   frontend        — nginx 정적 서빙이라 /metrics 없음(포트도 80)
+#   ranking-serving — /metrics 404. `.11` 의 기존 타깃 목록에도 없었다(9종만 존재)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mp-app-services
+  namespace: app
+  labels:
+    app.kubernetes.io/part-of: mealplanning
+spec:
+  namespaceSelector:
+    matchNames: [app]
+  selector:
+    matchExpressions:
+      - { key: app, operator: Exists }
+      - { key: app, operator: NotIn, values: [frontend, ranking-serving] }
+  endpoints:
+    - port: http          # Service 의 포트 이름(전 서비스 공통) — 번호가 서비스마다 달라 이름으로 건다
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
