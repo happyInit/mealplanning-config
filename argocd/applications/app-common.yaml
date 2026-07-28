@@ -1,0 +1,17 @@
+# child app — 모든 서비스가 공유하는 app-common ConfigMap(app ns).
+# 서비스 Deployment 들이 envFrom.configMapRef: app-common 으로 참조하므로 먼저 sync 되어야 한다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-common
+  namespace: argocd
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: common
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  # 배선만 — auto-sync OFF(플랜 §7.4). 수동 sync 로 검증 후 서비스들 배포.

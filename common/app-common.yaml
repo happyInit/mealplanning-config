@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-common
+data:
+  # 🔴 P1 과도기 — VM 데이터 티어(.8)를 그대로 본다. P2 데이터 이전 때 Service DNS 로 교체
+  #    (PGHOST→pg-rw.data.svc · ESHOST→es-http.data.svc). 그 한 줄이 데이터 컷오버의 전부.
+  PGHOST: "192.168.0.8"
+  PGPORT: "5432"
+  PGDATABASE: foodbudget
+  PGUSER: fbapp              # 비밀 아님(비번만 Secret) — account config.py 필드명과 일치
+  ESHOST: "192.168.0.8"
+  ESPORT: "9200"
+  ENVIRONMENT: production
+  LOG_LEVEL: INFO
+  # OTEL_EXPORTER_OTLP_ENDPOINT: 관측 콜렉터 확정 후 추가(§9) — 지금은 미주입(앱은 없으면 OTEL 비활성)
