@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account
+  labels:
+    app: account
+    tier: backend            # NetworkPolicy 가 ns 아닌 이 라벨로 선택(object_spec §1.3)
+spec:
+  replicas: 1                # P1 베이스라인. account HPA 는 P3(Pooler 후, §9.2)
+  selector:
+    matchLabels:
+      app: account
+  template:
+    metadata:
+      labels:
+        app: account
+        tier: backend
+    spec:
+      automountServiceAccountToken: false   # 앱은 K8s API 안 씀 → 토큰은 공격표면(§10.6)
+      # imagePullSecret 은 app ns default SA 에 붙인다(§7.8) — 여기 명시 안 함. app 이전 단계 생성.
+      securityContext:                       # 🔴 PSS restricted (app ns enforce) — 없으면 파드 거부
+        runAsNonRoot: true
+        runAsUser: 10001                     # 이미지의 svc 유저(Dockerfile USER 10001)
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: account
+          image: 192.168.0.10/mealplanning/mp-account-service:1.1.9  # 태그는 overlay가 :sha로 덮음
+          ports:
+            - name: http                     # 🔴 Istio L7 판별 = 포트 이름(§4.4). 없으면 TCP 취급
+              containerPort: 8004
+              appProtocol: http
+          envFrom:
+            - configMapRef:                  # PGHOST(.8)·ESHOST·OTEL 등 — app 이전 단계 생성
+                name: app-common
+            - secretRef:                     # JWT_SECRET·PGPASSWORD (ExternalSecret←fb-secrets)
+                name: account-secrets
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: account
+          startupProbe:                      # 부팅(pool.open) 유예 — 없으면 liveness 가 부팅을 죽임
+            httpGet: { path: /health, port: 8004 }
+            periodSeconds: 5
+            failureThreshold: 6              # ≈30초 (compose start_period 20s 여유)
+          readinessProbe:                    # 실패 = EndpointSlice 에서만 제거(재시작 안 함, §3.1)
+            httpGet: { path: /health, port: 8004 }
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 8004 }
+            periodSeconds: 30
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec: { command: ["sleep", "5"] }   # 무중단 배포 — EndpointSlice 전파 대기(§13.8)
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 512Mi                  # OOM 보호(compose mem_limit 512m)
+              # 🔴 cpu limit 없음 — bcrypt 는 버스트가 본질(§13.7). CFS 스로틀 = 로그인 병목 재발
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true     # compose read_only:true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp                       # readOnlyRootFilesystem 이라 쓰기 경로 하나 필요
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

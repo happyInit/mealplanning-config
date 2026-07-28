@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: account
+  labels:
+    app: account
+spec:
+  type: ClusterIP
+  selector:
+    app: account
+  ports:
+    - name: http            # 🔴 Istio 프로토콜 판별(§4.4) — HTTPRoute 가 이 포트를 backendRef
+      port: 8004
+      targetPort: 8004
+      appProtocol: http
