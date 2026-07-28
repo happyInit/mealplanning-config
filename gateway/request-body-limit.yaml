@@ -1,0 +1,38 @@
+# 🔴 업로드 크기 제한 복원 — nginx `client_max_body_size 15m` 의 대체물 (2026-07-28 실측)
+#
+# **object_spec §5.6 의 서술은 방향이 반대였다.** "Envoy 기본 제한이 nginx 와 달라 OCR 업로드가
+# 413 으로 죽는다"가 아니라, **Envoy 에는 본문 크기 제한이 아예 없어서** 15MB 를 그대로 통과시켰다.
+# 실측(15,728,640B 파일):
+#   .9  nginx  → 413, size_upload=0          (Content-Length 보고 업로드 전에 끊음)
+#   .14 Gateway→ 422, size_upload=15,728,841 (전량 수신 후 앱까지 전달)
+# 즉 컷오버의 위험은 "OCR 이 깨진다"가 아니라 **보호 장치가 조용히 사라진다** 쪽이었다.
+#
+# Gateway API 에는 본문 크기 표준 필드가 없어 Envoy buffer 필터를 EnvoyFilter 로 붙인다.
+# ⚠️ 트레이드오프: nginx 는 업로드 전에 끊지만 buffer 필터는 **한도까지 받고 나서** 413 을 낸다
+#    (앱 보호는 동등, 대역은 소모). Gateway API 에 표준 필드가 생기면 그쪽으로 옮길 것.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: mp-gw-request-body-limit
+  namespace: app
+spec:
+  workloadSelector:
+    labels:
+      gateway.networking.k8s.io/gateway-name: mp-gw-public
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.buffer
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+            max_request_bytes: 15728640   # = 15Mi, nginx client_max_body_size 15m 과 동일

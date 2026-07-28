@@ -4,3 +4,4 @@ namespace: app
 resources:
   - gateway.yaml
   - httproutes.yaml
+  - request-body-limit.yaml
