@@ -1,0 +1,49 @@
+apiVersion: v1
+data:
+  schema.json: |
+    [
+      {
+        "database": "foodbudget",
+        "index": "recipes_pgsync",
+        "plugins": ["RecipeServable"],
+        "nodes": {
+          "table": "recipe",
+          "schema": "public",
+          "columns": [
+            "id",
+            "source",
+            "name",
+            "category",
+            "cook_method",
+            "cooking_time",
+            "level_nm",
+            "serving",
+            "kcal",
+            "carb_g",
+            "protein_g",
+            "fat_g",
+            "image_url"
+          ],
+          "children": [
+            {
+              "table": "recipe_ingredient",
+              "schema": "public",
+              "label": "ingredients",
+              "columns": [
+                "ingredient_name",
+                "item_id",
+                "is_non_ingredient"
+              ],
+              "relationship": {
+                "variant": "object",
+                "type": "one_to_many"
+              }
+            }
+          ]
+        }
+      }
+    ]
+kind: ConfigMap
+metadata:
+  name: mp-pgsync-schema
+  namespace: data

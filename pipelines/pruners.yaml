@@ -7,7 +7,7 @@ kind: CronJob
 metadata:
   name: mp-deal-pruner
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "*/10 * * * *" # 10분 간격 — compose --loop 600 의 등가
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
@@ -46,7 +46,7 @@ kind: CronJob
 metadata:
   name: mp-user-data-pruner
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "30 4 * * *" # 04:30 KST — 일1회(compose --loop 86400 등가·시각은 off-peak 임의 배정)
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
@@ -85,7 +85,7 @@ kind: CronJob
 metadata:
   name: mp-chat-insights
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "0 6 * * *" # 06:00 KST — 일1회(등가·prep-ahead 성격이라 아침 전 완료로 배정)
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
