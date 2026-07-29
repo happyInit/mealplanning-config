@@ -43,9 +43,9 @@ spec:
               resources:
                 requests:
                   cpu: 500m
-                  memory: 1.5Gi
+                  memory: 1536Mi
                 limits:
-                  memory: 1.5Gi # 플랜 §2.2 예산 3×1.5. CPU limits 는 넣지 않는다(§13.7 — 부하테스트 병목 재발 방지)
+                  memory: 1536Mi # 플랜 §2.2 예산 3×1.5. CPU limits 는 넣지 않는다(§13.7 — 부하테스트 병목 재발 방지)
       volumeClaimTemplates:
         - metadata:
             name: elasticsearch-data
@@ -70,9 +70,9 @@ spec:
               resources:
                 requests:
                   cpu: 500m
-                  memory: 1.5Gi
+                  memory: 1536Mi
                 limits:
-                  memory: 1.5Gi
+                  memory: 1536Mi
       volumeClaimTemplates:
         - metadata:
             name: elasticsearch-data
