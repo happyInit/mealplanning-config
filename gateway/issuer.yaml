@@ -1,0 +1,53 @@
+# Let's Encrypt ACME Issuer (app ns) — object_spec §5.2 "로컬 CA → Let's Encrypt, Issuer만 교체".
+#
+# 🔴 ClusterIssuer 아니라 namespaced Issuer 다 — AppProject `mealplanning` 의 clusterResourceWhitelist
+#    가 비어 있어(cluster-scoped 금지) gateway Application 이 ClusterIssuer 를 못 배포한다. namespaced
+#    Issuer 는 namespaceResourceWhitelist(*) 안이라 허용 + Cert·CF토큰·Gateway 가 전부 app ns 한 곳에 모인다.
+#
+# 🔴 챌린지 = DNS-01(Cloudflare) — HTTP-01 은 80 공개 인바운드가 필요한데, 우리는 홈 라우터 뒤(NAT)라
+#    발급 시점엔 인바운드가 없다(포트포워드는 서빙용). DNS-01 은 cert-manager 가 CF API 로 _acme-challenge
+#    TXT 를 심어 검증하므로 **인바운드 0** 으로 발급된다. CF zone(mealbong.cloud)이라 자연스럽다.
+#
+# staging/prod 2개 — prod 는 레이트리밋(주 50건·중복 5건)이 있어 staging 으로 전체 루프를 먼저 검증하고
+# Certificate 의 issuerRef 만 prod 로 바꾼다. 두 Issuer 는 ACME 계정키(privateKeySecretRef)가 별개다.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mp-letsencrypt-staging
+  namespace: app
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: admin@mealbong.cloud          # 만료 알림 수신용(배달 검증 안 함) — 팀 주소로 바꿔도 됨
+    privateKeySecretRef:
+      name: mp-letsencrypt-staging-key   # ACME 계정 개인키(cert-manager 가 app ns 에 생성)
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: mp-cloudflare-api-token   # ESO 가 채우는 Secret(externalsecret-cloudflare.yaml)
+              key: api-token
+        selector:
+          dnsZones:
+            - mealbong.cloud
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mp-letsencrypt-prod
+  namespace: app
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@mealbong.cloud
+    privateKeySecretRef:
+      name: mp-letsencrypt-prod-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: mp-cloudflare-api-token
+              key: api-token
+        selector:
+          dnsZones:
+            - mealbong.cloud

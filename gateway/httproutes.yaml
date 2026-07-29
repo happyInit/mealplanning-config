@@ -20,6 +20,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/recipes/book }
@@ -38,6 +39,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/recipes }
@@ -54,6 +56,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/mealplan/assistant }
@@ -69,6 +72,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/mealplan }
@@ -85,6 +89,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/notifications }
@@ -102,6 +107,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/pantry/ocr }
@@ -117,6 +123,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/pantry }
@@ -132,6 +139,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/auth }
@@ -148,6 +156,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/prices }
@@ -165,9 +174,29 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
         - path: { type: PathPrefix, value: / }
       backendRefs:
         - name: frontend
           port: 80
+---
+# 🔴 HTTP(80) → HTTPS(301) 전량 리다이렉트. 80 리스너에는 이 라우트만 붙는다(sectionName: http).
+#    앱 라우트 10개는 전부 https(443) 리스너로 옮겼으므로, 평문으로 온 요청은 여기서 튕겨 올라간다.
+#    DNS-01 발급이라 LE 는 80 을 쓰지 않는다 → 80 을 통째로 리다이렉트해도 챌린지와 충돌 없음(§5.2).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-https-redirect
+  namespace: app
+spec:
+  parentRefs:
+    - name: mp-gw-public
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

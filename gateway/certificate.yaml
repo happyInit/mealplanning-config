@@ -1,0 +1,23 @@
+# app.mealbong.cloud 의 TLS 인증서 — cert-manager 가 Issuer 로 발급해 Secret 에 저장한다.
+#
+# 발급 흐름: 이 리소스 → cert-manager 가 CertificateRequest→Order→Challenge(DNS-01) 생성 →
+#   CF API 로 _acme-challenge.app.mealbong.cloud TXT 심음 → LE 검증 → 서명된 체인을
+#   Secret `mp-gw-public-tls`(type kubernetes.io/tls) 에 기록. Gateway 가 이 Secret 를 certificateRefs 로 문다.
+#
+# 🔴 issuerRef 는 지금 staging — 검증 완료(Secret 채워짐·Gateway 가 서빙) 후 prod 로 바꾼다.
+#    staging cert 는 브라우저가 "신뢰 안 됨" 으로 뜨지만 체인·SNI·종단 배선은 prod 와 동일하게 검증된다.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mp-gw-public-cert
+  namespace: app
+spec:
+  secretName: mp-gw-public-tls          # Gateway https 리스너의 certificateRefs 가 가리키는 이름(같은 app ns)
+  issuerRef:
+    kind: Issuer
+    name: mp-letsencrypt-staging        # ← 검증 후 mp-letsencrypt-prod 로 교체
+  commonName: app.mealbong.cloud
+  dnsNames:
+    - app.mealbong.cloud
+  privateKey:
+    rotationPolicy: Always              # 갱신 때마다 키 재생성(권장)
