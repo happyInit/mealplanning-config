@@ -17,8 +17,14 @@ services/<svc>/
   overlays/
     onprem/              # 온프렘 — 이미지 :sha 핀(Jenkins가 커밋), openebs-lvm SC
     eks/                 # EKS 이식 오버레이 (플랜 §8) — ECR·gp3 등 다른 것만
+
+platform/                # 🔵 인프라 담당 소관 (2026-07-29 신설) — 앱 트랙과 뿌리가 다르다
+  argocd/                #    플랫폼 child Application. `platform-root` 가 이 디렉토리를 집는다
 ```
 
+- **뿌리가 둘이다** — `mealplanning-root`(앱, `argocd/applications/`) · `platform-root`(플랫폼,
+  `platform/argocd/`). 서로 남의 디렉토리를 보지 않으므로 한쪽 실수가 다른 트랙으로 안 번진다.
+  프로젝트도 분리(`mealplanning` / `platform`)라 배포 가능한 ns 도 다르다.
 - **AppProject·root Application·repo 자격증명은 여기 없다** — `food-budget-app`의 `k8s_argocd`
   Ansible 롤이 부트스트랩한다(master 전용). 여기는 root가 읽는 child app + 매니페스트만.
 

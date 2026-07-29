@@ -1,0 +1,70 @@
+# tempo — 플랫폼 child Application (정본 = 이 파일).
+#
+# 🔴 2026-07-29 이사분: 종전 정본은 Ansible `roles/k8s_platform_apps` 였다. platform-root
+#    (app-of-apps)가 이 디렉토리를 집으면서 git 이 정본이 됐다 — Ansible 쪽 Application
+#    태스크는 같은 날 은퇴했다. **양쪽에 두지 말 것**(정본 이원화).
+# 값 변경 = 이 파일 수정 → push → root 가 자동 반영(child 는 각자 automated sync).
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: tempo
+    targetRevision: "1.24.4"
+    helm:
+      valuesObject:
+        tempo:
+          reportingEnabled: false
+          retention: 168h # → compactor.compaction.block_retention
+          extraArgs:
+            "config.expand-env": true # 렌더 결과 = -config.expand-env=true
+          extraEnvFrom:
+            - secretRef:
+                name: lgtm-minio-creds
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi # 플랜 §2.2 예산 + `.11` Tempo OOM 이력 → 명시
+          # receivers 는 기본값 유지(otlp 4317/4318 포함) — jaeger 제거 금지(상단 함정 메모)
+          storage:
+            trace:
+              backend: s3
+              s3:
+                bucket: tempo # P0 k8s_minio 가 만들어 둔 버킷
+                endpoint: minio.observability.svc.cluster.local:9000
+                access_key: ${MINIO_ACCESS_KEY_ID}
+                secret_key: ${MINIO_SECRET_ACCESS_KEY}
+                insecure: true
+                forcepathstyle: true
+              wal:
+                path: /var/tempo/wal
+        nodeSelector:
+          topology.kubernetes.io/zone: host-b
+        persistence:
+          enabled: true # WAL·블록 조립용 — 완성 블록은 MinIO 로
+          size: 10Gi
+          storageClassName: openebs-lvm
+        serviceMonitor:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
