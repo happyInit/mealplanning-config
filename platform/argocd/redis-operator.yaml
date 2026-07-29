@@ -1,7 +1,15 @@
-# OT-Container-Kit redis-operator — 런북 §1.1(2026-07-29 정정): 차트·이미지 0.25.0 정합.
-# 차트 0.25.0 기본 이미지 = quay.io/opstree/redis-operator:v0.25.0 (실렌더링 확인) →
-# image.tag 오버라이드 불필요. v0.26.0 상향은 Redis 실물 검증 담당자 판단(Q3).
-# 🔴 Redis CR 은 여기 없다 — A-1 검증 분기 대기(platform/redis/README.md).
+# OT-Container-Kit redis-operator.
+#
+# 🔴 **차트 0.25.0 + 이미지 v0.26.0 = 의도된 비정합**(2026-07-29, 검증용 ⓑ).
+#   차트는 0.26.0 이 **존재하지 않는다**(공개 최신 = 0.25.0, `helm search --versions` 실측).
+#   이미지 v0.26.0 은 quay 에 있다. 4단계 실측에서 #1711(시나리오 2)·#1779(시나리오 3)가 모두
+#   재현됐고 #1711 은 v0.26.0 에서 수정됐다는 주장이 있어, **이미지만 올려 재측정**한다.
+#   → 결과적으로 **0.25.0 CRD 위에서 v0.26.0 오퍼레이터가 도는 조합**이다
+#     (handoff §3 이 경고한 형태 — 그 위험을 알고 재현 여부를 얻기 위해 감수한다).
+#   🔴 **CRD 는 차트가 관리한다** — targetRevision 을 올리지 않았으므로 CRD 는 0.25.0 그대로다.
+#   재측정 결과에 따라 ① 유지(차트가 따라올 때까지) ② 0.25.0 복귀 ③ 다른 분기로 간다.
+#   근거·판정 = `food-budget-app/docs/mp_k8s_redis_ha_handoff.md §4.1~4.2`.
+# 🔴 Redis CR 은 여기 없다 — `platform/argocd/redis.yaml` 소관.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -15,7 +23,12 @@ spec:
   source:
     repoURL: https://ot-container-kit.github.io/helm-charts/
     chart: redis-operator
-    targetRevision: "0.25.0"
+    targetRevision: "0.25.0" # 🔴 올리지 않는다 — 0.26.0 차트는 없다(상단 주석)
+    helm:
+      parameters:
+        # 오퍼레이터·initContainer 이미지 둘 다 이 값을 탄다(helm template 실렌더링 확인)
+        - name: redisOperator.imageTag
+          value: v0.26.0
 
   destination:
     server: https://kubernetes.default.svc
