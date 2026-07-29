@@ -26,7 +26,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: deal-pruner
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:5b4e66c723bbee21bf41066d4736b72fa53aa994
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
               command: ["python", "pipelines/stream/prune_deals.py"]
               envFrom:
                 - configMapRef:
@@ -65,7 +65,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: user-data-pruner
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:5b4e66c723bbee21bf41066d4736b72fa53aa994
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
               command: ["python", "pipelines/stream/prune_user_data.py"]
               envFrom:
                 - configMapRef:
@@ -104,7 +104,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: chat-insights
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:5b4e66c723bbee21bf41066d4736b72fa53aa994
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
               command: ["python", "ml/chat-insights/run.py"]
               envFrom:
                 - configMapRef:
