@@ -1,0 +1,36 @@
+# CNPG Pooler (PgBouncer) — P2 는 **배포만·무트래픽** (런북 Q8).
+# 앱 전환·반복부하 검증·psycopg3 prepare_threshold 함정 대응(object_spec §4.5.3)은 전부 P3.
+# 🔴 PGSync 는 이걸 못 쓴다 — LISTEN/NOTIFY 가 세션 기능이라 transaction 풀링에서 죽는다
+#    → PGSync 는 pg-rw 직접(object_spec §4.5.3). HPA(P3)의 전제가 이 Pooler 다(status §3).
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: pg-pooler # Service 이름도 pg-pooler — P3 에서 앱 PGHOST 가 이걸 가리키게 된다
+  namespace: data
+spec:
+  cluster:
+    name: pg
+  instances: 2 # status §2.1 — replica 2 + PDB
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+  template:
+    metadata:
+      labels:
+        app: pg-pooler
+    spec:
+      priorityClassName: data-critical
+      containers: [] # CNPG 가 pgbouncer 컨테이너를 채운다 — 템플릿은 메타·우선순위만
+---
+# 노드 드레인·재부팅 때 두 인스턴스가 동시에 내려가지 않게 (status §2.1 "replica 2 + PDB")
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mp-pg-pooler-pdb
+  namespace: data
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      cnpg.io/poolerName: pg-pooler

@@ -1,0 +1,39 @@
+# KafkaNodePool — Strimzi 1.1.0(CRD v1)에서 replicas·storage 의 유일한 자리 (§9-19).
+# KRaft combined(controller+broker) 3노드 = status §2.1. 배치 = B에 2 · A에 1 (zone spread).
+# 🔴 storage 는 persistent-claim 명시 — KAFKA_LOG_DIRS 미배선으로 볼륨이 비어 있다가
+#    recreate 때 토픽이 전멸한 사고(2026-07-21)의 재발 방지. PV 실사용은 §2-C 검증 항목.
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: combined
+  namespace: data
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  replicas: 3
+  roles:
+    - controller
+    - broker
+  storage:
+    type: persistent-claim
+    size: 20Gi
+    class: openebs-lvm
+    deleteClaim: false # 🔴 CR 삭제가 데이터 삭제로 번지지 않게
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      memory: 1Gi # 플랜 §2.2 예산 3×1. CPU limits 금지(§13.7)
+  template:
+    pod:
+      priorityClassName: data-critical
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              strimzi.io/cluster: kafka
+              strimzi.io/pool-name: combined

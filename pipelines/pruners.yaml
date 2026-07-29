@@ -1,0 +1,129 @@
+# 상주 루프 3 → CronJob 전환 (런북 Q12). --loop 미지정 = 1회 실행(스크립트 실측 — CronJob 전환의 전제).
+# 🔴 상주가 크론 정지로 안 죽던 함정(§9-14)의 해소이기도 하다 — K8s 에선 전부 CronJob 하나의 모델.
+---
+# 만료 딜 정리(Redis). 🔴 REDIS_URL placeholder 해소(Q3) 전 기동 금지 · Forbid 필수(Q12)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-deal-pruner
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "*/10 * * * *" # 10분 간격 — compose --loop 600 의 등가
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: deal-pruner
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: deal-pruner
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "pipelines/stream/prune_deals.py"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+---
+# activity/chat 원문 보존정리(180d)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-user-data-pruner
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "30 4 * * *" # 04:30 KST — 일1회(compose --loop 86400 등가·시각은 off-peak 임의 배정)
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: user-data-pruner
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: user-data-pruner
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "pipelines/stream/prune_user_data.py"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+---
+# 대화분석 배치(리포트·선호·의도) — 데이터 없으면 graceful skip. 리포트는 PVC(데이터 담당 열람용)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-chat-insights
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "0 6 * * *" # 06:00 KST — 일1회(등가·prep-ahead 성격이라 아침 전 완료로 배정)
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: chat-insights
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: chat-insights
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "ml/chat-insights/run.py"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              env:
+                - name: CHAT_REPORTS_DIR
+                  value: /app/reports/chat
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+              volumeMounts:
+                - name: reports
+                  mountPath: /app/reports/chat
+          volumes:
+            - name: reports
+              persistentVolumeClaim:
+                claimName: mp-chat-reports

@@ -1,0 +1,27 @@
+# CNPG Pooler (PgBouncer) — P2 는 배포만·무트래픽. 앱 전환·부하검증·prepare_threshold = P3 (Q8).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pooler
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: platform/pooler
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  # 🔴 automated 없음 = manual sync (런북 Q8) — P2 기간 데이터 CR 은 사람이 sync 를 누른다.
+  #    selfHeal 이 있으면 전환창의 promote(수동 CR 조작·T-1 장전 커밋)가 몇 초 만에 리버트된다(§9-3).
+  #    automated 승격은 P3.
+  syncPolicy:
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

@@ -1,0 +1,15 @@
+# 파이프라인 (pipeline ns) — 컨슈머 4 + CronJob 11 + PVC (런북 Q12 · §1 실측 인벤토리).
+# 소유 = 인프라 / child = platform-root 가 집고 project=mealplanning (Q8).
+# 🔴 dark-deploy 가 기본 상태다: Deployment replicas 0 · CronJob suspend true —
+#    기동(replicas up · unsuspend)은 전환창 §4-9 의 사람 손 순서.
+# jobs/ 는 리소스에 안 넣는다 — 재색인 Job 은 필요 시점(§2-C-3·§4-5.5)에 kubectl 로 1회성 실행.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pipeline
+resources:
+  - configmap.yaml
+  - externalsecret.yaml
+  - consumers.yaml
+  - pollers.yaml
+  - pruners.yaml
+  - pvc.yaml

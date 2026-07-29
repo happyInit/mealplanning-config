@@ -1,0 +1,72 @@
+# PG — CNPG Cluster. 초기 상태 = VM(.8) 스트리밍 replica (런북 Q4·Q7 · 플랜 §10).
+#
+# 🔴 이 파일의 목숨줄 3개:
+#   1. imageName 명시 핀 — 차트/오퍼레이터 기본값이 PG 18.4 라 안 박으면 18 이 서고,
+#      VM(16.14 실측)과의 물리 복제가 애초에 성립하지 않는다(§1.1).
+#   2. replica.enabled — true 인 동안 이 클러스터는 VM 을 따라가는 replica 다.
+#      🔫 promote = T-1 에 이 값을 false 로 바꾸는 커밋을 머지(장전)해 두고,
+#      전환창 §4-4 에서 ArgoCD manual sync 1클릭. `kubectl cnpg promote` 는 오용(§9-13).
+#   3. promote 직후 REINDEX DATABASE foodbudget 필수 — VM 은 musl 빌드인데
+#      datcollate=en_US.utf8(스텁) → glibc 로 오면 텍스트 인덱스가 조용히 오작동(§9-1).
+#      dev·tfstate DB 는 REINDEX 대신 roll-forward 확정 후 DROP(§4.1-⑤) — 그전 접속 금지.
+#
+# 전제(§2-A-4 완료분 + 확인 필요):
+#   · VM pg_hba: host replication streaming_replica ×노드IP — .17/.18/.19 적용됨.
+#     🔴 .20(worker-a1) 줄은 §2-C-0 항목 — sync 전 실적용 여부 확인(파드→VM 은 노드IP SNAT).
+#   · VM wal_keep_size=1GB (슬롯 안 씀 — 재-basebackup 이 싼 실패 모드, §9-6)
+#   · fb-secrets 에 data-secrets 적재(README.md) → ESO 가 mp-pg-replica-source 를 만든다.
+#
+# 파라미터: CNPG 기본값이 이미 정답이라 postgresql.parameters 를 비워 둔다 —
+#   wal_level=logical(CNPG 고정 관리 — PGSync 슬롯 전제 ✓) · max_connections=100(VM 동일).
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg # 🔴 이름이 곧 서비스다: pg-rw/pg-ro/pg-r (Q8 "앱 전환은 pg-rw 직접"의 전제)
+  namespace: data
+spec:
+  instances: 2 # primary + standby. 🔴 2 인스턴스 동기복제 금지(standby 사망 = 쓰기 정지, status §3) — CNPG 기본 비동기 유지
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.14 # VM 16.14-alpine 실측과 동일 마이너. 상위 마이너로 올릴 땐 replica ≥ primary 규칙 확인
+  priorityClassName: data-critical # §9-10 실이름 — 마지막까지 살아남는 계층
+
+  storage:
+    size: 20Gi
+    storageClass: openebs-lvm
+  walStorage:
+    size: 10Gi
+    storageClass: openebs-lvm
+
+  # 배치 원칙(플랜 §5.2): primary=A · standby=B. CNPG 는 "어느 쪽이 primary" 를 선언으로 못 박는
+  # 기능이 없어 zone 강제 분산까지만 선언하고, promote 후 primary 가 B 에 있으면 switchover 로 A 로 옮긴다.
+  affinity:
+    topologyKey: topology.kubernetes.io/zone
+    podAntiAffinityType: required
+
+  monitoring:
+    enablePodMonitor: true # Q9 — cnpg_* 지표. ⚠️ .11 도달은 브리지 keep 확장 선행(§9-19)
+
+  bootstrap:
+    pg_basebackup:
+      source: vm-pg
+
+  replica:
+    enabled: true # 🔫 promote 장전 지점 (T-1 커밋이 false 로 바꾼다 — 파일 상단 주석)
+    source: vm-pg
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: mp-pg-backup # → objectstore.yaml. 리허설 §7 의 S3 왕복(게이트 ①)이 이 경로를 탄다
+
+  externalClusters:
+    - name: vm-pg
+      connectionParameters:
+        host: 192.168.0.8
+        port: "5432"
+        user: streaming_replica
+        dbname: postgres
+        sslmode: prefer # VM PG 는 SSL 미설정 — prefer 가 평문 폴백(파드→VM 구간은 현행 compose 와 동일 평문, status §5 과도기 명시)
+      password:
+        name: mp-pg-replica-source
+        key: password

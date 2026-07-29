@@ -1,0 +1,26 @@
+# barman-cloud 플러그인의 S3 좌표 — ObjectStore CR (런북 §1.1 · Q4).
+# 🔴 in-tree `spec.backup.barmanObjectStore` 는 CNPG 1.31.0 에서 제거 — 처음부터 이 방식이다.
+# 리허설 §7 이 이 경로로 백업→삭제→복원 왕복을 실증한다(= P2 게이트 ①). 필드 스키마도 그때 실검증.
+# 버킷 = mp-backup-ap2 (ap-northeast-2, 2026-07-28 생성 — 버전관리 OFF 는 권한 밖 잔여 이슈).
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: mp-pg-backup
+  namespace: data
+spec:
+  retentionPolicy: "30d"
+  configuration:
+    destinationPath: s3://mp-backup-ap2/pg
+    endpointURL: https://s3.ap-northeast-2.amazonaws.com
+    s3Credentials:
+      accessKeyId:
+        name: mp-pg-backup-s3
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: mp-pg-backup-s3
+        key: SECRET_ACCESS_KEY
+    wal:
+      compression: gzip
+    data:
+      compression: gzip

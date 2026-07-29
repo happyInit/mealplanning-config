@@ -20,6 +20,13 @@ services/<svc>/
 
 platform/                # 🔵 인프라 담당 소관 (2026-07-29 신설) — 앱 트랙과 뿌리가 다르다
   argocd/                #    플랫폼 child Application. `platform-root` 가 이 디렉토리를 집는다
+                         #    오퍼레이터 5(automated) + 데이터 CR 5·pipelines(🔴 manual sync — 런북 Q8)
+  pg/ pooler/ es/        #    데이터 CR 본문 (P2 — 정본 런북 = food-budget-app/docs/mp_k8s_p2_data_runbook.md)
+  kafka/ pgsync/
+  redis/                 #    🔴 의도적으로 비어 있음 — Q3 실물 검증 분기 대기 (README 참조)
+  policies/              #    🔴 NetworkPolicy 연기 메모 — default-deny 베이스라인과 함께 별건
+
+pipelines/               # 🔵 인프라 소관·project=mealplanning — 컨슈머 4 + CronJob 11 (dark-deploy)
 ```
 
 - **뿌리가 둘이다** — `mealplanning-root`(앱, `argocd/applications/`) · `platform-root`(플랫폼,

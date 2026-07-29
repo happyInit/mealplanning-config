@@ -1,0 +1,162 @@
+# Kafka 컨슈머 4 — compose 상주 컨슈머의 이전 (런북 Q12 · docker-compose.yml 실측).
+# deal-pruner·user-data-pruner·chat-insights 는 여기 없다 — CronJob 전환(pruners.yaml, Q12).
+---
+# retail.crawl.raw → PG(가격이력·단가뷰)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-retail-refiner
+  labels:
+    app: retail-refiner
+spec:
+  replicas: 0 # 🔴 dark — 기동은 전환창 §4-9 (그전엔 .8 컨슈머가 정본)
+  selector:
+    matchLabels:
+      app: retail-refiner
+  template:
+    metadata:
+      labels:
+        app: retail-refiner
+    spec:
+      priorityClassName: pipeline-low
+      containers:
+        - name: retail-refiner
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+          command: ["python", "pipelines/stream/consume_retail.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
+          envFrom:
+            - configMapRef:
+                name: mp-pipeline-env
+            - secretRef:
+                name: mp-pipeline-secrets
+          env:
+            - name: METRICS_PORT
+              value: "9401"
+          ports:
+            - name: metrics
+              containerPort: 9401
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+# retail.deal.raw → PG(deal_type) + Redis 핫딜. 🔴 REDIS_URL placeholder 해소(Q3) 전 기동 금지
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-deal-notifier
+  labels:
+    app: deal-notifier
+spec:
+  replicas: 0 # 🔴 dark — 기동은 전환창 §4-9 (그전엔 .8 컨슈머가 정본)
+  selector:
+    matchLabels:
+      app: deal-notifier
+  template:
+    metadata:
+      labels:
+        app: deal-notifier
+    spec:
+      priorityClassName: pipeline-low
+      containers:
+        - name: deal-notifier
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+          command: ["python", "pipelines/stream/consume_deal.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
+          envFrom:
+            - configMapRef:
+                name: mp-pipeline-env
+            - secretRef:
+                name: mp-pipeline-secrets
+          env:
+            - name: METRICS_PORT
+              value: "9402"
+          ports:
+            - name: metrics
+              containerPort: 9402
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+# recipe.crawl.raw → PG(recipe/step/ingredient)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-recipe-refiner
+  labels:
+    app: recipe-refiner
+spec:
+  replicas: 0 # 🔴 dark — 기동은 전환창 §4-9 (그전엔 .8 컨슈머가 정본)
+  selector:
+    matchLabels:
+      app: recipe-refiner
+  template:
+    metadata:
+      labels:
+        app: recipe-refiner
+    spec:
+      priorityClassName: pipeline-low
+      containers:
+        - name: recipe-refiner
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+          command: ["python", "pipelines/stream/consume_recipe.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
+          envFrom:
+            - configMapRef:
+                name: mp-pipeline-env
+            - secretRef:
+                name: mp-pipeline-secrets
+          env:
+            - name: METRICS_PORT
+              value: "9403"
+          ports:
+            - name: metrics
+              containerPort: 9403
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+# events.user.activity → PG(activity.user_event) 클릭스트림
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-user-event-sink
+  labels:
+    app: user-event-sink
+spec:
+  replicas: 0 # 🔴 dark — 기동은 전환창 §4-9 (그전엔 .8 컨슈머가 정본)
+  selector:
+    matchLabels:
+      app: user-event-sink
+  template:
+    metadata:
+      labels:
+        app: user-event-sink
+    spec:
+      priorityClassName: pipeline-low
+      containers:
+        - name: user-event-sink
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+          command: ["python", "pipelines/stream/consume_user_event.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
+          envFrom:
+            - configMapRef:
+                name: mp-pipeline-env
+            - secretRef:
+                name: mp-pipeline-secrets
+          env:
+            - name: METRICS_PORT
+              value: "9405"
+          ports:
+            - name: metrics
+              containerPort: 9405
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi

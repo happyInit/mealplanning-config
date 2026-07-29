@@ -1,0 +1,47 @@
+# redis-pgsync — PGSync 전용 브로커. 🔴 앱 Redis 와 통합 금지 (2026-07-22 AOF 사고 격리 교훈:
+# 호스트 급사 → AOF 손상 → PGSync 16시간 크래시루프·무알람. 해소 = 영속성 제거 + 격리, PR #275).
+# 비영속이 설계다 — 날아가면 PGSync 가 재동기화하면 된다.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-redis-pgsync
+  namespace: data
+  labels:
+    app: redis-pgsync
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-pgsync
+  template:
+    metadata:
+      labels:
+        app: redis-pgsync
+    spec:
+      priorityClassName: app-normal # PGSync 계열
+      containers:
+        - name: redis
+          image: docker.io/library/redis:7-alpine
+          args: ["redis-server", "--save", "", "--appendonly", "no"] # 🔴 영속성 없음 — 상단 주석
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-pgsync # bare — PGSync env REDIS_HOST 가 이 이름을 그대로 쓴다 (.8 계약 동일)
+  namespace: data
+spec:
+  selector:
+    app: redis-pgsync
+  ports:
+    - name: tcp-redis
+      port: 6379
+      targetPort: 6379

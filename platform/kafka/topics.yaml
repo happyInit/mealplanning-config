@@ -1,0 +1,59 @@
+# KafkaTopic 4 — 파티션 현행 유지(3/3/3/2) · RF=3 · retention 7d (런북 Q6 · §1 실측 인벤토리).
+#
+# 🔴 클러스터 CR 과 함께 §2-C 에서 선생성한다 — 빈 토픽은 무해하고, "토픽은 프로듀서보다 먼저"
+#    (2026-07-20 클릭스트림 1파티션 사고의 교훈). 전환창은 describe 확인만 한다(§4-0).
+# 🔴 mealplan 프로듀서는 best-effort(except: return — §9-12): 토픽이 없으면 요청은 성공하고
+#    이벤트만 조용히 증발한다. 스모크로 못 잡으므로 선생성이 유일한 방어다.
+# 파티션 수는 컨슈머 그룹 병렬도 상한 — 현행 단일 컨슈머라 여유가 크지만 KEDA(P3) 대비 유지.
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: recipe.crawl.raw
+  namespace: data
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 604800000 # 7d
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: retail.crawl.raw
+  namespace: data
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 604800000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: events.user.activity
+  namespace: data
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 604800000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: retail.deal.raw
+  namespace: data
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 2
+  replicas: 3
+  config:
+    retention.ms: 604800000

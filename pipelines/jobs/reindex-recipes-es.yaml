@@ -1,0 +1,34 @@
+# ES 재색인 Job — kustomize 밖(1회성). 용처 = 런북 §2-C-3(사전 재색인: 실증·예열·리허설) ·
+# §4-5.5(본번 서빙분 재실행 — REINDEX 완료 후) · §7(리허설).
+# 🔴 Job 은 불변 오브젝트 — 재실행 = delete 후 apply:
+#   kubectl -n pipeline delete job mp-reindex-recipes-es --ignore-not-found
+#   kubectl -n pipeline apply -f pipelines/jobs/reindex-recipes-es.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mp-reindex-recipes-es
+  namespace: pipeline
+spec:
+  backoffLimit: 0 # 실패를 숨기지 않는다 — §5-② 정합 검증이 뒤따르는 스텝
+  template:
+    metadata:
+      labels:
+        app: reindex-recipes-es
+    spec:
+      restartPolicy: Never
+      priorityClassName: pipeline-low
+      containers:
+        - name: reindex
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+          command: ["python", "pipelines/ingest/index_recipes_es.py"]
+          envFrom:
+            - configMapRef:
+                name: mp-pipeline-env
+            - secretRef:
+                name: mp-pipeline-secrets
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi

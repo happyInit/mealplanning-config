@@ -1,0 +1,84 @@
+# Elasticsearch (ECK) — 8.19.19 고정 (런북 §1.1 · Q5).
+#
+# 🔴 sync 전제 = nori 커스텀 이미지(준비 ③): Jenkins CATALOG `elasticsearch-nori` 릴리스 런
+#    (RELEASE_VERSION=8.19.19) → 아래 image 의 PIN-ME 를 :sha 로 교체. §1.1 과 버전 한 글자까지 일치.
+# 🔴 spec.version 을 느슨하게 두지 말 것 — ECK 3.4 는 Stack 9 도 지원해서 9.x 로 올라가면
+#    클라이언트 핀 `elasticsearch[async]>=8.15,<9`(chat·recipe·ingest) 가 즉사한다.
+#
+# 보안 (플랜 §5.2 — 2026-07-29 재확인·종결, 재논의 금지):
+#   · 인증 = 켬 (ECK 예약설정이라 끌 수 없음) — 앱은 basic_auth(코드 반영 완료·env 하위호환)
+#   · HTTP TLS = 끔 — 경로별 TLS 는 API 에 없다(서버 전역 스위치). 암호화는 WireGuard.
+#   · transport TLS(ES 노드 간)는 ECK 가 항상 켠다 — 우리가 못 끄고, 끌 필요도 없다.
+#   · 접속 계정: ECK 가 만드는 Secret `es-es-elastic-user` (user=elastic).
+#
+# vm.max_map_count=262144 는 노드 sysctl 로 선반영돼 있다(k8s_node 롤, 4노드 실측 §2-A-4-1)
+# → 특권 initContainer 불필요·불가(data ns PSS baseline 이 거부, §9-9). 여기엔 아무것도 안 넣는 게 맞다.
+---
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: es # Service = es-es-http.data.svc:9200 (ECK 규칙 <name>-es-http)
+  namespace: data
+spec:
+  version: 8.19.19
+  image: 192.168.0.10/mealplanning/mp-elasticsearch-nori:PIN-ME-8.19.19-sha # 🔴 ③ 빌드 후 :sha 로 교체 (Q5 — ECK CR 의 image 핀은 :sha)
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true # 플랜 §5.2 — 위 주석. 클라이언트는 http:// + basic auth 그대로
+  nodeSets:
+    # 배치 원칙(플랜 §5.2): B에 2 · A에 1 — zone awareness 로 primary/replica 샤드가 같은 물리호스트에 안 몰리게
+    - name: b
+      count: 2
+      config:
+        node.attr.zone: host-b
+        cluster.routing.allocation.awareness.attributes: zone
+      podTemplate:
+        spec:
+          priorityClassName: data-critical
+          nodeSelector:
+            topology.kubernetes.io/zone: host-b
+          containers:
+            - name: elasticsearch
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1.5Gi
+                limits:
+                  memory: 1.5Gi # 플랜 §2.2 예산 3×1.5. CPU limits 는 넣지 않는다(§13.7 — 부하테스트 병목 재발 방지)
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: openebs-lvm
+            resources:
+              requests:
+                storage: 10Gi
+    - name: a
+      count: 1
+      config:
+        node.attr.zone: host-a
+        cluster.routing.allocation.awareness.attributes: zone
+      podTemplate:
+        spec:
+          priorityClassName: data-critical
+          nodeSelector:
+            topology.kubernetes.io/zone: host-a
+          containers:
+            - name: elasticsearch
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1.5Gi
+                limits:
+                  memory: 1.5Gi
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: openebs-lvm
+            resources:
+              requests:
+                storage: 10Gi

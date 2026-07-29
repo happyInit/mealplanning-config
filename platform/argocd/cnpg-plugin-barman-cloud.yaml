@@ -1,0 +1,35 @@
+# CNPG barman-cloud 플러그인(백업) — 런북 §1.1: 차트 0.7.0 = v0.13.0.
+# 🔴 in-tree `spec.backup.barmanObjectStore` 는 CNPG 1.31.0 에서 제거 → 처음부터 플러그인 +
+#    ObjectStore CR(platform/pg/objectstore.yaml)로 간다. 웹의 in-tree 예제 붙여넣기 금지.
+# 전제: cert-manager (P0 설치됨 — 플러그인이 Certificate/Issuer 를 만든다, 실렌더링 확인).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg-plugin-barman-cloud
+  namespace: argocd
+  # 🔴 finalizer 없으면 Application 삭제 시 자식이 고아로 남는다(status §4.2)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: plugin-barman-cloud
+    targetRevision: "0.7.0"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # 🔴 오퍼레이터 CRD 는 크다(ECK CRD 는 client-side apply 의 262KB annotation 한계 초과) → SSA 필수
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

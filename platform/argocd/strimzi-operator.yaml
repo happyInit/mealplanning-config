@@ -1,0 +1,37 @@
+# Strimzi 오퍼레이터 — 런북 §1.1: 1.1.0 (Kafka 4.3.0, 경위 = §1.1.1).
+# 🔴 CRD `v1` 전용 — 웹의 v1beta2 예제 붙여넣기 금지. KafkaNodePool 필수(§9-19).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: strimzi-operator
+  namespace: argocd
+  # 🔴 finalizer 없으면 Application 삭제 시 자식이 고아로 남는다(status §4.2)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://strimzi.io/charts/
+    chart: strimzi-kafka-operator
+    targetRevision: "1.1.0"
+    helm:
+      valuesObject:
+        watchNamespaces:
+          - data
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: strimzi-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # 🔴 오퍼레이터 CRD 는 크다(ECK CRD 는 client-side apply 의 262KB annotation 한계 초과) → SSA 필수
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
