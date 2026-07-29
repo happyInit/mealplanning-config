@@ -1,8 +1,8 @@
 # 파이프라인 (pipeline ns) — 컨슈머 4 + CronJob 11 + PVC (런북 Q12 · §1 실측 인벤토리).
 # 소유 = 인프라 / child = platform-root 가 집고 project=mealplanning (Q8).
 # 이미지 = 파이프라인 트랙 1.2.0 (:21db938c… — 2026-07-29 릴리스 런[Sentinel-aware], 3태그 정책대로 :sha 핀).
-# 🔴 dark-deploy 가 기본 상태다: Deployment replicas 0 · CronJob suspend true —
-#    기동(replicas up · unsuspend)은 전환창 §4-9 의 사람 손 순서.
+# ✅ 전환창 §4-9 실행(2026-07-29) — 컨슈머 4 replicas 1 · CronJob 11 unsuspend, K8s 파이프라인이 정본.
+#    (구 dark-deploy 기본값은 전환창 전 상태 — 재-dark 가 필요하면 이 두 값 계열을 되돌린다.)
 # jobs/ 는 리소스에 안 넣는다 — 재색인 Job 은 필요 시점(§2-C-3·§4-5.5)에 kubectl 로 1회성 실행.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

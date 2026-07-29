@@ -9,7 +9,7 @@ metadata:
   labels:
     app: retail-refiner
 spec:
-  replicas: 0 # 🔴 dark — 기동은 전환창 §4-9 (그전엔 .8 컨슈머가 정본)
+  replicas: 1 # ✅ 전환창 §4-9 기동(2026-07-29) — 이제 K8s 컨슈머가 정본(.8 은 정지)
   selector:
     matchLabels:
       app: retail-refiner
@@ -49,7 +49,7 @@ metadata:
   labels:
     app: deal-notifier
 spec:
-  replicas: 0 # 🔴 dark — 기동은 전환창 §4-9 (그전엔 .8 컨슈머가 정본)
+  replicas: 1 # ✅ 전환창 §4-9 기동(2026-07-29) — 이제 K8s 컨슈머가 정본(.8 은 정지)
   selector:
     matchLabels:
       app: deal-notifier
@@ -89,7 +89,7 @@ metadata:
   labels:
     app: recipe-refiner
 spec:
-  replicas: 0 # 🔴 dark — 기동은 전환창 §4-9 (그전엔 .8 컨슈머가 정본)
+  replicas: 1 # ✅ 전환창 §4-9 기동(2026-07-29) — 이제 K8s 컨슈머가 정본(.8 은 정지)
   selector:
     matchLabels:
       app: recipe-refiner
@@ -129,7 +129,7 @@ metadata:
   labels:
     app: user-event-sink
 spec:
-  replicas: 0 # 🔴 dark — 기동은 전환창 §4-9 (그전엔 .8 컨슈머가 정본)
+  replicas: 1 # ✅ 전환창 §4-9 기동(2026-07-29) — 이제 K8s 컨슈머가 정본(.8 은 정지)
   selector:
     matchLabels:
       app: user-event-sink

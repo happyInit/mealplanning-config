@@ -40,7 +40,7 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: recipe
             - name: ES_INDEX
-              value: "recipes"
+              value: "recipes_pgsync" # ✅ 전환창 §4-10 플립(2026-07-29) — CDC 서빙. DR 폴백 = recipes(배치 재파생)
           startupProbe:
             httpGet: { path: /health, port: 8001 }
             periodSeconds: 5

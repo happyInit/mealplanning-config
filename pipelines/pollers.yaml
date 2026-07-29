@@ -7,7 +7,7 @@ kind: CronJob
 metadata:
   name: mp-poller-kurly
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "30 3 * * *" # 03:30 KST — 컬리(Playwright·무거움) 심야 1회
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
@@ -46,7 +46,7 @@ kind: CronJob
 metadata:
   name: mp-poller-oasis-dawn
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "10 4 * * *" # 04:10 KST — 오아시스 가격, 심야
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
@@ -85,7 +85,7 @@ kind: CronJob
 metadata:
   name: mp-poller-oasis-noon
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "10 13 * * *" # 13:10 KST — 점심피크(11-12) 이후
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
@@ -124,7 +124,7 @@ kind: CronJob
 metadata:
   name: mp-poller-deal-timesale
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "5 15 * * *" # 15:05 KST — timeSale 15시 리셋 직후
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
@@ -163,7 +163,7 @@ kind: CronJob
 metadata:
   name: mp-poller-deal-closesale
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "5 17 * * *" # 17:05 KST — closeSale 17시 오픈 직후(저녁피크 겹침은 소스가 강제)
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
@@ -203,7 +203,7 @@ kind: CronJob
 metadata:
   name: mp-poller-recipe
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "0 5 * * 0,3" # 일·수 05:00 KST — 만개 최신순 재스캔(신규 포착)
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
@@ -250,7 +250,7 @@ kind: CronJob
 metadata:
   name: mp-poller-price-matview
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "20 * * * *" # 매시 :20 — 스트리밍 전환기 4일 stale 사고 후 '매시' 고정(자가복구·폴러 소요와 탈동조)
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
@@ -289,7 +289,7 @@ kind: CronJob
 metadata:
   name: mp-poller-es-recipes
 spec:
-  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  suspend: false # ✅ 전환창 §4-9 unsuspend(2026-07-29) — 이제 K8s 크론이 정본(.8 크론은 주석 처리됨)
   schedule: "30 6 * * 0,3" # 일·수 06:30 KST — 크롤(05:00)→Kafka→refiner→PG 드레인 후
   timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
   concurrencyPolicy: Forbid
