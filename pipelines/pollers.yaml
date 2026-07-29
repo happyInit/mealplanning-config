@@ -1,0 +1,323 @@
+# 폴러 8 — deploy/crontab.fb-pollers(UTC)의 KST 복원판. 스케줄 근거 주석은 crontab 원본 유지.
+# 피크(11-12·17-18 KST) 회피 스태거는 원 설계 그대로다(design §8.4).
+---
+# 컬리 크롤 → Kafka 직접 produce. 별도 이미지(브라우저 포함)라 메모리 여유
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-kurly
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "30 3 * * *" # 03:30 KST — 컬리(Playwright·무거움) 심야 1회
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: poller-kurly
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: poller-kurly
+              image: 192.168.0.10/mealplanning/mp-crawler-kurly:PIN-ME-sha
+              command: ["python", "crawler/kurly/prototype.py", "--kafka"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 1Gi
+---
+# 오아시스 가격 폴링(카테고리 13종) → Kafka
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-oasis-dawn
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "10 4 * * *" # 04:10 KST — 오아시스 가격, 심야
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: poller-oasis-dawn
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: poller-oasis-dawn
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "crawler/oasis/oasis_crawler.py", "--categories", "11,142,141,12,49,9,13,3,216,1274,1275,219,1191", "--kafka"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+---
+# 오아시스 가격 폴링 2회차
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-oasis-noon
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "10 13 * * *" # 13:10 KST — 점심피크(11-12) 이후
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: poller-oasis-noon
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: poller-oasis-noon
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "crawler/oasis/oasis_crawler.py", "--categories", "11,142,141,12,49,9,13,3,216,1274,1275,219,1191", "--kafka"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+---
+# 오아시스 타임세일 → 딜 토픽
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-deal-timesale
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "5 15 * * *" # 15:05 KST — timeSale 15시 리셋 직후
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: poller-deal-timesale
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: poller-deal-timesale
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "crawler/oasis/oasis_crawler.py", "--deal", "timeSale", "--kafka"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+---
+# 오아시스 마감세일 → 딜 토픽
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-deal-closesale
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "5 17 * * *" # 17:05 KST — closeSale 17시 오픈 직후(저녁피크 겹침은 소스가 강제)
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: poller-deal-closesale
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: poller-deal-closesale
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "crawler/oasis/oasis_crawler.py", "--deal", "closeSale", "--kafka"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+---
+# 만개 레시피 크롤 → recipe.crawl.raw. 🔴 크롤 상태(resume/dedup)는 PVC — .8 상태 이전은 선택
+# (미이전 시 첫 크롤이 전량 재produce — refiner upsert 라 정합 무해, Kafka·시간 비용만. §4-9 전 결정)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-recipe
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "0 5 * * 0,3" # 일·수 05:00 KST — 만개 최신순 재스캔(신규 포착)
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: poller-recipe
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: poller-recipe
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "/app/crawler/10k_recipe/10k_recipe_crawler.py", "--kafka", "--order", "date"]
+              workingDir: /data/recipe-crawl
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+              volumeMounts:
+                - name: crawl-state
+                  mountPath: /data/recipe-crawl
+          volumes:
+            - name: crawl-state
+              persistentVolumeClaim:
+                claimName: mp-recipe-crawl-state
+---
+# retail_unit_price 물질화 뷰 갱신 + Price 캐시 무효화. 🔴 Redis 사용 — REDIS_URL placeholder 해소(Q3) 전 기동 금지
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-price-matview
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "20 * * * *" # 매시 :20 — 스트리밍 전환기 4일 stale 사고 후 '매시' 고정(자가복구·폴러 소요와 탈동조)
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: poller-price-matview
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: poller-price-matview
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "pipelines/ingest/refresh_price_matview.py"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+---
+# PG → ES(recipes) 재색인. servable 게이트 스크립트 내장. DR 폴백 인덱스 유지용(서빙은 recipes_pgsync)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-es-recipes
+spec:
+  suspend: true # 🔴 dark — unsuspend 는 전환창 §4-9 (그전엔 .8 크론이 정본. 이중 실행 금지)
+  schedule: "30 6 * * 0,3" # 일·수 06:30 KST — 크롤(05:00)→Kafka→refiner→PG 드레인 후
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — vixie-cron UTC 환산 우회의 복원. KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다 (재시도가 크롤 소스에 연타를 넣는 것 방지)
+      template:
+        metadata:
+          labels:
+            app: poller-es-recipes
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          containers:
+            - name: poller-es-recipes
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:PIN-ME-sha
+              command: ["python", "pipelines/ingest/index_recipes_es.py"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env
+                - secretRef:
+                    name: mp-pipeline-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi

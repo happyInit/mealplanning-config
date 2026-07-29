@@ -1,0 +1,18 @@
+# 파이프라인 공통 좌표 — .8 .env 의 K8s 환산 (키 이름은 .env 실물과 동일 계약).
+# 🔴 인프라 좌표가 환경 무관해지는 지점(object_spec §7): IP 가 아니라 서비스 DNS 다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-pipeline-env
+data:
+  KAFKA_BOOTSTRAP: kafka-kafka-bootstrap.data.svc:9092 # Strimzi <cluster>-kafka-bootstrap
+  PGHOST: pg-rw.data.svc # CNPG primary. 파이프라인은 Pooler 미경유(P2 — 앱도 pg-rw 직접, Q8)
+  PGPORT: "5432"
+  PGDATABASE: foodbudget
+  PGUSER: fbapp
+  ESHOST: es-es-http.data.svc # 코드 계약 = ESHOST/ESPORT (pipelines/ingest/_db.py 실측)
+  ESPORT: "9200"
+  ES_USER: elastic # basic_auth — env 없으면 무인증 폴백(Q13 하위호환)이므로 K8s 에서만 켜진다
+  # 🔴 REDIS_URL 은 Q3(Redis 구현체 실물 검증) 분기 대기 — placeholder 를 실값으로 바꾸기 전에는
+  #    deal-notifier·price-matview 를 기동하지 말 것 (platform/redis/README.md).
+  REDIS_URL: redis://PIN-ME-Q3.data.svc:6379/0

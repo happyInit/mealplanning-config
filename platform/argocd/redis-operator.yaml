@@ -1,0 +1,35 @@
+# OT-Container-Kit redis-operator — 런북 §1.1(2026-07-29 정정): 차트·이미지 0.25.0 정합.
+# 차트 0.25.0 기본 이미지 = quay.io/opstree/redis-operator:v0.25.0 (실렌더링 확인) →
+# image.tag 오버라이드 불필요. v0.26.0 상향은 Redis 실물 검증 담당자 판단(Q3).
+# 🔴 Redis CR 은 여기 없다 — A-1 검증 분기 대기(platform/redis/README.md).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis-operator
+  namespace: argocd
+  # 🔴 finalizer 없으면 Application 삭제 시 자식이 고아로 남는다(status §4.2)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://ot-container-kit.github.io/helm-charts/
+    chart: redis-operator
+    targetRevision: "0.25.0"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: redis-operator-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # 🔴 오퍼레이터 CRD 는 크다(ECK CRD 는 client-side apply 의 262KB annotation 한계 초과) → SSA 필수
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

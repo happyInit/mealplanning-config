@@ -1,0 +1,28 @@
+# 파이프라인 (컨슈머 4 + CronJob 11) — 소유=인프라, project=mealplanning (Q8·Q12).
+# dark-deploy: CronJob suspend·Deployment replicas 0 — 기동은 전환창 §4-9.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pipelines
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: pipelines
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pipeline
+  # 🔴 automated 없음 = manual sync (런북 Q8) — P2 기간 데이터 CR 은 사람이 sync 를 누른다.
+  #    selfHeal 이 있으면 전환창의 promote(수동 CR 조작·T-1 장전 커밋)가 몇 초 만에 리버트된다(§9-3).
+  #    automated 승격은 P3.
+  syncPolicy:
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

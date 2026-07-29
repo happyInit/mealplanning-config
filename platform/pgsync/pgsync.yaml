@@ -1,0 +1,98 @@
+# PGSync — PG(recipe) → ES(recipes_pgsync) CDC. 🔴 replicas 0 dark (런북 Q11).
+# 슬롯 생성 → 0→1 → 초기 동기화 → ES_INDEX 플립은 전부 전환창 §4-10 의 사람 손 순서다.
+#
+# env 계약 = 2026-07-29 .8 pgsync 컨테이너 실물(docker inspect)에서 그대로 옮김 + Q13 의
+# ES 인증 2개(ELASTISEARCH_USER/PASSWORD — ECK 는 인증 강제)만 추가. SCHEMA·checkpoint 는 이미지 내장.
+#
+# 🔴 이미지: Jenkins CATALOG `pgsync` 첫 릴리스 런 필요 여부 확인 — 현행 .8 은 로컬빌드
+#    fb-pgsync:7.1.0 이라 Harbor mealplanning/mp-pgsync 가 아직 비어 있을 수 있다.
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pgsync-secrets
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: fb-kubernetes
+  target:
+    name: mp-pgsync-secrets
+    creationPolicy: Owner
+  data:
+    - secretKey: PG_PASSWORD
+      remoteRef:
+        key: data-secrets # 적재 = platform/pg/README.md (pgsync 롤 비밀번호는 basebackup 으로 승계됨)
+        property: PGSYNC_PG_PASSWORD
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-pgsync
+  namespace: data
+  labels:
+    app: pgsync
+spec:
+  replicas: 0 # 🔴 dark (Q11) — 기동은 전환창 §4-10. 논리 슬롯 = 단일 소비자라 1 초과 금지(object_spec §2.2)
+  strategy:
+    type: Recreate # replicas=1 고정 워크로드 — 롤링이면 순간 2파드 = 슬롯 경합 (status §3 RWO 수칙과 동계열)
+  selector:
+    matchLabels:
+      app: pgsync
+  template:
+    metadata:
+      labels:
+        app: pgsync
+    spec:
+      priorityClassName: app-normal # 서빙 인덱스(recipes_pgsync) 생산자라 pipeline 급이 아니다 (§9-10)
+      containers:
+        - name: pgsync
+          image: 192.168.0.10/mealplanning/mp-pgsync:PIN-ME-sha # 🔴 상단 주석 — CATALOG 릴리스 후 :sha
+          env:
+            - name: PG_HOST
+              value: pg-rw # Pooler 금지 — LISTEN/NOTIFY 는 transaction 풀링에서 죽는다(object_spec §4.5.3)
+            - name: PG_PORT
+              value: "5432"
+            - name: PG_USER
+              value: pgsync
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mp-pgsync-secrets
+                  key: PG_PASSWORD
+            - name: ELASTICSEARCH_HOST
+              value: es-es-http
+            - name: ELASTICSEARCH_PORT
+              value: "9200"
+            - name: ELASTICSEARCH_SCHEME
+              value: http # 플랜 §5.2 — HTTP TLS 끔 확정
+            - name: ELASTICSEARCH_USER
+              value: elastic
+            - name: ELASTICSEARCH_PASSWORD # Q13 — ECK 인증 강제분. ECK 가 만드는 Secret 을 같은 ns 라 직참조
+              valueFrom:
+                secretKeyRef:
+                  name: es-es-elastic-user
+                  key: elastic
+            - name: REDIS_HOST
+              value: redis-pgsync
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_CHECKPOINT
+              value: "False"
+            - name: SCHEMA
+              value: /app/schema.json
+            - name: CHECKPOINT_PATH
+              value: /app/checkpoint
+          volumeMounts:
+            - name: checkpoint
+              mountPath: /app/checkpoint
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi # status §2.1 예산 ~0.3GB — CPU limits 금지(§13.7)
+      volumes:
+        - name: checkpoint
+          emptyDir: {} # 재시작 시 재동기화 — 현행 .8 도 컨테이너 FS 라 동일 특성. 문서 8.4k 규모라 수 분

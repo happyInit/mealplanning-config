@@ -1,0 +1,23 @@
+# 파이프라인 영속 상태 2종 — openebs-lvm(RWO·WaitForFirstConsumer)이라 첫 Job 실행 때
+# 바인딩되고 그 노드에 고정된다(이후 실행도 같은 노드 — CronJob 파드는 어차피 단일).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mp-recipe-crawl-state # 만개 크롤 resume/dedup (.8 /opt/data-pipeline/recipe-crawl-state 승계 대상)
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: openebs-lvm
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mp-chat-reports # chat-insights 리포트 산출물 (데이터 담당 열람용 — .8 호스트 바인드의 등가)
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: openebs-lvm
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,34 @@
+# Kafka (Strimzi) — 4.3.0 · KRaft combined 3 (런북 §1.1·§1.1.1 · Q6 · status §2.1).
+#
+# 🔴 CRD `v1` 전용(Strimzi 1.1.0) — 웹의 v1beta2 예제 붙여넣기 금지.
+# 🔴 replicas·storage 는 여기 없다 — KafkaNodePool 로 갔다(§9-19 — nodepool.yaml).
+# 🔴 auto.create.topics.enable=false 는 사고 이력 기반 필수(2026-07-20 자동생성이
+#    create_topics.py 를 무력화한 1파티션 사고) — 토픽 생성 유일 경로 = topics.yaml (KafkaTopic).
+# 무인증 PLAINTEXT = 결정(Q6) — 암호화는 WireGuard, 접근제어는 NetworkPolicy(platform/policies 연기 메모).
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: kafka # bootstrap Service = kafka-kafka-bootstrap.data.svc:9092
+  namespace: data
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: 4.3.0
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      auto.create.topics.enable: "false"
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+  entityOperator:
+    topicOperator: {} # KafkaTopic CR 반영 주체 — 없으면 topics.yaml 이 장식이 된다
+  kafkaExporter: {} # Q9 — 현행 kafka-exporter 와 동일 지표(kafka lag 알림 규칙 무수정의 전제)
