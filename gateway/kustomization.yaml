@@ -5,3 +5,6 @@ resources:
   - gateway.yaml
   - httproutes.yaml
   - request-body-limit.yaml
+  - externalsecret-cloudflare.yaml   # CF API 토큰(ESO) — DNS-01 발급 크리덴셜
+  - issuer.yaml                      # Let's Encrypt ACME Issuer (staging/prod)
+  - certificate.yaml                 # app.mealbong.cloud → Secret mp-gw-public-tls

@@ -7,8 +7,10 @@
 # 🔴 MetalLB 풀이 autoAssign:false 라 주소 풀 주석이 **없으면 영원히 Pending** 이다(P1 핸드오프 3-②).
 #    자동 생성되는 Service 에 주석을 전달하는 경로가 spec.infrastructure.annotations.
 #
-# TLS: 지금은 HTTP 80 만. 현행 .9 nginx 가 평문이라 **유입 전환 시 회귀 위험 0** 을 우선했다.
-#      스펙(object_spec §5.2)의 HTTPS 443 종단 + 80 리다이렉트는 라우팅 검증 후 별건으로 얹는다.
+# TLS(object_spec §5.2): HTTPS 443 종단 + HTTP 80 → 443 리다이렉트.
+#   443 리스너가 cert-manager Secret `mp-gw-public-tls`(Let's Encrypt·app.mealbong.cloud)로 TLS 를 끊고,
+#   앱 라우트 10개는 sectionName: https 로 443 에만 붙는다. 80 리스너에는 리다이렉트 라우트(mp-https-redirect)만.
+#   발급 배선 = issuer.yaml · certificate.yaml · externalsecret-cloudflare.yaml(전부 app ns).
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -27,3 +29,15 @@ spec:
       allowedRoutes:
         namespaces:
           from: Same          # HTTPRoute·Service 가 전부 app ns → ReferenceGrant 불요(§5.7)
+    - name: https                       # 🔴 TLS 종단 리스너 (object_spec §5.2)
+      protocol: HTTPS
+      port: 443
+      hostname: app.mealbong.cloud      # SNI 매칭 — 이 호스트로 온 TLS handshake 만 이 리스너로
+      tls:
+        mode: Terminate                 # GW 가 여기서 TLS 를 끊는다(오리진 = 인클러스터 평문/메시 mTLS)
+        certificateRefs:
+          - kind: Secret
+            name: mp-gw-public-tls       # cert-manager Certificate 가 채우는 Secret(같은 app ns → RefGrant 불요)
+      allowedRoutes:
+        namespaces:
+          from: Same
