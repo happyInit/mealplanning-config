@@ -1,0 +1,26 @@
+# Redis HA CR — 🔴 오퍼레이터는 여기서 설치하지 않는다(platform/argocd/redis-operator.yaml 소관).
+# 이 child 는 RedisReplication/RedisSentinel CR + 관측만 담는다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: platform/redis
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  # 🔴 automated 없음 = manual sync — 다른 데이터 CR 과 동일(런북 Q8).
+  syncPolicy:
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
