@@ -1,0 +1,48 @@
+# Redis 관측 — 원본 PR 에는 exporter 만 켜져 있고 **스크레이프하는 쪽이 없었다**(지표가 노출만 되고
+# 아무도 안 걷음). 인클러스터 Prometheus 는 serviceMonitorSelector/namespaceSelector 가 모두 `{}`
+# (= 전체 매치)라 이 ServiceMonitor 하나면 걷힌다 — `.11` 브리지의 keep 필터(§9-19)와 무관하다.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mp-redis
+  namespace: data
+spec:
+  selector:
+    matchLabels:
+      app: mp-redis
+      app.kubernetes.io/component: metrics # 🔴 metrics Service 만 — app 라벨만 걸면 mp-redis/-master/-replica 까지 잡혀 중복 스크레이프된다
+  endpoints:
+    - port: redis-exporter
+      interval: 30s
+---
+# 🔴 알람 초안 (handoff §6 · §7 산출물). 라우팅은 P4 — 여기선 규칙만 정의한다.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-redis-ha
+  namespace: data
+spec:
+  groups:
+    - name: mp-redis-ha
+      rules:
+        # #1779 의 "조용한 실패" 전용 — 복제본이 0인 채로 몇 시간 방치되는 사고(신고 사례 19시간).
+        # 🔴 redis_up·redis_master_link_up 으로는 안 잡힌다(이슈 본문 명시) — 복제본 수를 직접 본다.
+        - alert: MpRedisNoReplica
+          expr: max(redis_connected_slaves{namespace="data"}) < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Redis master 에 복제본이 0개 — 페일오버 불가 상태"
+            description: "connected_slaves=0 이 5분 지속. redis_up 은 정상으로 보이므로 이 규칙이 유일한 탐지 경로다."
+        # 2026-07-29 실측 사고 전용 — 오퍼레이터와 Sentinel 이 서로 다른 master 를 믿는 상태.
+        # master 로 보고되는 인스턴스가 1개가 아니면(0 또는 2+) 제어면이 갈라진 것이다.
+        - alert: MpRedisMasterCountAbnormal
+          expr: count(redis_instance_info{namespace="data", role="master"}) != 1
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Redis master 개수가 1이 아니다 (제어면 분기 의심)"
+            description: "오퍼레이터의 role 라벨과 Sentinel 의 선출이 어긋나면 Sentinel 이 읽기전용 복제본을 master 로 광고한다(READONLY 오류)."

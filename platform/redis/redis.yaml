@@ -1,0 +1,100 @@
+# Redis HA — OT-Container-Kit redis-operator (차트 0.25.0, platform-root 가 설치. 여기선 CR 만).
+#
+# 출처: PR happyInit/food-budget-app#370(Redis 담당) 의 `deploy/k8s/redis-ha.yaml` 을 config 레포로
+# 이관하면서 계획(`docs/mp_k8s_redis_ha_handoff.md` §3·§6 · `object_spec §13.7`) 과 어긋난 6건을 교정.
+#
+# 🔴 영속성 금지 — AOF/RDB 를 켜면 2026-07-22 사고가 재발한다(handoff §6). HA 의 목적은 데이터
+#    보존이 아니라 연속성이다. 그래서 volumeMount/PVC 가 없는 게 의도다.
+# 🔴 `redis-pgsync`(data ns, 별도 Deployment)와 통합 금지 — 같은 사고의 격리 결론.
+#
+# ⚠️ **배치 원칙의 한계(2026-07-29 실측)**: handoff §3 은 "primary = A" 를 요구하지만 이 오퍼레이터는
+#    StatefulSet ordinal-0 을 master 로 삼고(오퍼레이터 로그 `falling back to Status.MasterNode`),
+#    StatefulSet 은 ordinal 별 노드 지정을 지원하지 않는다. host-a 노드도 `worker-a1` 하나뿐이라
+#    nodeSelector 로 몰면 두 파드가 같은 노드에 앉아 HA 가 사라진다.
+#    → **선언적으로 보장 가능한 것은 "존 분리"까지**이고, master 가 어느 존에 앉는지는 스케줄 결과다.
+#    "primary = A" 를 강제하려면 페일오버 후 수동 조정이 필요하다 — 분기 확정 시 재검토.
+---
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: RedisReplication
+metadata:
+  name: mp-redis
+  namespace: data
+spec:
+  clusterSize: 2 # master 1 + replica 1
+  priorityClassName: data-critical
+  podSecurityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  kubernetesConfig:
+    image: quay.io/opstree/redis:v7.2.3 # 🔴 7.x 명시 핀 — 안 박으면 오퍼레이터 기본값 v8.x 로 뜬다(handoff §3)
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        # 🔴 CPU limits 없음 — object_spec §13.7(부하테스트 병목 재발 위험). 하필 페일오버·재동기
+        #    구간에서 스로틀링이 걸린다. 메모리는 requests=limits 로 OOM 예측성 확보(§13.7 각주).
+        memory: 256Mi
+  pdb:
+    enabled: true # 원본엔 없었다 — 드레인이 2대를 동시에 걷어가면 복제가 통째로 사라진다
+    minAvailable: 1
+  # 존 분리 강제 — 상단 ⚠️ 참조. 이게 없으면 두 복제본이 같은 물리호스트에 앉을 수 있다(= HA 껍데기).
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app: mp-redis
+  redisExporter:
+    enabled: true
+    image: quay.io/opstree/redis-exporter:v1.44.0
+---
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: RedisSentinel
+metadata:
+  name: mp-redis-sentinel
+  namespace: data
+spec:
+  clusterSize: 3 # quorum 2
+  priorityClassName: data-critical
+  podSecurityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  pdb:
+    # 🔴 원본은 false 였다 — 노드 드레인 한 번에 3대 중 2대가 내려가면 정족수를 잃고,
+    #    정족수가 필요한 바로 그 순간에 페일오버가 안 된다.
+    enabled: true
+    minAvailable: 2
+  redisSentinelConfig:
+    redisReplicationName: mp-redis
+    masterGroupName: myMaster
+    quorum: "2"
+    downAfterMilliseconds: "10000"
+    failoverTimeout: "60000"
+    parallelSyncs: "1"
+  kubernetesConfig:
+    image: quay.io/opstree/redis-sentinel:v7.2.3
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 128Mi # CPU limits 없음 — 위와 동일 근거
+  # 중재자는 노드마다 하나씩 — handoff §3 "Sentinel 다수(2) = B" 는 현 토폴로지(host-a 1대 · host-b 3대)에서
+  # 노드 분산의 자연스러운 결과다. 존이 아니라 hostname 으로 흩는 이유 = 한 노드가 2표를 갖지 않게.
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app: mp-redis-sentinel-sentinel
+  redisExporter:
+    enabled: false # sentinel 지표는 아직 안 켠다 — redis-exporter 가 sentinel 을 제대로 읽는지 미검증.
+    # 🔴 `image` 는 enabled:false 여도 CRD 가 **required** 로 강제한다(dry-run 실측).
+    image: quay.io/opstree/redis-exporter:v1.44.0
