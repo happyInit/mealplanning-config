@@ -88,4 +88,5 @@ spec:
         whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
-            app: mp-redis-sentinel
+            app: mp-redis-s # 🔴 인라인 sentinel 의 실제 라벨(실측). `mp-redis-sentinel` 로 쓰면
+            # 셀렉터가 아무것도 못 잡아 제약이 조용히 무효가 된다 — 실제로 3대 중 2대가 b2 에 몰렸다.
