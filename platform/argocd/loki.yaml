@@ -1,0 +1,113 @@
+# loki — 플랫폼 child Application (정본 = 이 파일).
+#
+# 🔴 2026-07-29 이사분: 종전 정본은 Ansible `roles/k8s_platform_apps` 였다. platform-root
+#    (app-of-apps)가 이 디렉토리를 집으면서 git 이 정본이 됐다 — Ansible 쪽 Application
+#    태스크는 같은 날 은퇴했다. **양쪽에 두지 말 것**(정본 이원화).
+# 값 변경 = 이 파일 수정 → push → root 가 자동 반영(child 는 각자 automated sync).
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: argocd
+  # 🔴 이 finalizer 가 없으면 Application 삭제 시 자식 리소스가 고아로 남는다(status §4.2)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: loki
+    targetRevision: "7.1.0"
+    helm:
+      valuesObject:
+        deploymentMode: SingleBinary
+        loki:
+          auth_enabled: false # 단일 테넌트
+          commonConfig:
+            replication_factor: 1
+          storage:
+            type: s3
+            bucketNames: # 단일 버킷(loki) 재사용 — P0 k8s_minio 가 만들어 둔 것
+              chunks: loki
+              ruler: loki
+              admin: loki
+            s3:
+              endpoint: http://minio.observability.svc.cluster.local:9000
+              accessKeyId: ${MINIO_ACCESS_KEY_ID}
+              secretAccessKey: ${MINIO_SECRET_ACCESS_KEY}
+              s3ForcePathStyle: true
+              insecure: true
+          schemaConfig:
+            configs:
+              - from: "2026-07-01"
+                store: tsdb
+                object_store: s3
+                schema: v13
+                index:
+                  prefix: index_
+                  period: 24h
+          limits_config:
+            retention_period: 168h
+          compactor:
+            retention_enabled: true
+            delete_request_store: s3
+        # 🔴 SSD(SimpleScalable) 타깃을 명시적으로 0 — validate.yaml 이 deploymentMode 와
+        #    무관하게 양쪽 replicas 를 검사해서, 기본값(각 3)이 남아 있으면 렌더가 죽는다
+        #    (2026-07-28 실측: ArgoCD ComparisonError "more than zero replicas ... both").
+        read:
+          replicas: 0
+        write:
+          replicas: 0
+        backend:
+          replicas: 0
+        singleBinary:
+          replicas: 1
+          nodeSelector:
+            topology.kubernetes.io/zone: host-b # 관측은 B (배치 원칙 — Prometheus·MinIO 동일)
+          persistence:
+            size: 10Gi
+            storageClass: openebs-lvm
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi # 플랜 §2.2 예산
+          extraArgs:
+            - -config.expand-env=true
+          extraEnvFrom:
+            - secretRef:
+                name: lgtm-minio-creds
+        # ── 부속 전부 off — 3노드 스케일에 과잉이고 RAM 을 먹는다 ──
+        gateway:
+          enabled: false # 소비자는 svc/loki:3100 직결 (Alloy·Grafana)
+        chunksCache:
+          enabled: false # memcached 8Gi
+        resultsCache:
+          enabled: false
+        lokiCanary:
+          enabled: false
+        test:
+          enabled: false
+        sidecar:
+          rules:
+            enabled: false # ruler 미사용 (알림은 P4 까지 `.11`)
+        rbac:
+          namespaced: true # ClusterRole 대신 Role — 클러스터 스코프 최소화
+        monitoring:
+          serviceMonitor:
+            enabled: true # kps 가 라벨 무관 수집(selectorNilUsesHelmValues=false)
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
