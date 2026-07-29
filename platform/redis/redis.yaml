@@ -51,50 +51,41 @@ spec:
   redisExporter:
     enabled: true
     image: quay.io/opstree/redis-exporter:v1.44.0
----
-apiVersion: redis.redis.opstreelabs.in/v1beta2
-kind: RedisSentinel
-metadata:
-  name: mp-redis-sentinel
-  namespace: data
-spec:
-  clusterSize: 3 # quorum 2
-  priorityClassName: data-critical
-  podSecurityContext:
-    runAsUser: 1000
-    runAsGroup: 1000
-    fsGroup: 1000
-  pdb:
-    # 🔴 원본은 false 였다 — 노드 드레인 한 번에 3대 중 2대가 내려가면 정족수를 잃고,
-    #    정족수가 필요한 바로 그 순간에 페일오버가 안 된다.
-    enabled: true
-    minAvailable: 2
-  redisSentinelConfig:
-    redisReplicationName: mp-redis
-    masterGroupName: myMaster
+
+  # 🔴 인라인 Sentinel (2026-07-29, 3차 실측 후 도입) — 별도 RedisSentinel CR 을 대체한다.
+  #
+  # 왜: 별도 CR 로 두면 **오퍼레이터와 Sentinel 이 서로를 모른다.** Sentinel 이 복제본을 승격시켜도
+  #     오퍼레이터가 ordinal-0 을 master 로 되돌려서(failback), Sentinel 은 자기가 뽑은 옛 master 를
+  #     계속 광고한다 → 클라이언트가 읽기전용 복제본을 잡는다(READONLY, 245초+ 관측).
+  # 어떻게: 오퍼레이터의 슬레이브·role 재구성 분기는 `!EnableSentinel()` 로 게이팅돼 있다.
+  #     여기 sentinel 을 인라인으로 두면 게이팅이 닫혀 **failback 코드가 아예 돌지 않고**,
+  #     승격 권한이 Sentinel 하나로 모인다(= 제어면 단일화).
+  # 🔴 대가: 오퍼레이터가 슬레이브를 고쳐주지 않으므로 Sentinel 이 놓친 슬레이브는 그대로 남는다(#1779).
+  #     탐지는 `monitoring.yaml` 의 MpRedisNoReplica(connected_slaves<1) — 2차 실측에서 동작 확인됨.
+  #     이 알람이 이 구성의 안전장치다. 끄지 말 것.
+  sentinel:
+    size: 3 # quorum 2
+    image: quay.io/opstree/redis-sentinel:v7.2.3
+    imagePullPolicy: IfNotPresent
     quorum: "2"
     downAfterMilliseconds: "10000"
     failoverTimeout: "60000"
     parallelSyncs: "1"
-  kubernetesConfig:
-    image: quay.io/opstree/redis-sentinel:v7.2.3
-    imagePullPolicy: IfNotPresent
+    priorityClassName: data-critical
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
     resources:
       requests:
         cpu: 50m
         memory: 128Mi
       limits:
-        memory: 128Mi # CPU limits 없음 — 위와 동일 근거
-  # 중재자는 노드마다 하나씩 — handoff §3 "Sentinel 다수(2) = B" 는 현 토폴로지(host-a 1대 · host-b 3대)에서
-  # 노드 분산의 자연스러운 결과다. 존이 아니라 hostname 으로 흩는 이유 = 한 노드가 2표를 갖지 않게.
-  topologySpreadConstraints:
-    - maxSkew: 1
-      topologyKey: kubernetes.io/hostname
-      whenUnsatisfiable: DoNotSchedule
-      labelSelector:
-        matchLabels:
-          app: mp-redis-sentinel-sentinel
-  redisExporter:
-    enabled: false # sentinel 지표는 아직 안 켠다 — redis-exporter 가 sentinel 을 제대로 읽는지 미검증.
-    # 🔴 `image` 는 enabled:false 여도 CRD 가 **required** 로 강제한다(dry-run 실측).
-    image: quay.io/opstree/redis-exporter:v1.44.0
+        memory: 128Mi # CPU limits 없음 — object_spec §13.7
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: mp-redis-sentinel
