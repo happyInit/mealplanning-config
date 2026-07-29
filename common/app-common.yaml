@@ -3,18 +3,21 @@ kind: ConfigMap
 metadata:
   name: app-common
 data:
-  # 🔴 P1 과도기 — VM 데이터 티어(.8)를 그대로 본다. P2 데이터 이전 때 Service DNS 로 교체
-  #    (PGHOST→pg-rw.data.svc · ESHOST→es-http.data.svc). 그 한 줄이 데이터 컷오버의 전부.
-  PGHOST: "192.168.0.8"
+  # ✅ P2 데이터 컷오버 (2026-07-29 전환창 스텝 7) — VM(.8) → in-cluster Service DNS.
+  #    롤백(런북 §6)은 이 블록을 VM 좌표로 원복 + VM read_only 해제.
+  PGHOST: pg-rw.data.svc # CNPG primary 직접(Q8 — Pooler 는 P3)
   PGPORT: "5432"
   PGDATABASE: foodbudget
   PGUSER: fbapp              # 비밀 아님(비번만 Secret) — account config.py 필드명과 일치
-  ESHOST: "192.168.0.8"
+  ESHOST: es-es-http.data.svc # ECK — 인증 강제. ES_USER 는 여기, ES_PASSWORD 는 서비스 Secret(ESO)
   ESPORT: "9200"
-  # Redis(chat 세션·레이트리밋) · Kafka(mealplan 이벤트) — P1 과도기 VM(.8) 재사용. P2 에 Service DNS 로 교체.
-  REDISHOST: "192.168.0.8"
+  ES_USER: elastic # 코드 하위호환(f665eb5) — env 없으면 무인증(VM 폴백 경로 그대로 성립)
+  # Redis = Sentinel-aware(분기 C — 앱 이미지 ≥1.2.0 전제). REDISHOST 는 폴백 전용.
+  REDIS_SENTINELS: "mp-redis-s-0.mp-redis-s-hl.data.svc:26379,mp-redis-s-1.mp-redis-s-hl.data.svc:26379,mp-redis-s-2.mp-redis-s-hl.data.svc:26379"
+  REDIS_MASTER_GROUP: mymaster # 🔴 소문자 — 인라인 sentinel 기본 그룹명
+  REDISHOST: mp-redis-master.data.svc # 폴백 전용(Sentinel 모드에선 미사용)
   REDISPORT: "6379"
-  KAFKA_BOOTSTRAP: "192.168.0.8:9092"
+  KAFKA_BOOTSTRAP: kafka-kafka-bootstrap.data.svc:9092 # Strimzi <cluster>-kafka-bootstrap
   # 🔴 크로스서비스 URL 계약 — Service 가 bare(§2.3)라 bare 이름으로 도달. 코드 기본값과 같지만 명시로 박아 계약을 고정.
   #    mealplan→account/pantry/ranking, chat→account/pantry 가 이 값을 읽는다.
   ACCOUNT_BASE_URL: "http://account:8004"

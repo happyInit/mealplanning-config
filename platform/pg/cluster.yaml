@@ -57,7 +57,7 @@ spec:
         # 관리하지 않는다(pg-app 시크릿 미생성 실측) — 이름만 알려주는 것이라 비밀번호에 영향 없다
 
   replica:
-    enabled: true # 🔫 promote 장전 지점 (T-1 커밋이 false 로 바꾼다 — 파일 상단 주석)
+    enabled: false # 🔫 발사됨 (2026-07-29 전환창 T-1 장전 — 스텝 4 의 manual sync 가 promote 를 실행)
     source: vm-pg
 
   plugins:
