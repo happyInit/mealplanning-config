@@ -13,6 +13,16 @@ data:
   ESHOST: es-es-http.data.svc # 코드 계약 = ESHOST/ESPORT (pipelines/ingest/_db.py 실측)
   ESPORT: "9200"
   ES_USER: elastic # basic_auth — env 없으면 무인증 폴백(Q13 하위호환)이므로 K8s 에서만 켜진다
-  # 🔴 REDIS_URL 은 Q3(Redis 구현체 실물 검증) 분기 대기 — placeholder 를 실값으로 바꾸기 전에는
-  #    deal-notifier·price-matview 를 기동하지 말 것 (platform/redis/README.md).
-  REDIS_URL: redis://PIN-ME-Q3.data.svc:6379/0
+  # ✅ Q3 해소 (2026-07-29) — 4단계 실측 후 **분기 C(Sentinel-aware 클라이언트) 확정**.
+  #    근거·수치 = food-budget-app/docs/mp_k8s_redis_ha_handoff.md §4.
+  #    🔴 Service 경로(A)는 "master 파드가 스케줄되지 못하는 동안 엔드포인트가 빈다"를 못 넘었다.
+  #    Sentinel 경로는 그 상황에서 5초에 승격·정합했다 — 그래서 C 다.
+  #
+  # 코드는 **하위호환**으로 받는다(Q13 의 ES basic_auth 와 같은 패턴):
+  #   REDIS_SENTINELS 가 있으면 Sentinel 모드, 없으면 REDIS_URL 폴백.
+  #   → 접속 4곳 수정 전에도 파이프라인이 뜬다(그동안은 A 경로 = 시나리오 ② 취약).
+  REDIS_SENTINELS: "mp-redis-s-0.mp-redis-s-hl.data.svc:26379,mp-redis-s-1.mp-redis-s-hl.data.svc:26379,mp-redis-s-2.mp-redis-s-hl.data.svc:26379"
+  # 🔴 소문자 `mymaster` — 인라인 sentinel 이 쓰는 기본 그룹명(실측). 별도 CR 때의 `myMaster` 아님
+  REDIS_MASTER_GROUP: mymaster
+  # 폴백 전용. Sentinel 모드가 켜지면 안 쓰인다
+  REDIS_URL: redis://mp-redis-master.data.svc:6379/0
