@@ -48,6 +48,13 @@ spec:
   bootstrap:
     pg_basebackup:
       source: vm-pg
+      # 🔴 이 두 줄이 없으면 CNPG 기본값 database/owner = `app` 이 박힌다(2026-07-29 실측).
+      # 물리 복제본엔 app DB 도 app 롤도 없는데 메트릭 익스포터가 database=app 으로 붙으러 가서
+      # cnpg_collector_up=0 — cnpg_* 관측이 통째로 죽는다(런북 §9-25 · Q9 전제).
+      # 🔴 bootstrap 은 생성 시점 1회만 유효 — 고치려면 Cluster 삭제·재생성이다(실측 116초).
+      database: foodbudget
+      owner: fbapp # 실재 롤(basebackup 승계분). CNPG 는 pg_basebackup 부트스트랩에서 앱 자격증명을
+        # 관리하지 않는다(pg-app 시크릿 미생성 실측) — 이름만 알려주는 것이라 비밀번호에 영향 없다
 
   replica:
     enabled: true # 🔫 promote 장전 지점 (T-1 커밋이 false 로 바꾼다 — 파일 상단 주석)
