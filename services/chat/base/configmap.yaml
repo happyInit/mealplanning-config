@@ -1,0 +1,18 @@
+# chat 서비스별 기능 플래그 (§7.3 — "한 서비스 플래그 바꿀 때 9개가 다 재시작되지 않게").
+#   값 = 프로드/코드 기본값. focus·pantry 는 Docker 프로드가 ON 이었어서 프로드 복원(true).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chat-config
+data:
+  GENERATOR_BACKEND: "template"          # template | gemini
+  EXTRACTOR_BACKEND: "rule"              # rule | ner
+  GEMINI_MODEL: "gemini-3.5-flash-lite"
+  RATE_LIMIT_ENABLED: "false"
+  MONTHLY_CAP_ENABLED: "false"
+  MONTHLY_BUDGET_WON: "7200"
+  ACCOUNT_INTEGRATION_ENABLED: "false"
+  MULTITURN_ENABLED: "false"
+  CHAT_PERSIST_ENABLED: "false"
+  CHAT_PANTRY_ENABLED: "true"            # 🔴 프로드 복원 — 냉장고 재고 기반 추천(미인증 시 폴백)
+  CHAT_FOCUS_ENABLED: "true"             # 🔴 프로드 복원 — 대화 일관성(recipe-in-focus·반복 가드)

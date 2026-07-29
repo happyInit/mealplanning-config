@@ -1,0 +1,10 @@
+# mealplan 서비스별 기능 플래그 (§7.3). P1 baseline 전부 OFF (코드 = compose 일치).
+#   좌표(KAFKA_BOOTSTRAP·RANKING_SERVING_URL)는 공유라 app-common 에 있음 — 여기엔 플래그만.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mealplan-config
+data:
+  IMPRESSION_LOG_ENABLED: "false"        # 추천 노출 → activity.recipe_impression(학습데이터)
+  EVENT_PRODUCE_ENABLED: "false"         # ADD_CART → Kafka events.user.activity(라벨)
+  RANKING_ML_ENABLED: "false"            # ML 재랭킹 호출(OFF/장애/콜드스타트 → 규칙순)

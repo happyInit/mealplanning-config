@@ -34,6 +34,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: app-common             # PG·ES·Redis·Kafka·크로스서비스 URL(§2.3)
+            - configMapRef:
+                name: chat-config            # 서비스별 기능 플래그(§7.3)
             - secretRef:
                 name: mp-chat-secrets
           env:
