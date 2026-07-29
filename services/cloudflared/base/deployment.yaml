@@ -1,0 +1,83 @@
+# 인클러스터 cloudflared — 공개 유입(app.mealbong.cloud)을 아웃바운드 터널로 받는다.
+#   호스트 C(mp-ci)와 분리된 전용 터널 mp-app. Service 없음(아웃바운드 전용, 리스닝 포트 없음).
+#
+# 🔴 sidecar.istio.io/inject: "false" — 메시 제외. cloudflared 는 CF 엣지로 QUIC 아웃바운드를 걸고
+#    GW(ingress)로 직접 붙으므로 사이드카 인터셉트가 오히려 방해된다(§메시는 앱 간 호출용).
+# 🔴 PSS restricted — runAsNonRoot·drop ALL·readOnlyRootFS. cloudflared 는 named tunnel 을 credentials
+#    파일로 실행하므로 cert.pem(관리용) 불요, 디스크 쓰기 없음(HOME=/tmp emptyDir 로 방어).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-cloudflared-app
+  labels:
+    app: cloudflared-app
+    tier: ingress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared-app
+  template:
+    metadata:
+      labels:
+        app: cloudflared-app
+        tier: ingress
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      automountServiceAccountToken: false        # K8s API 안 씀
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          image: 192.168.0.10/mealplanning/mp-cloudflared:2026.7.3   # overlay newTag 로 핀
+          args: ["tunnel", "--config", "/etc/cloudflared/config.yaml", "--no-autoupdate", "run"]
+          ports:
+            - name: metrics
+              containerPort: 2000                # /ready · /metrics
+          env:
+            - name: HOME
+              value: /tmp
+          readinessProbe:
+            httpGet: { path: /ready, port: 2000 }   # 터널 커넥션 살아있을 때 200
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /ready, port: 2000 }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: mp-app-tunnel-config
+        - name: creds
+          secret:
+            secretName: mp-app-tunnel-creds
+        - name: tmp
+          emptyDir: {}

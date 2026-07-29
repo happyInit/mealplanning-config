@@ -1,0 +1,19 @@
+# child Application — 인클러스터 cloudflared(전용 터널 mp-app). root app-of-apps 가 집는다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mp-cloudflared
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # 🔴 없으면 삭제 시 유령 리소스(status §4.2)
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: services/cloudflared/overlays/onprem
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  # 수동 sync — 이미지 push·creds 주입 확인 후 사람이 1회 반영(gateway 와 동일 신중 배포).
+  #   auto-sync 는 후속(다른 서비스와 정합 맞춰 P2).
