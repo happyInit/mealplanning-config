@@ -1,7 +1,7 @@
 # Elasticsearch (ECK) — 8.19.19 고정 (런북 §1.1 · Q5).
 #
-# 🔴 sync 전제 = nori 커스텀 이미지(준비 ③): Jenkins CATALOG `elasticsearch-nori` 릴리스 런
-#    (RELEASE_VERSION=8.19.19) → 아래 image 의 PIN-ME 를 :sha 로 교체. §1.1 과 버전 한 글자까지 일치.
+# ✅ nori 이미지 빌드·push 완료(2026-07-29 05:34 UTC, Jenkins 릴리스 런 — 준비 ③ 종결):
+#    :f078bbe9…(git sha) + :8.19.19 + :latest 3태그, Trivy CRITICAL 0. 아래 핀 = 그 sha.
 # 🔴 spec.version 을 느슨하게 두지 말 것 — ECK 3.4 는 Stack 9 도 지원해서 9.x 로 올라가면
 #    클라이언트 핀 `elasticsearch[async]>=8.15,<9`(chat·recipe·ingest) 가 즉사한다.
 #
@@ -21,7 +21,7 @@ metadata:
   namespace: data
 spec:
   version: 8.19.19
-  image: 192.168.0.10/mealplanning/mp-elasticsearch-nori:PIN-ME-8.19.19-sha # 🔴 ③ 빌드 후 :sha 로 교체 (Q5 — ECK CR 의 image 핀은 :sha)
+  image: 192.168.0.10/mealplanning/mp-elasticsearch-nori:f078bbe9ecad4b09e11683aa5cbf1094a40d0ccd # ES 8.19.19 (Q5 — :sha 핀. 버전 자리는 spec.version 이 담당)
   http:
     tls:
       selfSignedCertificate:
