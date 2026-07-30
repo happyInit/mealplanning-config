@@ -46,7 +46,7 @@
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
       "targets": [
         {"editorMode": "code", "expr": "fb_poller_last_run_success", "legendFormat": "poller / {{poller}}", "range": true, "refId": "A"},
-        {"editorMode": "code", "expr": "min by(component) (up{job=\"pipeline-consumers\"})", "legendFormat": "consumer / {{component}}", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "min by(pod) (kube_pod_status_ready{namespace=\"pipeline\",condition=\"true\"})", "legendFormat": "consumer / {{pod}}", "range": true, "refId": "B"},
         {"editorMode": "code", "expr": "absent(fb_poller_last_run_success)", "legendFormat": "poller / telemetry", "range": true, "refId": "C"}
       ],
       "title": "Pipeline Status",
@@ -114,8 +114,8 @@
       "links": [{"targetBlank": false, "title": "Kafka 상세 보기", "url": "/d/fba-kafka-detail/detail-kafka?${__url_time_range}"}],
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"editorMode": "code", "expr": "clamp_min(sum by(topic) (rate(kafka_topic_partition_current_offset{job=\"kafka\",topic=~\"retail.crawl.raw|retail.deal.raw|recipe.crawl.raw\"}[$__rate_interval])), 0)", "legendFormat": "{{topic}} Produced/s", "range": true, "refId": "A"},
-        {"editorMode": "code", "expr": "clamp_min(sum by(topic) (rate(kafka_consumergroup_current_offset{job=\"kafka\",consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\",topic=~\"retail.crawl.raw|retail.deal.raw|recipe.crawl.raw\"}[$__rate_interval])), 0)", "legendFormat": "{{topic}} Consumed/s", "range": true, "refId": "B"}
+        {"editorMode": "code", "expr": "clamp_min(sum by(topic) (rate(kafka_topic_partition_current_offset{topic=~\"retail.crawl.raw|retail.deal.raw|recipe.crawl.raw\"}[$__rate_interval])), 0)", "legendFormat": "{{topic}} Produced/s", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "clamp_min(sum by(topic) (rate(kafka_consumergroup_current_offset{consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\",topic=~\"retail.crawl.raw|retail.deal.raw|recipe.crawl.raw\"}[$__rate_interval])), 0)", "legendFormat": "{{topic}} Consumed/s", "range": true, "refId": "B"}
       ],
       "title": "Kafka Produce vs Consume",
       "type": "timeseries"
@@ -129,8 +129,8 @@
       "links": [{"targetBlank": false, "title": "Kafka 상세 보기", "url": "/d/fba-kafka-detail/detail-kafka?${__url_time_range}"}],
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"editorMode": "code", "expr": "sum by(consumergroup, topic) (kafka_consumergroup_lag{job=\"kafka\",consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\"})", "legendFormat": "{{consumergroup}} / {{topic}} lag", "range": true, "refId": "A"},
-        {"editorMode": "code", "expr": "clamp_min(sum by(consumergroup, topic) (delta(kafka_consumergroup_lag{job=\"kafka\",consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\"}[5m])), 0)", "legendFormat": "{{consumergroup}} / {{topic}} growth", "range": true, "refId": "B"}
+        {"editorMode": "code", "expr": "sum by(consumergroup, topic) (kafka_consumergroup_lag{consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\"})", "legendFormat": "{{consumergroup}} / {{topic}} lag", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "clamp_min(sum by(consumergroup, topic) (delta(kafka_consumergroup_lag{consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\"}[5m])), 0)", "legendFormat": "{{consumergroup}} / {{topic}} growth", "range": true, "refId": "B"}
       ],
       "title": "Consumer Lag & Growth",
       "type": "timeseries"
@@ -192,6 +192,6 @@
   "timezone": "browser",
   "title": "02 Data Pipeline",
   "uid": "fba-data-pipeline",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

@@ -17,7 +17,7 @@
   "graphTooltip": 1,
   "id": null,
   "links": [
-    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Infrastructure Overview", "type": "link", "url": "/d/fba-infrastructure-overview/04-infrastructure-overview"}
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Infrastructure / VM", "type": "link", "url": "/d/fba-infrastructure-overview/04-infrastructure-overview"}
   ],
   "liveNow": false,
   "panels": [
@@ -181,8 +181,8 @@
   "time": {"from": "now-6h", "to": "now"},
   "timepicker": {},
   "timezone": "browser",
-  "title": "08 Hypervisor Thermal",
+  "title": "08 Physical Host Thermal",
   "uid": "fba-hypervisor-thermal",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

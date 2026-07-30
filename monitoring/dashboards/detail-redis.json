@@ -2234,14 +2234,14 @@
       {
         "current": {
           "selected": true,
-          "text": "fb-data",
-          "value": "fb-data"
+          "text": "Kubernetes exporter",
+          "value": ""
         },
         "datasource": {
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(redis_up{job=\"redis\"}, instance)",
+        "definition": "label_values(redis_up, instance)",
         "hide": 0,
         "includeAll": false,
         "multi": true,
@@ -2249,7 +2249,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(redis_up{job=\"redis\"}, instance)",
+          "query": "label_values(redis_up, instance)",
           "refId": "Prometheus-instance-Variable-Query"
         },
         "refresh": 2,
@@ -2294,6 +2294,6 @@
   "timezone": "browser",
   "title": "Detail - Redis",
   "uid": "fba-redis-detail",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

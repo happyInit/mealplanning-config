@@ -2791,14 +2791,14 @@
       {
         "current": {
           "selected": true,
-          "text": "fb-data",
-          "value": "fb-data"
+          "text": "Kubernetes exporter",
+          "value": ""
         },
         "datasource": {
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(pg_up{job=\"postgres\"}, instance)",
+        "definition": "label_values(pg_up, instance)",
         "hide": 2,
         "includeAll": false,
         "multi": false,
@@ -2806,7 +2806,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(pg_up{job=\"postgres\"}, instance)",
+          "query": "label_values(pg_up, instance)",
           "refId": "Prometheus-instance-Variable-Query"
         },
         "refresh": 1,
@@ -2828,7 +2828,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(pg_stat_database_tup_fetched{job=\"postgres\",instance=~\"$instance\"}, datname)",
+        "definition": "label_values(pg_stat_database_tup_fetched{instance=~\"$instance\"}, datname)",
         "hide": 0,
         "includeAll": true,
         "multi": true,
@@ -2836,7 +2836,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(pg_stat_database_tup_fetched{job=\"postgres\",instance=~\"$instance\"}, datname)",
+          "query": "label_values(pg_stat_database_tup_fetched{instance=~\"$instance\"}, datname)",
           "refId": "Prometheus-database-Variable-Query"
         },
         "refresh": 1,
@@ -2933,7 +2933,7 @@
   "timezone": "browser",
   "title": "Detail - PostgreSQL",
   "uid": "fba-postgresql-detail",
-  "version": 1,
+  "version": 2,
   "weekStart": "",
   "__inputs": []
 }

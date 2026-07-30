@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -17,86 +20,282 @@
   "graphTooltip": 1,
   "id": null,
   "links": [
-    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Service Detail", "type": "link", "url": "/d/fba-service-detail/01-service-detail"}
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Service Detail",
+      "type": "link",
+      "url": "/d/fba-service-detail/01-service-detail"
+    }
   ],
   "liveNow": false,
   "panels": [
     {
-      "datasource": {"type": "loki", "uid": "loki"},
-      "description": "선택 기간 동안의 로그인 실패(비밀번호 불일치 등) 횟수. observability-conventions.md §4.4 authentication_failed.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Kubernetes app 네임스페이스의 구조화 로그에서 로그인 실패(authentication_failed)를 집계합니다.",
       "fieldConfig": {
-        "defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 20}, {"color": "red", "value": 50}]}},
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
-      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum(count_over_time({project=\"foodbudget\"} | json | event=\"authentication_failed\" [$__range]))", "queryType": "range", "refId": "A"}],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({namespace=\"app\"} | json | event=\"authentication_failed\" [$__range]))",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
       "title": "Authentication Failures",
       "type": "stat"
     },
     {
-      "datasource": {"type": "loki", "uid": "loki"},
-      "description": "선택 기간 동안 유효하지 않거나 만료된 토큰으로 들어온 요청 횟수(account/notify/pantry/recipebook/mealplan 합산). §4.4 token_invalid.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Kubernetes app 네임스페이스의 구조화 로그에서 유효하지 않거나 만료된 토큰(token_invalid) 요청을 집계합니다.",
       "fieldConfig": {
-        "defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 20}, {"color": "red", "value": 50}]}},
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "id": 2,
-      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum(count_over_time({project=\"foodbudget\"} | json | event=\"token_invalid\" [$__range]))", "queryType": "range", "refId": "A"}],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({namespace=\"app\"} | json | event=\"token_invalid\" [$__range]))",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
       "title": "Invalid Tokens",
       "type": "stat"
     },
     {
-      "datasource": {"type": "loki", "uid": "loki"},
-      "description": "인증 실패·토큰 무효화 이벤트를 서비스별로 나눠 시간에 따른 추이를 봅니다. 특정 시간대에 급증하면 브루트포스 시도를 의심합니다.",
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "events", "axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 30, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0}, "overrides": []},
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 8},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "인증 실패·토큰 무효화 이벤트를 JSON service 필드 기준으로 나눠 추이를 봅니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "events",
+            "axisPlacement": "auto",
+            "drawStyle": "bars",
+            "fillOpacity": 30,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
       "id": 3,
-      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum by(event, service) (count_over_time({project=\"foodbudget\"} | json | event=~\"authentication_failed|token_invalid\" [$__interval]))", "queryType": "range", "refId": "A"}],
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum by(event, service) (count_over_time({namespace=\"app\"} | json | event=~\"authentication_failed|token_invalid\" [$__interval]))",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
       "title": "Security Events Trend",
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "loki", "uid": "loki"},
-      "description": "보안 이벤트 원문 로그. authentication_failed / authorization_denied / token_invalid / rate_limit_exceeded / privileged_action / security_log_delivery_failed (§4.4). 뒤 4개는 아직 코드에 계측되지 않아 현재는 비어 있을 수 있습니다.",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 17},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Kubernetes app 네임스페이스의 보안 이벤트 원문 로그입니다. JSON 본문의 event·service 필드를 사용합니다.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
       "id": 4,
-      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{project=\"foodbudget\"} | json | event=~\"authentication_failed|authorization_denied|token_invalid|rate_limit_exceeded|privileged_action|security_log_delivery_failed\"", "queryType": "range", "refId": "A"}],
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "{namespace=\"app\"} | json | event=~\"authentication_failed|authorization_denied|token_invalid|rate_limit_exceeded|privileged_action|security_log_delivery_failed\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
       "title": "Privileged & Audit Activity",
       "type": "logs"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "CI(build-push-app.yml)의 Trivy 스캔에서 발견된 서비스별 CRITICAL/HIGH 취약점 개수. 애플리케이션 런타임이 아니라 이미지 공급망 보안 상태입니다. fb-ci-harbor의 node-exporter textfile collector로 수집.",
-      "fieldConfig": {
-        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "vulnerabilities", "axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1, "pointSize": 5, "showPoints": "never"}, "min": 0},
-        "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/CRITICAL$/"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/HIGH$/"}, "properties": [{"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}}]}
-        ]
-      },
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 27},
-      "id": 5,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "fb_ci_trivy_vulnerabilities_total", "legendFormat": "{{image}} {{severity}}", "range": true, "refId": "A"}],
-      "title": "Image Vulnerability Scan (Supply Chain)",
-      "type": "timeseries"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["food-budget-app", "security"],
-  "templating": {"list": []},
-  "time": {"from": "now-24h", "to": "now"},
+  "tags": [
+    "food-budget-app",
+    "security",
+    "kubernetes"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
-  "title": "06 Security Overview",
+  "title": "Meal Planning / 06 Security Overview",
   "uid": "fba-security-overview",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
