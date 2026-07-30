@@ -29,6 +29,17 @@ spec:
   imageName: ghcr.io/cloudnative-pg/postgresql:16.14 # VM 16.14-alpine 실측과 동일 마이너. 상위 마이너로 올릴 땐 replica ≥ primary 규칙 확인
   priorityClassName: data-critical # §9-10 실이름 — 마지막까지 살아남는 계층
 
+  # BestEffort → Burstable: 무리소스면 커널 OOM 점수 최악(1000)이라, kubelet 이 못 따라잡는
+  # 순간 스파이크에선 PriorityClass 와 무관하게 PG 가 노드의 첫 희생자가 된다(2026-07-30 컬리
+  # 폴러 OOM 건에서 확인). 메모리 req=lim = OOM 예측성(object_spec §13.9 권고), 2Gi 는 실측
+  # 295Mi(primary) 대비 ~7배 + 페이지캐시 몫. CPU limits 는 넣지 않는다(§13.7).
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      memory: 2Gi
+
   storage:
     size: 20Gi
     storageClass: openebs-lvm
