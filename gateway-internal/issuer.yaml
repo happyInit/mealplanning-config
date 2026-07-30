@@ -1,0 +1,49 @@
+# Let's Encrypt ACME Issuer (observability ns) — gateway/issuer.yaml(app ns)과 대칭 사본.
+#
+# namespaced Issuer 를 유지하는 이유: 공개 GW 와 같은 모양(인증서 일체가 게이트웨이 ns 한 곳에 모임).
+# platform 프로젝트는 일부 cluster-scope 를 허용하지만 ClusterIssuer 로 승격할 동기가 없다 —
+# ns 가 늘 때마다 Issuer 사본 하나가 느는 정도이고, 지금은 딱 두 곳(app·observability)이다.
+#
+# 챌린지 = DNS-01(Cloudflare) — 와일드카드(*.mealbong.cloud)는 애초에 DNS-01 로만 발급 가능하다.
+# ACME 계정키(privateKeySecretRef)는 app ns 쪽 Issuer 와 별개로 새로 등록된다(이름 같아도 ns 가 달라 무관).
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mp-letsencrypt-staging
+  namespace: observability
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: admin@mealbong.cloud
+    privateKeySecretRef:
+      name: mp-letsencrypt-staging-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: mp-cloudflare-api-token   # ESO 가 채우는 Secret(externalsecret-cloudflare.yaml)
+              key: api-token
+        selector:
+          dnsZones:
+            - mealbong.cloud
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mp-letsencrypt-prod
+  namespace: observability
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@mealbong.cloud
+    privateKeySecretRef:
+      name: mp-letsencrypt-prod-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: mp-cloudflare-api-token
+              key: api-token
+        selector:
+          dnsZones:
+            - mealbong.cloud

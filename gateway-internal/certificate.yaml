@@ -1,0 +1,21 @@
+# *.mealbong.cloud 와일드카드 인증서 — 내부 게이트웨이 443 리스너가 무는 Secret 을 채운다.
+#
+# 와일드카드 1장인 이유: 내부 이름이 6개(grafana·minio·loki·jenkins·sonarqube·harbor)이고
+# 앞으로 늘 수 있다 — SAN 나열이면 이름 추가마다 재발급, 와일드카드면 DNS A 레코드도 인증서도 불변.
+# 발급 = DNS-01 (와일드카드는 HTTP-01 불가) — 배관은 공개 GW 가 staging→prod 로 이미 완주한 그
+# 배관(같은 CF 토큰·같은 존)이라 prod 직행한다. 실패해도 LE 실패 한도는 시간당 5회 — 회복 가능.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mp-gw-internal-cert
+  namespace: observability
+spec:
+  secretName: mp-gw-internal-tls        # Gateway https 리스너의 certificateRefs 가 가리키는 이름
+  issuerRef:
+    kind: Issuer
+    name: mp-letsencrypt-prod
+  commonName: "*.mealbong.cloud"
+  dnsNames:
+    - "*.mealbong.cloud"
+  privateKey:
+    rotationPolicy: Always
