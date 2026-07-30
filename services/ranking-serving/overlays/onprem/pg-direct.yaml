@@ -1,0 +1,22 @@
+# 🔴 **ranking-serving 은 Pooler 를 우회한다** — P3 전환에서 의도적으로 제외 (2026-07-30).
+#
+# 이유 ① 풀을 안 쓴다: `ml/recipe-ranking/serve.py` 가 `psycopg.connect()` 를 직접 호출한다.
+#   app#407 의 prepare_threshold=None 패치는 `services/*/app/db.py` 의 AsyncConnectionPool 만
+#   대상이었으므로 여기는 **psycopg 기본값(prepare_threshold=5)** 그대로다 →
+#   transaction 풀링에서 `prepared statement "..." does not exist` 위험.
+# 이유 ② 이득이 없다: HPA 대상이 아니다(object_spec §9.3). mealplan 이 내부에서 부르는 소비자라
+#   파드가 늘지 않으므로 다중화로 얻을 게 없다.
+#
+# 🔴 해제 조건: serve.py 의 connect 에 prepare_threshold=None 을 넣고 재빌드한 뒤에야 옮긴다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-ranking-serving
+spec:
+  template:
+    spec:
+      containers:
+        - name: ranking-serving
+          env:
+            - name: PGHOST
+              value: pg-rw.data.svc
