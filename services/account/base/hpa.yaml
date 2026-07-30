@@ -1,0 +1,40 @@
+# account HPA — P3 스케일 (2026-07-30). **Pooler 전환이 전제조건**이었다(object_spec §4.5·§9.2):
+#   HPA 로 파드가 늘면 파드마다 커넥션 풀이 생겨 max_connections 100 에 먼저 부딪힌다.
+#   Pooler(PgBouncer transaction) 도입으로 그 벽이 사라진 뒤에야 켠다 — 순서를 어기면
+#   "HPA 를 켰는데 오히려 느려지는"(커넥션 고갈 대기) 현상이 난다.
+#
+# 🔴 **왜 account 만인가** (§9.3): bcrypt CPU 포화라는 **실측 근거**가 있는 유일한 서비스다.
+#   recipe·price·mealplan 은 K8s 에서 관측한 뒤 켠다. frontend(정적)·폴러 CronJob(크롤 예의·
+#   중복 수집)·데이터 티어는 대상이 아니다. "일단 전부 HPA" 는 requests 오설정과 맞물려 진동한다.
+#
+# 🔴 **metric 이 Resource 가 아니라 ContainerResource 인 이유**: 이 파드에는 앱(account)과
+#   Istio 사이드카(istio-proxy)가 함께 산다. 기본 Resource 타입은 **파드 전체**(sum(usage)/sum(requests))로
+#   판단하는데, 사이드카 requests 가 10m 뿐이라 프록시가 조금만 튀어도 비율이 크게 흔들린다.
+#   우리가 보려는 신호는 앱의 bcrypt CPU 이므로 컨테이너를 지정한다(K8s 1.30 GA · 현재 1.34).
+#
+# min 2 인 이유: 이 설계의 전제가 **예측 가능한 피크타임**(11-12·17-18시)인데, min 1 이면 스파이크가
+#   파드 하나를 때리는 동안 HPA 가 반응할 시간(메트릭 지연 + 파드 기동 + holdApplicationUntilProxyReady)이
+#   없다. 2 로 시작하면 그 시간을 벌고, 단일 파드 재시작 공백도 사라진다.
+# max 4 인 이유: 노드 4대 · 커넥션 4×5=20 으로 PgBouncer max_client_conn 100 안쪽.
+#   목적이 "무한 확장" 이 아니라 "커넥션 벽에 안 막히는 것의 실증" 이라 근거 없이 키우지 않는다.
+#
+# behavior 는 기본값 유지 — scaleDown 안정화 300s 가 피크 직후 진동을 막는다.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mp-account
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mp-account
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: account          # 🔴 Deployment 의 컨테이너 이름과 일치해야 한다(불일치 시 메트릭 미수집)
+        target:
+          type: Utilization
+          averageUtilization: 70    # requests 250m 기준 → 파드당 175m 에서 확장

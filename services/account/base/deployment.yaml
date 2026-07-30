@@ -6,7 +6,10 @@ metadata:
     app: account              # §2.3: 라벨은 bare(논리 신원·Service selector·OTEL)
     tier: backend            # NetworkPolicy 가 ns 아닌 이 라벨로 선택(object_spec §1.3)
 spec:
-  replicas: 1                # P1 베이스라인. account HPA 는 P3(Pooler 후, §9.2)
+  # 🔴 replicas 를 **의도적으로 안 적는다** — HPA(hpa.yaml)가 이 필드의 주인이다(2026-07-30 P3).
+  #    git 에 남겨두면 ArgoCD 가 sync 할 때마다 HPA 가 정한 replica 수를 1 로 되돌려,
+  #    피크 중에 파드가 줄었다 늘었다 한다. 필드가 없으면 apply 가 live 값을 안 건드린다.
+  #    베이스라인이 필요하면 HPA 의 minReplicas 를 본다(현재 2).
   selector:
     matchLabels:
       app: account
