@@ -1,0 +1,132 @@
+# 내부 게이트웨이 라우트 — 이름(서브도메인) 단위로 갈린다. 공개 GW(경로 단위)와 달리 여기는
+# 서비스마다 이름이 하나씩이라 rules 는 전부 "/" PathPrefix 하나다.
+#
+# 손님 명단 (전부 https 리스너, sectionName: https):
+#   grafana   → kube-prometheus-stack-grafana:80   (클러스터 안 — 구 NodePort 30300 대체)
+#   loki      → loki:3100                          (클러스터 안 — 구 NodePort 31100 대체, alloy push)
+#   minio     → mp-minio-console:9001              (클러스터 안 — 콘솔 첫 노출)
+#   jenkins   → mp-jenkins-ext:8080     ┐
+#   sonarqube → mp-sonarqube-ext:9000   ├ 클러스터 밖 호스트 C(.10) — backends-hostc.yaml
+#   harbor    → mp-harbor-ext:443       ┘ (UI 전용 — containerd pull 경로는 IP 직결 불변)
+#
+# ⚠️ ci.mealbong.cloud(CF 터널·인터넷 경유)가 이미 Jenkins 를 가리킨다 — jenkins.mealbong.cloud 는
+#    LAN 경로로 병존한다(명시 레코드 > 와일드카드 라 충돌 없음).
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-grafana-route
+  namespace: observability
+spec:
+  parentRefs:
+    - name: mp-gw-internal
+      sectionName: https
+  hostnames: ["grafana.mealbong.cloud"]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: kube-prometheus-stack-grafana
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-loki-push-route
+  namespace: observability
+spec:
+  parentRefs:
+    - name: mp-gw-internal
+      sectionName: https
+  hostnames: ["loki.mealbong.cloud"]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }   # push(/loki/api/v1/push) 외 조회 API 도 통과 —
+      backendRefs:                               # 구 31100 NodePort 도 전체 API 노출이었다(등가)
+        - name: loki
+          port: 3100
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-minio-console-route
+  namespace: observability
+spec:
+  parentRefs:
+    - name: mp-gw-internal
+      sectionName: https
+  hostnames: ["minio.mealbong.cloud"]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: mp-minio-console
+          port: 9001
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-jenkins-route
+  namespace: observability
+spec:
+  parentRefs:
+    - name: mp-gw-internal
+      sectionName: https
+  hostnames: ["jenkins.mealbong.cloud"]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: mp-jenkins-ext
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-sonarqube-route
+  namespace: observability
+spec:
+  parentRefs:
+    - name: mp-gw-internal
+      sectionName: https
+  hostnames: ["sonarqube.mealbong.cloud"]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: mp-sonarqube-ext
+          port: 9000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-harbor-route
+  namespace: observability
+spec:
+  parentRefs:
+    - name: mp-gw-internal
+      sectionName: https
+  hostnames: ["harbor.mealbong.cloud"]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: mp-harbor-ext
+          port: 443            # GW→Harbor 재암호화 — DestinationRule(backends-hostc.yaml)이 TLS 를 연다
+---
+# HTTP(80) → HTTPS(301) 전량 리다이렉트 — 공개 GW 의 mp-https-redirect 와 동일 패턴.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-internal-https-redirect
+  namespace: observability
+spec:
+  parentRefs:
+    - name: mp-gw-internal
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

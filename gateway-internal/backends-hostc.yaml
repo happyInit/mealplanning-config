@@ -1,0 +1,149 @@
+# 호스트 C(.10, 클러스터 밖 VirtualBox VM) UI 3종을 게이트웨이 백엔드로 등록.
+#
+# 셀렉터 없는 Service + 수동 EndpointSlice 패턴 — 파드가 아니라 클러스터 밖 IP 가 실체라
+# 셀렉터로 못 찾고, 주소를 우리가 직접 명시한다. EndpointSlice 는 라벨
+# kubernetes.io/service-name 으로 Service 에 묶이고, 포트 이름이 Service 쪽과 일치해야 한다.
+#
+# 🔴 스코프 = **브라우저 UI 전용**. containerd 의 이미지 pull 은 계속 192.168.0.10 직결이다 —
+#    pull 경로를 게이트웨이 뒤로 넣으면 "클러스터 복구에 Harbor 가 필요한데 Harbor 접근에
+#    클러스터가 필요한" 순환 의존이 생긴다(그래서 여기 있는 건 UI 홉뿐이다).
+# 🔴 호스트 C IP(.10)·포트가 바뀌면 여기 EndpointSlice 3개를 같이 갱신할 것.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mp-jenkins-ext
+  namespace: observability
+spec:
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: mp-jenkins-ext-1
+  namespace: observability
+  labels:
+    kubernetes.io/service-name: mp-jenkins-ext
+addressType: IPv4
+endpoints:
+  - addresses: ["192.168.0.10"]
+ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mp-sonarqube-ext
+  namespace: observability
+spec:
+  ports:
+    - name: http
+      port: 9000
+      protocol: TCP
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: mp-sonarqube-ext-1
+  namespace: observability
+  labels:
+    kubernetes.io/service-name: mp-sonarqube-ext
+addressType: IPv4
+endpoints:
+  - addresses: ["192.168.0.10"]
+ports:
+  - name: http
+    port: 9000
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mp-harbor-ext
+  namespace: observability
+spec:
+  ports:
+    - name: https
+      port: 443
+      protocol: TCP
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: mp-harbor-ext-1
+  namespace: observability
+  labels:
+    kubernetes.io/service-name: mp-harbor-ext
+addressType: IPv4
+endpoints:
+  - addresses: ["192.168.0.10"]
+ports:
+  - name: https
+    port: 443
+    protocol: TCP
+---
+# GW → Harbor 백엔드 TLS — 게이트웨이가 브라우저 TLS(LE)를 끊고, Harbor(.10:443)로는
+# 로컬 CA(fb-local-ca) 인증서를 **검증하며** 다시 암호화한다.
+#   - credentialName: cacert 키만 담은 Secret(mp-harbor-ca, 아래) — 게이트웨이 파드와 같은 ns 필수
+#   - subjectAltNames: harbor.crt 의 SAN 은 IP(192.168.0.10) 하나뿐이라 그걸 핀한다
+#   - sni 미설정: Harbor nginx 는 default server 라 SNI 불요(IP 는 SNI 에 실을 수도 없다)
+# 이 DR 의 유일한 클라이언트 = 게이트웨이 Envoy(observability 에 사이드카 없음).
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: mp-harbor-ext-tls
+  namespace: observability
+spec:
+  host: mp-harbor-ext.observability.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: SIMPLE
+      credentialName: mp-harbor-ca
+      subjectAltNames: ["192.168.0.10"]
+---
+# 로컬 CA 의 **공개** 인증서(fb-local-ca) — 비밀 아님(개인키는 app 레포 infra/certs/ 에서 gitignored).
+# app 레포 infra/certs/ca.crt 와 동일 내용. CA 를 교체(재발급)하면 여기도 같이 갱신할 것.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mp-harbor-ca
+  namespace: observability
+type: Opaque
+stringData:
+  cacert: |
+    -----BEGIN CERTIFICATE-----
+    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
+    -----END CERTIFICATE-----

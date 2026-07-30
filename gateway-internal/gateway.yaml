@@ -1,0 +1,47 @@
+# 내부 게이트웨이 — .15 (플랜 §3.3 "LoadBalancer 는 게이트웨이 전용, 상시 2개" 중 2번 — 이걸로 상수 2 완성)
+#
+# 목적: NodePort 회수 약속 이행(Grafana 30300 · loki-push 31100) + 호스트 C UI 3종의 이름 접근.
+#   모든 내부 도구는 https://<이름>.mealbong.cloud 하나의 패턴으로 통일한다 —
+#   DNS = 와일드카드 A(*.mealbong.cloud → 192.168.0.15, DNS-only) · 인증서 = 와일드카드 1장.
+#   IP 직결(각 서비스 자체 포트)은 비상구로 병존한다(게이트웨이 죽어도 서비스 직접 접근은 가능).
+#
+# 🔴 배치 = observability(app 아님): 백엔드(Grafana·Loki·MinIO 콘솔·호스트C ext Service)가 전부
+#    이 ns 라 allowedRoutes: Same 으로 ReferenceGrant 가 통째로 불요하다. PSS 는 baseline(enforce)
+#    이지만 Gateway 파드 seccompProfile 은 istiod 전역 gateways.securityContext 로 이미 해소
+#    (status §3 ③ — 2026-07-28 실측. 증상 = Service 정상·파드 0·PROGRAMMED=False).
+#
+# 🔴 MetalLB 풀이 autoAssign:false 라 주소 풀 주석이 **없으면 영원히 Pending** (공개 GW 와 동일 함정).
+#
+# TLS: 443 종단(와일드카드 *.mealbong.cloud — certificate.yaml) + 80 은 전량 301 리다이렉트.
+#   80 리스너에 hostname 이 없으므로 IP 로 온 평문도 받아 https 로 튕긴다(이후 IP-SNI 는 의도적 불통 —
+#   이름이 정본이다). 기계 손님(alloy)은 처음부터 https://loki.mealbong.cloud 로 직행.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mp-gw-internal
+  namespace: observability
+spec:
+  gatewayClassName: istio
+  infrastructure:
+    annotations:
+      metallb.universe.tf/address-pool: gateway-pool
+      metallb.universe.tf/loadBalancerIPs: 192.168.0.15
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same          # 리다이렉트 라우트(mp-internal-https-redirect)만 붙는다
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "*.mealbong.cloud"      # 와일드카드 SNI — 개별 매칭은 HTTPRoute 의 hostnames 가 한다
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mp-gw-internal-tls     # cert-manager 가 채우는 와일드카드 Secret(같은 ns → RefGrant 불요)
+      allowedRoutes:
+        namespaces:
+          from: Same
