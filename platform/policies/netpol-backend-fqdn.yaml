@@ -1,0 +1,97 @@
+# 보안 ③ CiliumNetworkPolicy — 티어 2 부록: 서비스별 외부 FQDN egress. object_spec §10.4.
+#
+# 왜 표준 netpol 이 아니라 Cilium 인가: 표준 NetworkPolicy 는 IP/CIDR 만 다룬다. OAuth·Gemini 는 CDN 뒤라
+# IP 가 수시로 바뀌어 "IP 목록 허용"이 원리적으로 불가능하다. Cilium 은 DNS 응답을 학습해 그 IP 를 TTL 동안만
+# 허용한다(§10.4). → toFQDNs 를 쓰려면 **DNS L7 가시성 규칙이 반드시 같은 정책에** 있어야 한다(아래 toEndpoints+rules.dns).
+#   표준 netpol 의 L4 DNS 허용만으론 Cilium 이 응답을 파싱하지 않아 FQDN 학습이 안 된다.
+#
+# additive: 각 파드는 netpol-backend(공통 data/DNS/istiod/intra-app)를 이미 받고, 여기서 외부 FQDN 만 더한다.
+# 🔴 전제(§10.4): 앱이 클러스터 DNS 를 써야 성립. IP 직결하면 학습할 게 없어 차단된다(우리 앱은 전부 DNS 사용).
+# 🔴 목적지가 늘면 여기 matchName 추가. 누락 시 cilium monitor --type drop 에 그 FQDN 이 뜬다.
+---
+# account → 소셜 로그인 토큰교환·유저정보 (oauth.py: kakao _TOKEN/_USER, google _TOKEN/_USER). cert/jwks fetch 없음(userinfo 방식).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-account-egress-fqdn
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: account
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "kauth.kakao.com"          # 토큰 교환
+        - matchName: "kapi.kakao.com"           # 유저 정보
+        - matchName: "oauth2.googleapis.com"    # 토큰 교환
+        - matchName: "openidconnect.googleapis.com"  # 유저 정보(userinfo)
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+# ocr → Gemini(vision 백엔드). google-genai SDK = generativelanguage.googleapis.com. 유료 API·월 예산 캡(§10.4).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-ocr-egress-fqdn
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: ocr
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "generativelanguage.googleapis.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+# chat → Gemini(generator_backend=gemini 일 때만. 기본 template — 미사용이어도 최소권한으로 열어둠, §10.3 이 chat 포함).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-chat-egress-fqdn
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: chat
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "generativelanguage.googleapis.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

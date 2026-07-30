@@ -7,5 +7,8 @@ resources:
   - peerauthentication.yaml
   # 보안 ③ NetworkPolicy default-deny — frontend→backend→data→pipeline 순(계획). 티어별로 파일 추가·sync·Hubble 검증.
   - netpol-frontend.yaml            # 티어 1: frontend (default-deny, ingress=GW+probe / egress=DNS+istiod)
-  # 티어 2 backend(+ocr→Gemini CiliumNetworkPolicy) → 티어 3 data → 티어 4 pipeline 이 순서대로 추가된다.
+  - netpol-backend.yaml             # 티어 2: backend 공통 (GW+intra-app+probe / data+DNS+istiod+intra-app)
+  - netpol-operations.yaml          # 티어 2 부록: operations cross-ns ↔ observability(Alertmanager/Prometheus)
+  - netpol-backend-fqdn.yaml        # 티어 2 부록: account→OAuth · ocr/chat→Gemini FQDN (CiliumNetworkPolicy)
+  # 티어 3 data → 티어 4 pipeline 이 순서대로 추가된다.
   # 🔴 data·pipeline 대상 netpol 은 그 ns 로 가야 하므로(이 kustomization 은 namespace:app 강제) 그때 별도 배치.

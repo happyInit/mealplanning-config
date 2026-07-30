@@ -1,0 +1,38 @@
+# 보안 ③ NetworkPolicy — 티어 2 부록: operations 전용 cross-ns (additive). object_spec §10.3(신규 — 표에 없던 서비스).
+#
+# operations 는 tier=backend 라 공통 netpol-backend 를 이미 받는다. 여기선 그 위에 얹는
+# **observability ns 와의 cross-ns 왕복**만 추가한다(공통 규칙엔 없는 목적지 — operations 만 필요).
+#   · ingress ← Alertmanager(observability) 가 /api 로 알림 webhook POST → :8011
+#   · egress  → Prometheus(observability) :9090 조회 (config: kube-prometheus-stack-prometheus.observability.svc:9090)
+#
+# ⚠️ mTLS 주의(netpol 과 별개 층): app ns 는 PeerAuthentication STRICT. Alertmanager 는 메시 밖(observability
+#    미주입)이라 operations 인바운드로 **평문**이 온다 → STRICT 가 L7 에서 막을 수 있다. 이 netpol 은 L3/L4 만
+#    여는 것이고, 알림 수신이 실제로 되는지는 적용 후 확인해야 한다(안 되면 :8011 포트 PeerAuth 예외가 별건으로 필요).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-operations
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app: operations
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Alertmanager(observability) → operations webhook :8011
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - { protocol: TCP, port: 8011 }
+  egress:
+    # operations → Prometheus(observability) :9090
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - { protocol: TCP, port: 9090 }
