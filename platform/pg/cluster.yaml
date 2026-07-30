@@ -54,7 +54,10 @@ spec:
     podAntiAffinityType: required
 
   monitoring:
-    enablePodMonitor: true # Q9 — cnpg_* 지표. ⚠️ .11 도달은 브리지 keep 확장 선행(§9-19)
+    # ~~enablePodMonitor: true~~ → false (2026-07-30 부채 해소) — CNPG 1.30 에서 deprecated 필드.
+    # 스크레이프는 monitoring.yaml 의 수동 PodMonitor `mp-pg` 가 대체(오퍼레이터 생성본과 동일 셀렉터).
+    # false 로 바꾸면 오퍼레이터 소유 PodMonitor `pg` 는 자동 삭제된다 — mp-pg 가 즉시 이어받는다.
+    enablePodMonitor: false # Q9 — cnpg_* 지표는 mp-pg PodMonitor 로
 
   bootstrap:
     pg_basebackup:

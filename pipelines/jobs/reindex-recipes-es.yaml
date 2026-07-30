@@ -17,10 +17,19 @@ spec:
     spec:
       restartPolicy: Never
       priorityClassName: pipeline-low
+      # PodSecurity warn=restricted 대응 — kustomization.yaml 의 일괄 패치와 동일 세트(3종).
+      # 이 파일은 kustomize 밖(1회성 kubectl)이라 직접 기재. runAsNonRoot 는 이미지 USER 별건 후.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: reindex
           image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
           command: ["python", "pipelines/ingest/index_recipes_es.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           envFrom:
             - configMapRef:
                 name: mp-pipeline-env

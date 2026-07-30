@@ -1,6 +1,21 @@
-# CNPG 알람 — 전환창 스텝 11 이월분 + `.11` PGReplicationSlotRetainedWALHigh 이식.
-# 스크레이프는 cluster.yaml 의 monitoring.enablePodMonitor 가 이미 담당(PodMonitor pg 실재) —
-# 여기선 규칙만 정의한다. 메트릭 이름은 전부 인클러스터 Prometheus 실측(2026-07-30).
+# CNPG 알람 + 스크레이프 — 전환창 스텝 11 이월분 + `.11` PGReplicationSlotRetainedWALHigh 이식.
+# 메트릭 이름은 전부 인클러스터 Prometheus 실측(2026-07-30).
+---
+# 수동 PodMonitor (2026-07-30 부채 해소) — cluster.yaml 의 enablePodMonitor(deprecated) 대체.
+# 오퍼레이터가 만들던 PodMonitor `pg` 의 spec 을 실물에서 그대로 복사했다(셀렉터·포트 동일) —
+# kps 는 셀렉터 무관 수집(selectorNilUsesHelmValues=false)이라 이름이 바뀌어도 그대로 잡힌다.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: mp-pg
+  namespace: data
+spec:
+  podMetricsEndpoints:
+    - port: metrics
+  selector:
+    matchLabels:
+      cnpg.io/cluster: pg
+      cnpg.io/podRole: instance
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule

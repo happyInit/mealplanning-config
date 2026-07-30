@@ -15,3 +15,40 @@ resources:
   - pruners.yaml
   - pvc.yaml
   - monitoring.yaml
+
+# ── PodSecurity(warn=restricted) 경고 해소 — 전 워크로드 공통 securityContext ──────────
+# pipeline ns 는 enforce=baseline·warn=restricted 라 잡 생성마다 경고 4종이 찍히던 부채.
+# 그중 3종(seccompProfile·allowPrivilegeEscalation·capabilities)을 여기서 일괄 부여한다.
+# 🔴 runAsNonRoot 는 **의도적으로 뺐다** — mp-data-pipeline·mp-crawler-kurly 이미지가
+#    root(uid=0)로 도는 걸 실측(2026-07-30). 매니페스트만으로 켜면 전 파이프라인 기동 불가라
+#    이미지에 USER 를 넣는 별건(app 레포 Dockerfile) 뒤에 켠다 — 그때까지 warn 1종 잔존이 정상.
+# jobs/reindex-recipes-es.yaml 은 kustomize 밖(1회성 kubectl)이라 파일에 직접 넣었다 — 동기 유지.
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+  - target:
+      kind: CronJob
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/securityContext
+        value:
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
