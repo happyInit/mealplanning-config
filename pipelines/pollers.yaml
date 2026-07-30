@@ -36,9 +36,9 @@ spec:
               resources:
                 requests:
                   cpu: 50m
-                  memory: 128Mi
+                  memory: 1Gi # 실측 피크 1131Mi(2026-07-30 검증 런) — 스케줄러가 실사용을 반영하도록
                 limits:
-                  memory: 1Gi
+                  memory: 2Gi # 1Gi 는 OOMKill 실장애(chromium 크롤 피크 1131Mi > 1Gi), 2Gi = 여유 ~45%
 ---
 # 오아시스 가격 폴링(카테고리 13종) → Kafka
 apiVersion: batch/v1
