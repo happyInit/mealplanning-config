@@ -1,0 +1,48 @@
+# ArgoCD UI 를 내부 게이트웨이에 등록 — https://argo.mealbong.cloud (LAN, .15).
+#
+# 🔴 호스트가 argocd 가 아니라 **argo** 인 이유: `argocd.mealbong.cloud` 는 전용 argocd-webhook-tunnel
+#    이 소유하며 `/api/webhook` 만 노출한다(ArgoCD UI/API 는 의도적 미노출). 그 호스트에 UI 를 붙이면
+#    GitHub 웹훅(즉시 CD)이 깨진다. → UI 는 별도 서브도메인 argo.mealbong.cloud 로 분리한다.
+#    argo.* 는 와일드카드(*.mealbong.cloud → 사설 192.168.0.15, DNS-only)·와일드카드 인증서가 자동 커버
+#    = Cloudflare 변경 불필요, **LAN 전용**(사설 IP). argocd=클러스터 root 라 인터넷 노출은 안 한다.
+#
+# 왜 ServiceEntry 인가 (backends-hostc.yaml 과 동일 패턴): argocd-server 는 argocd ns, 이 라우트는
+#    observability ns. gateway-internal 앱은 platform project 라 argocd ns 를 destinations 에 못 가져
+#    표준 크로스-ns ReferenceGrant 를 못 넣는다 → ServiceEntry 로 백엔드를 observability ns 안에 등록.
+# 🔴 argocd-server 는 이미 --insecure(평문 :80) → GW 가 와일드카드 TLS 종단·HTTP 프록시(argocd 무변경).
+#    location=MESH_EXTERNAL: argocd ns=메시 밖(비주입)이라 mTLS originate 금지.
+---
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: mp-argocd-ui-ext
+  namespace: observability
+spec:
+  hosts: ["argocd-ui.incluster.mp.internal"]   # 메시 내부 식별용 가상 이름(실제 DNS 아님)
+  location: MESH_EXTERNAL
+  resolution: DNS
+  endpoints:
+    - address: argocd-server.argocd.svc.cluster.local
+  ports:
+    - number: 80
+      name: http
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mp-argocd-ui-route
+  namespace: observability
+spec:
+  parentRefs:
+    - name: mp-gw-internal
+      sectionName: https
+  hostnames: ["argo.mealbong.cloud"]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - group: networking.istio.io
+          kind: Hostname
+          name: argocd-ui.incluster.mp.internal
+          port: 80
