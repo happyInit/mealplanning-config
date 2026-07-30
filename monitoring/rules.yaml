@@ -1,0 +1,26 @@
+# `.11` ContainerMemoryNearLimit 이식 — 클러스터 전 ns 대상 (kustomization 의 namespace: app 으로
+# 오브젝트는 app ns 에 놓이지만, 인클러스터 Prometheus 의 ruleSelector 가 `{}`(전체)라 평가는 전역이다).
+# 실증 근거: tempo 768M 크래시루프 전례(.11 규칙 주석) + 2026-07-30 컬리 폴러 OOMKill(1Gi 한도).
+# 🔴 tempo 규칙 2종(BlocklistIndexBroken·CompactionErrors)은 이식 보류 — 인클러스터 tempo 에 아직
+#    블록이 없어(tempodb_blocklist_length 시리즈 0) absent() 기반 규칙이 즉시 오발화한다.
+#    트레이스 재지향(.10 alloy → 인클러스터) 후 함께 들여온다.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-container-memory
+spec:
+  groups:
+    - name: mp-container-memory
+      rules:
+        - alert: MpContainerMemoryNearLimit
+          expr: |
+            container_memory_working_set_bytes{container!="", container!="POD"}
+              / on(namespace, pod, container)
+                kube_pod_container_resource_limits{resource="memory"} > 0.85
+          for: 15m
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} 메모리가 한도의 {{ $value | humanizePercentage }} — OOM 임박. 한도 상향 또는 워크로드 축소 검토"

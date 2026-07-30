@@ -1,0 +1,16 @@
+# Kafka exporter 스크레이프 — exporter 파드는 Strimzi 가 만들지만 Service 가 없어 PodMonitor 로 걷는다.
+# (platform/redis/monitoring.yaml 과 같은 계열 — kafka_consumergroup_lag 이 노출만 되고 안 걷히던
+#  상태의 해소. lag 알람은 소비 주체 옆 pipelines/monitoring.yaml 의 MpKafkaConsumerLagGrowing.)
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: mp-kafka-exporter
+  namespace: data
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/name: kafka-kafka-exporter
+  podMetricsEndpoints:
+    - port: tcp-prometheus # exporter 컨테이너의 포트 이름(Strimzi 명명)
+      interval: 30s

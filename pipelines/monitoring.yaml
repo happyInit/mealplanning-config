@@ -1,0 +1,72 @@
+# 파이프라인 관측 — `.11` 모니터링 컷오버 이식분 (2026-07-30 결정: P4 → 즉시).
+#
+# 구 .11 규칙과의 매핑:
+#   DataPollerLastRunFailed(fb_poller_last_run_success==0) → **이식 안 함** — kube-prometheus-stack
+#     기본 KubeJobFailed 가 이미 커버한다(실증: 2026-07-30 03:30 컬리 실패를 잡고 있었다.
+#     Slack 라우팅이 없어 안 보였을 뿐). fb_poller_* 는 .8 크론 래퍼(run-poller.sh)가 쓰던
+#     node-exporter textfile — K8s 크론잡엔 그 래퍼가 없고, kube-state-metrics 가 네이티브 대체다.
+#   DataPollerStale → MpPollerStale (kube_cronjob_status_last_successful_time 기반).
+#   KafkaConsumerLagGrowing / PipelineSinkWriteFailure → 동명 Mp* 로 직이식.
+---
+# 상주 consumer 4종 — metrics 포트는 열려 있는데 걷는 쪽이 없던 상태의 해소
+# (platform/redis/monitoring.yaml 과 같은 계열). Service 가 없으므로 PodMonitor.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: mp-pipeline-consumers
+  namespace: pipeline
+spec:
+  selector:
+    matchExpressions:
+      - { key: app, operator: In, values: [retail-refiner, deal-notifier, recipe-refiner, user-event-sink] }
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-pipeline
+  namespace: pipeline
+spec:
+  groups:
+    - name: mp-pipeline
+      rules:
+        # 구 DataPollerStale 임계의 K8s 크론잡 매핑. 구 oasis 16h(일2회 단일 폴러)는 dawn/noon
+        # 분리로 각자 일1회가 되어 30h 버킷으로 이동. deal-pruner(10분 주기)·user-data-pruner·
+        # chat-insights 는 구 규칙에 없던 신규 편입. 🔴 시리즈는 첫 성공 후에만 존재한다 —
+        # 한 번도 성공 못 한 크론잡은 이 규칙이 못 보고, 그 구간은 KubeJobFailed 가 잡는다.
+        - alert: MpPollerStale
+          expr: |
+            (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-price-matview|mp-deal-pruner"} > 10800)
+            or (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-kurly|mp-poller-oasis-dawn|mp-poller-oasis-noon|mp-poller-deal-timesale|mp-poller-deal-closesale|mp-user-data-pruner|mp-chat-insights"} > 108000)
+            or (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-recipe|mp-poller-es-recipes"} > 432000)
+          for: 5m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "{{ $labels.cronjob }} 성공이 예정 주기보다 오래 갱신되지 않음"
+            description: "마지막 성공 이후 임계(빈도별 3h/30h/120h)를 초과. 잡 자체가 실패 중이면 KubeJobFailed 가 동반 발화한다."
+
+        # 구 규칙의 3그룹에 이후 추가된 user-event-sink·price-anomaly-notifier 를 편입.
+        - alert: MpKafkaConsumerLagGrowing
+          expr: |
+            sum by(consumergroup, topic) (kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|recipe-refiner|user-event-sink|price-anomaly-notifier"}) > 100
+            and
+            deriv(sum by(consumergroup, topic) (kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|recipe-refiner|user-event-sink|price-anomaly-notifier"})[10m:]) > 0
+          for: 1m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "{{ $labels.consumergroup }}/{{ $labels.topic }} lag이 100건을 넘고 계속 증가"
+
+        - alert: MpPipelineSinkWriteFailure
+          expr: sum by(component, sink) (rate(fb_pipeline_sink_writes_total{result="failure"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            service: data-pipeline
+          annotations:
+            summary: "{{ $labels.component }}의 {{ $labels.sink }} 저장 실패 지속"
