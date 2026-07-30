@@ -5,3 +5,29 @@ resources:
   - servicemonitor.yaml
   - rules.yaml
   - rules-physical.yaml
+
+# ── Grafana 대시보드 이식 (모니터링 컷오버 ⑤, 2026-07-30) — 구 .11 provisioning JSON 13장 ──
+# 인클러스터 Grafana 의 sidecar 가 grafana_dashboard 라벨을 단 CM 을 자동 로드한다.
+# 이 kustomization 은 namespace: app 을 강제하므로 sidecar 는 searchNamespace: ALL 이 전제
+# (kube-prometheus-stack values — app repo 소관). 데이터소스 uid(prometheus·loki·tempo)는
+# 양쪽이 동일해 JSON 무수정 이식. 총 ~360KB — CM 1MB 한도 내.
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+configMapGenerator:
+  - name: mp-grafana-dashboards
+    files:
+      - dashboards/00-overview.json
+      - dashboards/01-service-detail.json
+      - dashboards/02-data-pipeline.json
+      - dashboards/03-data-systems-health.json
+      - dashboards/04-infrastructure-overview.json
+      - dashboards/05-observability-health.json
+      - dashboards/06-security-overview.json
+      - dashboards/07-container-resources.json
+      - dashboards/08-hypervisor.json
+      - dashboards/detail-elasticsearch.json
+      - dashboards/detail-kafka.json
+      - dashboards/detail-postgresql.json
+      - dashboards/detail-redis.json

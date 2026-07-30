@@ -1,0 +1,197 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Data Systems Health", "type": "link", "url": "/d/fba-data-systems-health/03-data-systems-health"},
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Kafka Detail", "type": "link", "url": "/d/fba-kafka-detail/detail-kafka"}
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "배치 poller의 마지막 실행 결과와 상주 consumer의 scrape 상태를 함께 봅니다. poller는 첫 실행 전까지 표시되지 않습니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [{"options": {"0": {"color": "red", "text": "FAILED / DOWN"}, "1": {"color": "green", "text": "OK / UP"}}, "type": "value"}],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "poller / telemetry"},
+            "properties": [
+              {"id": "mappings", "value": [{"options": {"1": {"color": "orange", "text": "METRICS MISSING"}}, "type": "value"}]},
+              {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "orange", "value": null}]}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {"editorMode": "code", "expr": "fb_poller_last_run_success", "legendFormat": "poller / {{poller}}", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "min by(component) (up{job=\"pipeline-consumers\"})", "legendFormat": "consumer / {{component}}", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "absent(fb_poller_last_run_success)", "legendFormat": "poller / telemetry", "range": true, "refId": "C"}
+      ],
+      "title": "Pipeline Status",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "마지막 성공 이후 경과시간을 각 poller의 정상 주기로 나눈 값입니다. 100%는 다음 실행 예정 시각, 125% 이상은 지연으로 봅니다.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "decimals": 1, "max": 1.5, "min": 0, "noValue": "Poller metrics missing", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 1.25}]}, "unit": "percentunit"},
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 11},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {"editorMode": "code", "expr": "(time() - fb_poller_last_success_timestamp_seconds{poller=~\"poller-kurly|poller-deal-timesale|poller-deal-closesale\"}) / 86400", "legendFormat": "{{poller}}", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "(time() - fb_poller_last_success_timestamp_seconds{poller=\"poller-oasis\"}) / 43200", "legendFormat": "{{poller}}", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "(time() - fb_poller_last_success_timestamp_seconds{poller=\"poller-recipe\"}) / 345600", "legendFormat": "{{poller}}", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "(time() - fb_poller_last_success_timestamp_seconds{poller=\"poller-es-recipes\"}) / 345600", "legendFormat": "{{poller}}", "range": true, "refId": "D"}
+      ],
+      "title": "Data Freshness vs Schedule",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "각 poller의 마지막 실행에서 Kafka로 발행한 레코드 수와 실행시간입니다. 성공인데 레코드가 0이면 소스 변경이나 파싱 문제를 조사합니다.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "noValue": "Poller metrics missing", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}] }},
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": "/.* duration$/"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
+          {"matcher": {"id": "byRegexp", "options": "/.* records$/"}, "properties": [{"id": "decimals", "value": 0}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 11},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {"editorMode": "code", "expr": "fb_poller_last_run_records", "legendFormat": "{{poller}} records", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "fb_poller_last_run_duration_seconds", "legendFormat": "{{poller}} duration", "range": true, "refId": "B"}
+      ],
+      "title": "Last Collection Result",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "마지막 poller 실행 로그에서 탐지한 403·429·timeout·parsing 오류입니다. 0이 정상이며 비영(非零)이면 Loki 원문 로그로 원인을 확인합니다.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "failures", "axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 40, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}},
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 8, "x": 0, "y": 19},
+      "id": 4,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "fb_poller_last_run_failures", "legendFormat": "{{poller}} / {{reason}}", "range": true, "refId": "A"}],
+      "title": "Source Failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "세 원시 토픽의 Producer 생성 속도와 Consumer 처리 속도를 비교합니다. Produced/s가 Consumed/s보다 지속적으로 크면 아래 Consumer Lag 패널에서 적체 증가 여부를 확인합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "messages/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 15, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "ops"}, "overrides": [{"matcher": {"id": "byRegexp", "options": "/Consumed\\/s$/"}, "properties": [{"id": "custom.lineStyle", "value": {"dash": [10, 10], "fill": "dash"}}, {"id": "custom.fillOpacity", "value": 0}]}]},
+      "gridPos": {"h": 9, "w": 16, "x": 8, "y": 19},
+      "id": 5,
+      "links": [{"targetBlank": false, "title": "Kafka 상세 보기", "url": "/d/fba-kafka-detail/detail-kafka?${__url_time_range}"}],
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "clamp_min(sum by(topic) (rate(kafka_topic_partition_current_offset{job=\"kafka\",topic=~\"retail.crawl.raw|retail.deal.raw|recipe.crawl.raw\"}[$__rate_interval])), 0)", "legendFormat": "{{topic}} Produced/s", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "clamp_min(sum by(topic) (rate(kafka_consumergroup_current_offset{job=\"kafka\",consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\",topic=~\"retail.crawl.raw|retail.deal.raw|recipe.crawl.raw\"}[$__rate_interval])), 0)", "legendFormat": "{{topic}} Consumed/s", "range": true, "refId": "B"}
+      ],
+      "title": "Kafka Produce vs Consume",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "컨슈머 그룹별 미처리 메시지(lag)와 최근 5분 증가량입니다. 절대 lag뿐 아니라 계속 증가하는지 함께 판단합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "messages", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0}, "overrides": [{"matcher": {"id": "byRegexp", "options": "/growth$/"}, "properties": [{"id": "custom.lineStyle", "value": {"dash": [10, 10], "fill": "dash"}}]}]},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 28},
+      "id": 6,
+      "links": [{"targetBlank": false, "title": "Kafka 상세 보기", "url": "/d/fba-kafka-detail/detail-kafka?${__url_time_range}"}],
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "sum by(consumergroup, topic) (kafka_consumergroup_lag{job=\"kafka\",consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\"})", "legendFormat": "{{consumergroup}} / {{topic}} lag", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "clamp_min(sum by(consumergroup, topic) (delta(kafka_consumergroup_lag{job=\"kafka\",consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\"}[5m])), 0)", "legendFormat": "{{consumergroup}} / {{topic}} growth", "range": true, "refId": "B"}
+      ],
+      "title": "Consumer Lag & Growth",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "consumer 처리 성공·실패율과 p95 처리시간입니다. 오류 증가 또는 지연 상승이 lag 증가와 같이 나타나는지 확인합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "records/s", "axisPlacement": "left", "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "ops"}, "overrides": [{"matcher": {"id": "byRegexp", "options": "/p95$/"}, "properties": [{"id": "custom.axisLabel", "value": "seconds"}, {"id": "custom.axisPlacement", "value": "right"}, {"id": "unit", "value": "s"}]}, {"matcher": {"id": "byRegexp", "options": "/failure$/"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}]},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 28},
+      "id": 7,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "sum by(component, result) (rate(fb_pipeline_records_total{result=~\"success|failure\"}[$__rate_interval]))", "legendFormat": "{{component}} {{result}}", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le, component) (rate(fb_pipeline_processing_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "{{component}} p95", "range": true, "refId": "B"}
+      ],
+      "title": "Consumer Processing",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "PostgreSQL·Redis로 쓰기 성공/실패한 속도입니다. failure가 발생하면 03 Data Systems Health와 해당 저장소 상세 화면으로 이동합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "writes/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 15, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "ops"}, "overrides": [{"matcher": {"id": "byRegexp", "options": "/failure$/"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}]},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 37},
+      "id": 8,
+      "links": [{"targetBlank": false, "title": "Data Systems Health 보기", "url": "/d/fba-data-systems-health/03-data-systems-health?${__url_time_range}"}],
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum by(component, sink, result) (rate(fb_pipeline_sink_writes_total[$__rate_interval]))", "legendFormat": "{{component}} / {{sink}} {{result}}", "range": true, "refId": "A"}],
+      "title": "Sink Delivery",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "상품·딜·레시피 재료가 item_master에 연결된 비율입니다. 낮아지면 gazetteer/정규화 규칙 또는 소스 스키마 변경을 점검합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "decimals": 1, "max": 1, "min": 0, "noValue": "No matching samples", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.8}, {"color": "green", "value": 0.95}]}, "unit": "percentunit"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 37},
+      "id": 9,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
+      "targets": [{"editorMode": "code", "expr": "(sum by(component) (increase(fb_pipeline_item_matches_total{result=\"matched\"}[$__range])) / sum by(component) (increase(fb_pipeline_item_matches_total[$__range]))) and on(component) (sum by(component) (increase(fb_pipeline_item_matches_total[$__range])) > 0)", "legendFormat": "{{component}}", "range": true, "refId": "A"}],
+      "title": "Item Matching Quality",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "data-pipeline 프로젝트(poller·refiner·notifier 등)의 최근 ERROR·CRITICAL 구조화 로그입니다. pgsync 등 비-JSON 로그는 파싱 대상이 아니라 자동으로 제외됩니다.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 46},
+      "id": 10,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{project=\"food-budget-app\"} | json | level=~\"ERROR|CRITICAL\"", "queryType": "range", "refId": "A"}],
+      "title": "Recent Pipeline Errors",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["food-budget-app", "data-pipeline", "kafka"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "02 Data Pipeline",
+  "uid": "fba-data-pipeline",
+  "version": 1,
+  "weekStart": ""
+}

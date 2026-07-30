@@ -1,0 +1,188 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Infrastructure Overview", "type": "link", "url": "/d/fba-infrastructure-overview/04-infrastructure-overview"}
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "description": "",
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "code": {"language": "plaintext", "showLineNumbers": false, "showMiniMap": false},
+        "content": "**하이퍼바이저(.12, VM 4대를 얹은 물리 호스트) 발열 감시**\n\n- **센서**: `platform_coretemp_0` = CPU (temp1은 전체 패키지, temp2부터 temp9까지는 코어 0번부터 7번) / `0000:00:01_0_...` = GPU(GTX 1060, nouveau 드라이버)\n- **임계값**: 하드코딩이 아니라 각 센서가 스스로 보고하는 한계치(`node_hwmon_temp_max_celsius`·`_crit_`) 기준\n- **Margin 계산 예시**: 현재 온도가 50°C라면 → 경고선(80°C)까지 `80 − 50 = 30°C` 남음, 위험선(90°C)까지 `90 − 50 = 40°C` 남음. 이 값이 0에 닿으면 각각 알람이 발화\n- ⚠️ 호스트 급사 자체는 이걸로 통보 못 받습니다(Prometheus·Alertmanager도 이 호스트 위 VM이라 같이 죽음) — 얻는 건 급사 전 온도 상승 경고와, 재부팅 후에도 남는 급사 직전 온도 곡선입니다",
+        "mode": "markdown"
+      },
+      "pluginVersion": "11.0.0",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "하이퍼바이저 node-exporter 가동 여부입니다. DOWN이면 온도 감시 자체가 꺼진 상태입니다(HypervisorExporterDown, 10분 지속 시 경고). 호스트 급사면 이 패널도 같이 응답을 멈춥니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}],
+          "noValue": "NO DATA",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 7},
+      "id": 2,
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name", "wideLayout": true
+      },
+      "targets": [{"editorMode": "code", "expr": "up{job=\"hypervisor\"}", "legendFormat": "fb-proxmox (.12)", "range": true, "refId": "A"}],
+      "title": "Hypervisor Exporter Status",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "센서별 현재 온도(°C)입니다. coretemp 9개(Package + Core 0~7) + nouveau GPU 1개, 총 10개 시계열이 보입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "°C", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 8, "lineInterpolation": "linear",
+            "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false,
+            "thresholdsStyle": {"mode": "dashed"}
+          },
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 80}, {"color": "red", "value": 90}]},
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 11},
+      "id": 3,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [{"editorMode": "code", "expr": "node_hwmon_temp_celsius{job=\"hypervisor\"}", "legendFormat": "{{chip}} / {{sensor}}", "range": true, "refId": "A"}],
+      "title": "Sensor Temperature (°C)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "센서 자체 경고선(high)까지 남은 여유(°C)입니다. 0 이하로 떨어지면 HypervisorTempHigh가 발화합니다(5분 지속). 값이 계속 줄어드는 추세면 급사 전조로 의심합니다(과거 급사 전 유휴 90°C 관측).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "°C 여유", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 8, "lineInterpolation": "linear",
+            "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false,
+            "thresholdsStyle": {"mode": "dashed"}
+          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0}, {"color": "green", "value": 10}]},
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 20},
+      "id": 4,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "asc"}
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "node_hwmon_temp_max_celsius{job=\"hypervisor\"} - on(instance, chip, sensor) node_hwmon_temp_celsius{job=\"hypervisor\"}",
+          "legendFormat": "{{chip}} / {{sensor}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Margin to Warning (HypervisorTempHigh)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "하드웨어 크리티컬선(crit)까지 남은 여유(°C)에서 10°C를 뺀 값입니다. 0 이하로 떨어지면 HypervisorTempCritical이 발화합니다(1분 지속) — 급사 임박 가능 구간입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "°C 여유", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 8, "lineInterpolation": "linear",
+            "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false,
+            "thresholdsStyle": {"mode": "dashed"}
+          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0}, {"color": "green", "value": 5}]},
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 20},
+      "id": 5,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "asc"}
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "(node_hwmon_temp_crit_celsius{job=\"hypervisor\"} - 10) - on(instance, chip, sensor) node_hwmon_temp_celsius{job=\"hypervisor\"}",
+          "legendFormat": "{{chip}} / {{sensor}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Margin to Critical (HypervisorTempCritical)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "하드웨어가 스스로 임계 초과를 표시하는 크리티컬 알람 플래그입니다(HypervisorTempCritAlarm). 정상이면 항상 0입니다 — 1이 찍히면 이미 늦었지만, 급사 원인이 열이었는지 사후에 확정해주는 유일한 신호입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [{"options": {"0": {"color": "green", "text": "정상(0)"}, "1": {"color": "red", "text": "알람 발생"}}, "type": "value"}],
+          "noValue": "NO DATA",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 29},
+      "id": 6,
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name", "wideLayout": true
+      },
+      "targets": [{"editorMode": "code", "expr": "max(node_hwmon_temp_crit_alarm_celsius{job=\"hypervisor\"})", "legendFormat": "Hardware Critical Alarm", "range": true, "refId": "A"}],
+      "title": "Hardware Critical Alarm Flag",
+      "type": "stat"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["food-budget-app", "hypervisor", "hardware"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "08 Hypervisor Thermal",
+  "uid": "fba-hypervisor-thermal",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,0 +1,286 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Infrastructure Overview", "type": "link", "url": "/d/fba-infrastructure-overview/04-infrastructure-overview"},
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Observability Health", "type": "link", "url": "/d/fba-observability-health/05-observability-health"}
+  ],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Prometheus가 선택한 FastAPI 서비스의 /metrics를 수집하는지 확인합니다. DOWN이면 RED 지표보다 메트릭 배관을 먼저 확인합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}],
+          "noValue": "NO METRICS",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value", "wideLayout": true},
+      "targets": [{"editorMode": "code", "expr": "min(up{job=~\"fastapi-.*\",service=~\"$service\"})", "legendFormat": "{{service}}", "range": true, "refId": "A"}],
+      "title": "Status",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "선택한 서비스·경로가 현재 처리하는 초당 요청 수입니다.",
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "blue", "mode": "fixed"}, "decimals": 2, "min": 0, "noValue": "NO DATA", "unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": {"calcs": ["last"], "fields": "", "values": false}, "textMode": "value", "wideLayout": true},
+      "targets": [{"editorMode": "code", "expr": "sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval]))", "legendFormat": "Request Rate", "range": true, "refId": "A"}],
+      "title": "Request Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "전체 요청 중 5xx가 아닌 응답의 비율입니다. 요청이 없는 구간은 NO TRAFFIC으로 구분합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [{"options": {"-1": {"color": "gray", "text": "NO TRAFFIC"}}, "type": "value"}],
+          "max": 1,
+          "min": 0,
+          "noValue": "NO TRAFFIC",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.95}, {"color": "green", "value": 0.99}]},
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": {"calcs": ["last"], "fields": "", "values": false}, "textMode": "value", "wideLayout": true},
+      "targets": [{"editorMode": "code", "expr": "((1 - (sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\",status=\"5xx\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])), 0.000001))) and on() (sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])) > 0)) or on() vector(-1)", "legendFormat": "Non-5xx Success", "range": true, "refId": "A"}],
+      "title": "Non-5xx Success",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "선택한 서비스·경로 요청의 95%가 이 시간 안에 완료됩니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [{"options": {"-1": {"color": "gray", "text": "NO TRAFFIC"}}, "type": "value"}], "min": 0, "noValue": "NO TRAFFIC", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.5}, {"color": "red", "value": 1}]}, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": {"calcs": ["last"], "fields": "", "values": false}, "textMode": "value", "wideLayout": true},
+      "targets": [{"editorMode": "code", "expr": "(histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval]))) and on() (sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])) > 0)) or on() vector(-1)", "legendFormat": "P95", "range": true, "refId": "A"}],
+      "title": "P95 Latency",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "전체 요청 중 서버 오류(5xx)의 비율입니다. 요청이 없는 구간은 NO TRAFFIC으로 구분합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [{"options": {"-1": {"color": "gray", "text": "NO TRAFFIC"}}, "type": "value"}], "max": 1, "min": 0, "noValue": "NO TRAFFIC", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.01}, {"color": "red", "value": 0.02}]}, "unit": "percentunit"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+      "id": 5,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": {"calcs": ["last"], "fields": "", "values": false}, "textMode": "value", "wideLayout": true},
+      "targets": [{"editorMode": "code", "expr": "((sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\",status=\"5xx\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])), 0.000001)) and on() (sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])) > 0)) or on() vector(-1)", "legendFormat": "5xx Rate", "range": true, "refId": "A"}],
+      "title": "5xx Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "현재 처리 중인 요청 수입니다. 요청량이 비슷한데 계속 증가하면 처리 정체나 의존성 지연을 의심합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "min": 0, "noValue": "NO DATA", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 20}, {"color": "red", "value": 50}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+      "id": 6,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value", "wideLayout": true},
+      "targets": [{"editorMode": "code", "expr": "sum(http_requests_inprogress{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"})", "legendFormat": "Active", "range": true, "refId": "A"}],
+      "title": "In Progress",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "method별 초당 HTTP 요청 수 추세입니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisLabel": "requests/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 4},
+      "id": 7,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum by(method) (rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])) > 0", "legendFormat": "{{method}}", "range": true, "refId": "A"}],
+      "title": "HTTP Request Traffic",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "2xx·4xx·5xx 응답 비율 추세입니다. 오류율과 실제 트래픽 변화를 함께 확인합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisLabel": "ratio", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "max": 1, "min": 0, "unit": "percentunit"}, "overrides": [{"matcher": {"id": "byName", "options": "2xx"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]}, {"matcher": {"id": "byName", "options": "4xx"}, "properties": [{"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}}]}, {"matcher": {"id": "byName", "options": "5xx"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}]},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 4},
+      "id": 8,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "(sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\",status=\"2xx\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])), 0.000001)) and on() (sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])) > 0)", "legendFormat": "2xx", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "(sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\",status=\"4xx\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])), 0.000001)) and on() (sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])) > 0)", "legendFormat": "4xx", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "(sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\",status=\"5xx\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])), 0.000001)) and on() (sum(rate(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval])) > 0)", "legendFormat": "5xx", "range": true, "refId": "C"}
+      ],
+      "title": "HTTP Response Ratio",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "선택한 서비스·경로의 응답시간 P50·P95·P99 추세입니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisLabel": "seconds", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "s"}, "overrides": [{"matcher": {"id": "byName", "options": "P99"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}]},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 4},
+      "id": 9,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "histogram_quantile(0.50, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval]))) >= 0", "legendFormat": "P50", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval]))) >= 0", "legendFormat": "P95", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.99, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__rate_interval]))) >= 0", "legendFormat": "P99", "range": true, "refId": "C"}
+      ],
+      "title": "HTTP Request Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "선택한 시간 범위에서 누적 요청이 많은 Endpoint를 순서대로 보여줍니다.",
+      "fieldConfig": {"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "Requests"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 0}]}]},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12},
+      "id": 10,
+      "options": {"cellHeight": "sm", "footer": {"countRows": false, "enablePagination": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"editorMode": "code", "expr": "topk(10, sum by(handler) (increase(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__range]))) > 0", "format": "table", "instant": true, "legendFormat": "{{handler}}", "range": false, "refId": "A"}],
+      "title": "Top Endpoints by Requests",
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"handler": 0, "Value": 1}, "renameByName": {"Value": "Requests", "handler": "Endpoint"}}},
+        {"id": "sortBy", "options": {"fields": {}, "sort": [{"desc": true, "field": "Requests"}]}}
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "선택한 시간 범위에서 발생한 4xx·5xx를 Endpoint와 상태군별 실제 건수로 보여줍니다.",
+      "fieldConfig": {"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "Errors"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 0}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 5}]}}, {"id": "custom.cellOptions", "value": {"mode": "basic", "type": "color-background"}}]}]},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 12},
+      "id": 11,
+      "options": {"cellHeight": "sm", "footer": {"countRows": false, "enablePagination": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"editorMode": "code", "expr": "topk(10, sum by(handler, status) (increase(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\",status=~\"4xx|5xx\"}[$__range]))) > 0", "format": "table", "instant": true, "legendFormat": "{{handler}} {{status}}", "range": false, "refId": "A"}],
+      "title": "Endpoint 4xx·5xx Count",
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"handler": 0, "status": 1, "Value": 2}, "renameByName": {"Value": "Errors", "handler": "Endpoint", "status": "Status"}}},
+        {"id": "sortBy", "options": {"fields": {}, "sort": [{"desc": true, "field": "Errors"}]}}
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "P95 응답시간이 긴 Endpoint를 보여줍니다. 느린 Endpoint를 선택해 Trace에서 DB·Redis·Elasticsearch 구간을 조사합니다.",
+      "fieldConfig": {"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "P95"}, "properties": [{"id": "unit", "value": "s"}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.5}, {"color": "red", "value": 1}]}}, {"id": "custom.cellOptions", "value": {"mode": "basic", "type": "color-background"}}]}]},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12},
+      "id": 12,
+      "options": {"cellHeight": "sm", "footer": {"countRows": false, "enablePagination": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"editorMode": "code", "expr": "topk(10, (histogram_quantile(0.95, sum by(le, handler) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__range]))) >= 0) and on(handler) (sum by(handler) (increase(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\",handler=~\"$route\"}[$__range])) > 0))", "format": "table", "instant": true, "legendFormat": "{{handler}}", "range": false, "refId": "A"}],
+      "title": "Slowest Endpoints by P95",
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"handler": 0, "Value": 1}, "renameByName": {"Value": "P95", "handler": "Endpoint"}}},
+        {"id": "sortBy", "options": {"fields": {}, "sort": [{"desc": true, "field": "P95"}]}}
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "선택한 서비스의 최근 ERROR·CRITICAL 구조화 로그입니다. trace_id가 있으면 해당 Tempo Trace로 이동할 수 있습니다.",
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 20},
+      "id": 13,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=~\"$service\"} | json | level=~\"ERROR|CRITICAL\"", "queryType": "range", "refId": "A"}],
+      "title": "Recent Error Logs",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "description": "선택한 서비스에서 오류가 발생했거나 500ms보다 느린 Trace입니다. Trace를 열어 FastAPI·DB·Redis·Elasticsearch Span 중 지연 구간을 확인합니다.",
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 20},
+      "id": 14,
+      "options": {"cellHeight": "sm", "showHeader": true},
+      "targets": [{"datasource": {"type": "tempo", "uid": "tempo"}, "limit": 20, "query": "{ resource.service.name =~ \"${service:regex}\" && (span:status = error || duration > 500ms) }", "queryType": "traceql", "refId": "A", "tableType": "traces"}],
+      "title": "Recent Slow & Error Traces",
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "선택한 서비스 컨테이너의 CPU 사용률입니다. 컨테이너 CPU 한도(대부분 200%)에 붙으면 요청이 실제로 CPU를 못 받아 대기하기 시작합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "%", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "linear",
+            "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false
+          },
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 70}, {"color": "red", "value": 90}]},
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 30},
+      "id": 15,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "100 * sum by(name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",image!=\"\",name=~\".*${service}.*\"}[$__rate_interval]))",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Container CPU Usage (%) — $service",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["food-budget-app", "service", "red", "logs", "traces"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": true, "text": "chat", "value": "chat"},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "definition": "label_values(up{job=~\"fastapi-.*\"}, service)",
+        "includeAll": false,
+        "label": "Service",
+        "multi": false,
+        "name": "service",
+        "options": [],
+        "query": {"query": "label_values(up{job=~\"fastapi-.*\"}, service)", "refId": "Prometheus-service-Variable-Query"},
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "definition": "label_values(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\"}, handler)",
+        "includeAll": true,
+        "label": "Route",
+        "multi": true,
+        "name": "route",
+        "options": [],
+        "query": {"query": "label_values(http_requests_total{job=~\"fastapi-.*\",service=~\"$service\"}, handler)", "refId": "Prometheus-route-Variable-Query"},
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "01 Service Detail",
+  "uid": "fba-service-detail",
+  "version": 2,
+  "weekStart": ""
+}
