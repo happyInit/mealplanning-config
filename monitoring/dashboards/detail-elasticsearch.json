@@ -2552,8 +2552,8 @@
       {
         "current": {
           "selected": true,
-          "text": "docker-cluster",
-          "value": "docker-cluster"
+          "text": "Kubernetes cluster",
+          "value": ""
         },
         "datasource": {
           "type": "prometheus",
@@ -2609,6 +2609,6 @@
   "timezone": "browser",
   "title": "Detail - Elasticsearch",
   "uid": "fba-elasticsearch-detail",
-  "version": 1,
+  "version": 2,
   "gnetId": 24144
 }

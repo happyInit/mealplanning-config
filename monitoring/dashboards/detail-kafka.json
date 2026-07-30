@@ -548,8 +548,8 @@
         "allValue": null,
         "current": {
           "selected": true,
-          "text": "fb-data",
-          "value": "fb-data"
+          "text": "Kafka exporter",
+          "value": ""
         },
         "datasource": {
           "type": "prometheus",
@@ -606,5 +606,5 @@
   "timezone": "browser",
   "title": "Detail - Kafka",
   "uid": "fba-kafka-detail",
-  "version": 1
+  "version": 2
 }

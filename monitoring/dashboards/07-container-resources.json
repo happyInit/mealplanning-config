@@ -1,138 +1,94 @@
 {
-  "annotations": {
-    "list": [
-      {
-        "builtIn": 1,
-        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
-      }
-    ]
-  },
+  "annotations": {"list": []},
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": null,
-  "links": [
-    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Infrastructure Overview", "type": "link", "url": "/d/fba-infrastructure-overview/04-infrastructure-overview"}
-  ],
-  "liveNow": false,
+  "links": [{"asDropdown": false, "icon": "external link", "includeVars": true, "keepTime": true, "tags": [], "targetBlank": false, "title": "Infrastructure / VM", "type": "link", "url": "/d/fba-infrastructure-overview/04-infrastructure-overview"}],
   "panels": [
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "VM별 개별 컨테이너 CPU 사용률(cAdvisor). 특정 컨테이너 하나가 CPU를 독점하는 상황(예: 크래시루프·트레이스 백로그)을 여기서 바로 확인.",
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "CPU %", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "percent"}, "overrides": []},
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 0},
+      "description": "선택한 namespace의 Pod·컨테이너 CPU 사용률입니다. 기존 Docker 컨테이너 이름 대신 Kubernetes namespace, pod, container 라벨로 구분합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "CPU %", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 1, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 0},
       "id": 1,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true, "sortBy": "Max", "sortDesc": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by(name, instance) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\", image!=\"\", instance=~\"$vm\", name=~\"$container\"}[$__rate_interval])) * 100", "legendFormat": "{{name}} ({{instance}})", "range": true, "refId": "A"}],
-      "title": "Container CPU Usage",
+      "targets": [{"editorMode": "code", "expr": "sum by(namespace, pod, container) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",container!=\"\",container!=\"POD\",image!=\"\"}[$__rate_interval])) * 100", "legendFormat": "{{namespace}} / {{pod}} / {{container}}", "range": true, "refId": "A"}],
+      "title": "Pod / Container CPU Usage",
       "type": "timeseries"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "VM별 개별 컨테이너 메모리 사용량(cAdvisor). 컨테이너 memory limit 대비 OOM 근접 여부를 여기서 확인.",
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "Memory", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "bytes"}, "overrides": []},
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 9},
+      "description": "선택한 namespace의 Pod·컨테이너 working set 메모리입니다. 캐시를 과대 반영하는 usage보다 OOM 위험 판단에 적합합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "Memory", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 1, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "bytes"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 0},
       "id": 2,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true, "sortBy": "Max", "sortDesc": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "container_memory_usage_bytes{job=\"cadvisor\", image!=\"\", instance=~\"$vm\", name=~\"$container\"}", "legendFormat": "{{name}} ({{instance}})", "range": true, "refId": "A"}],
-      "title": "Container Memory Usage",
+      "targets": [{"editorMode": "code", "expr": "sum by(namespace, pod, container) (container_memory_working_set_bytes{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",container!=\"\",container!=\"POD\",image!=\"\"})", "legendFormat": "{{namespace}} / {{pod}} / {{container}}", "range": true, "refId": "A"}],
+      "title": "Pod / Container Memory Usage",
       "type": "timeseries"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "현재 CPU 사용률 상위 10개 컨테이너.",
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": false, "inspect": false}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 50}, {"color": "red", "value": 80}]}, "unit": "percent"}, "overrides": [{"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "custom.cellOptions", "value": {"mode": "gradient", "type": "gauge"}}]}]},
-      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 18},
+      "description": "현재 CPU 사용률 상위 10개 Kubernetes 컨테이너입니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"align": "auto", "cellOptions": {"type": "auto"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 50}, {"color": "red", "value": 80}]}, "unit": "percent"}, "overrides": [{"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "custom.cellOptions", "value": {"mode": "gradient", "type": "gauge"}}]}]},
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 9},
       "id": 3,
       "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "Value"}]},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "topk(10, sum by(name, instance) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\", image!=\"\", instance=~\"$vm\"}[$__rate_interval])) * 100)", "instant": true, "legendFormat": "{{name}} ({{instance}})", "range": false, "refId": "A"}],
-      "title": "Top CPU Consumers (지금)",
+      "targets": [{"editorMode": "code", "expr": "topk(10, sum by(namespace, pod, container) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container!=\"\",container!=\"POD\",image!=\"\"}[$__rate_interval])) * 100)", "instant": true, "legendFormat": "{{namespace}} / {{pod}} / {{container}}", "range": false, "refId": "A"}],
+      "title": "Top CPU Consumers (now)",
       "type": "table"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "현재 메모리 사용량 상위 10개 컨테이너.",
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": false, "inspect": false}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 268435456}, {"color": "red", "value": 536870912}]}, "unit": "bytes"}, "overrides": [{"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "custom.cellOptions", "value": {"mode": "gradient", "type": "gauge"}}]}]},
-      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 18},
+      "description": "현재 working set 메모리 사용량 상위 10개 Kubernetes 컨테이너입니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"align": "auto", "cellOptions": {"type": "auto"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 268435456}, {"color": "red", "value": 536870912}]}, "unit": "bytes"}, "overrides": [{"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "custom.cellOptions", "value": {"mode": "gradient", "type": "gauge"}}]}]},
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 9},
       "id": 4,
       "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "Value"}]},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "topk(10, container_memory_usage_bytes{job=\"cadvisor\", image!=\"\", instance=~\"$vm\"})", "instant": true, "legendFormat": "{{name}} ({{instance}})", "range": false, "refId": "A"}],
-      "title": "Top Memory Consumers (지금)",
+      "targets": [{"editorMode": "code", "expr": "topk(10, sum by(namespace, pod, container) (container_memory_working_set_bytes{namespace=~\"$namespace\",container!=\"\",container!=\"POD\",image!=\"\"}))", "instant": true, "legendFormat": "{{namespace}} / {{pod}} / {{container}}", "range": false, "refId": "A"}],
+      "title": "Top Memory Consumers (now)",
       "type": "table"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "컨테이너별 디스크 I/O(read+write 바이트/초, cAdvisor). PG·ES·Kafka 등 디스크 I/O 병목 후보를 여기서 구분.",
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "bytes/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "Bps"}, "overrides": []},
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 28},
+      "description": "Pod·컨테이너별 디스크 I/O입니다. PostgreSQL, Elasticsearch, Kafka 등 상태 저장 워크로드의 병목 후보를 분리합니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "bytes/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 1, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "Bps"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 19},
       "id": 5,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true, "sortBy": "Max", "sortDesc": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by(name, instance) (rate(container_fs_reads_bytes_total{job=\"cadvisor\", image!=\"\", instance=~\"$vm\", name=~\"$container\"}[$__rate_interval]) + rate(container_fs_writes_bytes_total{job=\"cadvisor\", image!=\"\", instance=~\"$vm\", name=~\"$container\"}[$__rate_interval]))", "legendFormat": "{{name}} ({{instance}})", "range": true, "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "sum by(namespace, pod, container) (rate(container_fs_reads_bytes_total{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",container!=\"\",container!=\"POD\",image!=\"\"}[$__rate_interval]) + rate(container_fs_writes_bytes_total{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",container!=\"\",container!=\"POD\",image!=\"\"}[$__rate_interval]))", "legendFormat": "{{namespace}} / {{pod}} / {{container}}", "range": true, "refId": "A"}],
       "title": "Container Disk I/O",
       "type": "timeseries"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "컨테이너별 네트워크 I/O(수신+송신 바이트/초, cAdvisor).",
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "bytes/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "Bps"}, "overrides": []},
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 37},
+      "description": "Pod별 수신·송신 네트워크 I/O와 재시작 횟수입니다. Pod 네트워크는 개별 컨테이너가 아닌 Pod 기준으로 수집됩니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "bytes/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 1, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "Bps"}, "overrides": [{"matcher": {"id": "byRegexp", "options": "/.*Restart.*/"}, "properties": [{"id": "unit", "value": "short"}, {"id": "custom.axisPlacement", "value": "right"}, {"id": "custom.fillOpacity", "value": 0}]}]},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 19},
       "id": 6,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true, "sortBy": "Max", "sortDesc": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by(name, instance) (rate(container_network_receive_bytes_total{job=\"cadvisor\", image!=\"\", instance=~\"$vm\", name=~\"$container\"}[$__rate_interval]) + rate(container_network_transmit_bytes_total{job=\"cadvisor\", image!=\"\", instance=~\"$vm\", name=~\"$container\"}[$__rate_interval]))", "legendFormat": "{{name}} ({{instance}})", "range": true, "refId": "A"}],
-      "title": "Container Network I/O",
+      "targets": [
+        {"editorMode": "code", "expr": "sum by(namespace, pod) (rate(container_network_receive_bytes_total{namespace=~\"$namespace\",pod=~\"$pod\",container=\"POD\"}[$__rate_interval]))", "legendFormat": "{{namespace}} / {{pod}} RX", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum by(namespace, pod) (rate(container_network_transmit_bytes_total{namespace=~\"$namespace\",pod=~\"$pod\",container=\"POD\"}[$__rate_interval]))", "legendFormat": "{{namespace}} / {{pod}} TX", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum by(namespace, pod) (increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"}[$__range]))", "legendFormat": "{{namespace}} / {{pod}} Restarts", "range": true, "refId": "C"}
+      ],
+      "title": "Pod Network I/O & Restarts",
       "type": "timeseries"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["food-budget-app", "infrastructure", "containers"],
-  "templating": {
-    "list": [
-      {
-        "allValue": ".*",
-        "current": {"text": "All", "value": "$__all"},
-        "datasource": {"type": "prometheus", "uid": "prometheus"},
-        "definition": "label_values(up{job=\"node\"}, instance)",
-        "includeAll": true,
-        "label": "VM",
-        "multi": true,
-        "name": "vm",
-        "options": [],
-        "query": {"query": "label_values(up{job=\"node\"}, instance)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
-        "refresh": 1,
-        "regex": "",
-        "skipUrlSync": false,
-        "sort": 1,
-        "type": "query"
-      },
-      {
-        "current": {"selected": true, "text": "grafana", "value": "grafana"},
-        "datasource": {"type": "prometheus", "uid": "prometheus"},
-        "definition": "label_values(container_last_seen{job=\"cadvisor\", image!=\"\", instance=~\"$vm\"}, name)",
-        "includeAll": false,
-        "label": "Container",
-        "multi": false,
-        "name": "container",
-        "options": [],
-        "query": {"query": "label_values(container_last_seen{job=\"cadvisor\", image!=\"\", instance=~\"$vm\"}, name)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
-        "refresh": 2,
-        "regex": "",
-        "skipUrlSync": false,
-        "sort": 1,
-        "type": "query"
-      }
-    ]
-  },
+  "tags": ["food-budget-app", "kubernetes", "workloads", "containers"],
+  "templating": {"list": [
+    {"allValue": ".*", "current": {"text": "All", "value": "$__all"}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "definition": "label_values(kube_pod_info, namespace)", "includeAll": true, "label": "Namespace", "multi": true, "name": "namespace", "options": [], "query": {"query": "label_values(kube_pod_info, namespace)", "refId": "PrometheusVariableQueryEditor-VariableQuery"}, "refresh": 1, "regex": "", "skipUrlSync": false, "sort": 1, "type": "query"},
+    {"allValue": ".*", "current": {"text": "All", "value": "$__all"}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "definition": "label_values(kube_pod_info{namespace=~\"$namespace\"}, pod)", "includeAll": true, "label": "Pod", "multi": true, "name": "pod", "options": [], "query": {"query": "label_values(kube_pod_info{namespace=~\"$namespace\"}, pod)", "refId": "PrometheusVariableQueryEditor-VariableQuery"}, "refresh": 1, "regex": "", "skipUrlSync": false, "sort": 1, "type": "query"},
+    {"allValue": ".*", "current": {"text": "All", "value": "$__all"}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "definition": "label_values(kube_pod_container_info{namespace=~\"$namespace\",pod=~\"$pod\"}, container)", "includeAll": true, "label": "Container", "multi": true, "name": "container", "options": [], "query": {"query": "label_values(kube_pod_container_info{namespace=~\"$namespace\",pod=~\"$pod\"}, container)", "refId": "PrometheusVariableQueryEditor-VariableQuery"}, "refresh": 1, "regex": "", "skipUrlSync": false, "sort": 1, "type": "query"}
+  ]},
   "time": {"from": "now-6h", "to": "now"},
   "timepicker": {},
   "timezone": "browser",
-  "title": "07 Container Resources",
+  "title": "07 Kubernetes Workloads",
   "uid": "fba-container-resources",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
