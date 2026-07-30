@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: app
+# 보안 정책 묶음. child app = argocd/applications/policies.yaml (mp-policies, 수동 sync).
+# README.md 는 kustomize 가 무시(리소스 아님).
+resources:
+  - peerauthentication.yaml
+  # 보안 ③(NetworkPolicy default-deny)가 여기 추가된다 — frontend→backend→data→pipeline 순(계획).
+  # data·pipeline 대상 netpol 은 그 ns 로 가야 하므로 그때 app 이 아닌 별도 배치를 검토.

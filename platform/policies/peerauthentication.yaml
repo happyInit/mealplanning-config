@@ -1,0 +1,28 @@
+# mTLS STRICT — app ns 전역(selectorless). 보안 롤아웃 ②단계 (object_spec §11.3).
+#
+# 🔴 적용 전 선행조건 = 보안 ①(PR #34) 검증 게이트 통과.
+#    STRICT 는 앱 :<port>/metrics 직접 scrape 를 사이드카가 평문 거부하게 만든다. Prometheus 가
+#    이미 15020 병합에서 앱 지표를 받고 있어야(mp-app-services 타깃 UP + 앱 지표 존재) 지표 공백이 없다.
+#    이 정책은 그래서 ①과 한 쌍이고, child app(mp-policies)은 수동 sync 로 둔다(머지≠강제).
+#
+# 범위/안전 근거 (selectorless = app ns 안 사이드카 있는 전 워크로드의 inbound 를 mTLS 전용으로):
+#   - data·pipeline ns 는 의도적으로 메시 밖(§1.2) → 이 정책 밖, 계속 평문(정상). 그래서 ns 단위로만
+#     건다 — 클러스터 전역 STRICT 는 data ns 통신을 죽인다(§11.3).
+#   - mp-gw-public(같은 app ns): Gateway 리스너(:80/:443)는 Gateway/Server 설정이 TLS 를 종단하지
+#     PeerAuth 의 inbound mTLS 강제 대상이 아니다 → 외부·cloudflared(메시 밖) 평문/TLS 유입은 정상.
+#     GW→백엔드는 클라이언트측 mTLS(mesh 기본)로 STRICT 백엔드에 도달.
+#   - mp-cloudflared-app(sidecar.istio.io/inject:false = 메시 밖): 사이드카가 없어 이 정책이 gate 하지
+#     않는다. 아무도 이 파드로 inbound 하지 않음(아웃바운드 터널 클라이언트) → 무영향.
+#   - kubelet probe: Istio probe rewrite(주입 기본 on)로 pilot-agent 경유 → STRICT 에서도 healthy.
+#   - Prometheus scrape: 15020(pilot-agent)은 Envoy mTLS 가로채기 밖 → STRICT 무관하게 평문 도달(보안 ①).
+#
+# ⚠️ sync 전 확인: app ns 의 트래픽 받는 파드가 전부 사이드카를 가졌는지(컨테이너 수). 사이드카 없는
+#    serving 파드가 있으면 STRICT 로 끊긴다. 현재 유일한 무사이드카 = cloudflared(아무도 안 부름, OK).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: mp-app-strict-mtls
+  namespace: app
+spec:
+  mtls:
+    mode: STRICT
