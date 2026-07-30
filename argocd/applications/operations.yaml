@@ -1,0 +1,17 @@
+# child Application — root app-of-apps가 mp-operations를 배포한다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mp-operations
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: services/operations/overlays/onprem
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app

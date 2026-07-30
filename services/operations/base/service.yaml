@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: operations
+  labels:
+    app: operations
+spec:
+  type: ClusterIP
+  selector:
+    app: operations
+  ports:
+    - name: http
+      port: 8011
+      targetPort: 8011
+      appProtocol: http

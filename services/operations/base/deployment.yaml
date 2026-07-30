@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-operations
+  labels:
+    app: operations
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: operations
+  template:
+    metadata:
+      labels:
+        app: operations
+        tier: backend
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: operations
+          # CI가 food-budget-app 커밋 SHA 태그를 Harbor에 push한 뒤에만 ArgoCD sync 한다.
+          image: 192.168.0.10/mealplanning/mp-operations-service:4fda555ce1344b3d3614d4b17ebe2dec1433b506
+          ports:
+            - name: http
+              containerPort: 8011
+              appProtocol: http
+          envFrom:
+            - configMapRef:
+                name: app-common
+            - secretRef:
+                name: mp-operations-secrets
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: operations
+            - name: OPERATIONS_DATABASE_ENABLED
+              value: "true"
+            - name: OPERATIONS_COLLECTOR_ENABLED
+              value: "false"
+            - name: OPERATIONS_KUBERNETES_EVIDENCE_ENABLED
+              value: "false"
+            - name: OPERATIONS_PROMETHEUS_URL
+              value: http://kube-prometheus-stack-prometheus.observability.svc:9090
+          startupProbe:
+            httpGet: { path: /health, port: 8011 }
+            periodSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet: { path: /health, port: 8011 }
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 8011 }
+            periodSeconds: 30
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec: { command: ["sleep", "5"] }
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
