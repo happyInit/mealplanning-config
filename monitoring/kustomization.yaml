@@ -15,6 +15,10 @@ generatorOptions:
   disableNameSuffixHash: true
   labels:
     grafana_dashboard: "1"
+  annotations:
+    # CM 데이터 ~360KB > client-side apply 의 last-applied 어노테이션 한도 256KB → SSA 강제
+    # (2026-07-30 실측: sync 실패 "metadata.annotations: Too long"). SSA 는 last-applied 미기록.
+    argocd.argoproj.io/sync-options: ServerSideApply=true
 configMapGenerator:
   - name: mp-grafana-dashboards
     files:
