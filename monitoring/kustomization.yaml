@@ -3,3 +3,4 @@ kind: Kustomization
 namespace: app
 resources:
   - servicemonitor.yaml
+  - rules.yaml

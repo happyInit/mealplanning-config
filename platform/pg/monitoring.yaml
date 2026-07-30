@@ -1,0 +1,57 @@
+# CNPG 알람 — 전환창 스텝 11 이월분 + `.11` PGReplicationSlotRetainedWALHigh 이식.
+# 스크레이프는 cluster.yaml 의 monitoring.enablePodMonitor 가 이미 담당(PodMonitor pg 실재) —
+# 여기선 규칙만 정의한다. 메트릭 이름은 전부 인클러스터 Prometheus 실측(2026-07-30).
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-pg
+  namespace: data
+spec:
+  groups:
+    - name: mp-pg
+      rules:
+        # 인스턴스 2 미만 = HA 상실(standby 소실) 또는 전면 다운. absent 가드가 없으면
+        # "둘 다 죽어 시리즈가 아예 없는" 최악 케이스에서 count() 가 빈 결과라 안 울린다.
+        - alert: MpPGInstancesDegraded
+          expr: |
+            absent(cnpg_collector_up{namespace="data"})
+            or count(cnpg_collector_up{namespace="data"} == 1) < 2
+          for: 5m
+          labels:
+            severity: critical
+            service: data-tier
+          annotations:
+            summary: "PG 인스턴스가 2개 미만 — HA 상실 또는 전면 다운"
+            description: "CNPG 롤링 재시작(리소스 변경 등) 중에는 수 분간 정상적으로 발화할 수 있다. 5분 넘게 지속되면 실사고."
+
+        - alert: MpPGReplicationLagHigh
+          expr: max(cnpg_pg_replication_lag{namespace="data"}) > 300
+          for: 10m
+          labels:
+            severity: warning
+            service: data-tier
+          annotations:
+            summary: "PG 스트리밍 복제 지연 {{ $value | humanizeDuration }} — standby 가 5분 이상 뒤처짐"
+
+        # barman 플러그인의 S3 WAL 아카이빙이 막히면 백업 경로(base+WAL 연속성)가 통째로 단절.
+        # 전환창에서 실증한 조기경보 공백(스텝 11)의 해소.
+        - alert: MpPGWALArchiveFailing
+          expr: increase(cnpg_pg_stat_archiver_failed_count{namespace="data"}[30m]) > 0
+          for: 15m
+          labels:
+            severity: critical
+            service: data-tier
+          annotations:
+            summary: "PG WAL 아카이빙 실패 지속 — S3 백업 연속성 단절 진행 중"
+
+        # `.11` PGReplicationSlotRetainedWALHigh 직이식 — 동기 동일: PGSync 논리 슬롯이 멈추면
+        # WAL 이 무한 축적 → walStorage(10Gi) full → 쓰기 전면중단. 5GiB = walStorage 의 절반.
+        - alert: MpPGReplicationSlotRetainedWALHigh
+          expr: max by(slot_name) (cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="data"}) > 5 * 1024 * 1024 * 1024
+          for: 15m
+          labels:
+            severity: warning
+            service: data-tier
+          annotations:
+            summary: "복제 슬롯 {{ $labels.slot_name }} 이 WAL {{ $value | humanize1024 }}B 보유 — 소비자(PGSync 등) 정체 의심"
