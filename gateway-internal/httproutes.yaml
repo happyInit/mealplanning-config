@@ -5,9 +5,9 @@
 #   grafana   → kube-prometheus-stack-grafana:80   (클러스터 안 — 구 NodePort 30300 대체)
 #   loki      → loki:3100                          (클러스터 안 — 구 NodePort 31100 대체, alloy push)
 #   minio     → mp-minio-console:9001              (클러스터 안 — 콘솔 첫 노출)
-#   jenkins   → mp-jenkins-ext:8080     ┐
-#   sonarqube → mp-sonarqube-ext:9000   ├ 클러스터 밖 호스트 C(.10) — backends-hostc.yaml
-#   harbor    → mp-harbor-ext:443       ┘ (UI 전용 — containerd pull 경로는 IP 직결 불변)
+#   jenkins   → jenkins.hostc.mp.internal:8081   ┐ 클러스터 밖 호스트 C(.10) —
+#   sonarqube → sonarqube.hostc.mp.internal:9000 ├ ServiceEntry(backends-hostc.yaml)
+#   harbor    → harbor.hostc.mp.internal:443     ┘ (UI 전용 — containerd pull 경로는 IP 직결 불변)
 #
 # ⚠️ ci.mealbong.cloud(CF 터널·인터넷 경유)가 이미 Jenkins 를 가리킨다 — jenkins.mealbong.cloud 는
 #    LAN 경로로 병존한다(명시 레코드 > 와일드카드 라 충돌 없음).
@@ -80,7 +80,7 @@ spec:
         - group: networking.istio.io   # ServiceEntry(backends-hostc.yaml)의 hosts 를 무는 Istio 확장
           kind: Hostname
           name: jenkins.hostc.mp.internal
-          port: 8080
+          port: 8081                   # 🔴 8080 은 cAdvisor (backends-hostc.yaml 주석)
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
