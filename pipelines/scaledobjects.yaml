@@ -1,0 +1,100 @@
+# KEDA ScaledObject — 컨슈머 4종을 **Kafka lag** 으로 스케일한다 (P3, 2026-07-30).
+#
+# 왜 lag 인가: 컨슈머의 병목은 CPU 가 아니라 "얼마나 밀렸나" 다. HPA 는 그걸 못 본다(object_spec §9.4).
+#
+# 🔴 **minReplicaCount 는 지금 1 이다 — 0 이 최종 목표이지만 아직 아니다**(사용자 확정 2026-07-30).
+#   0 으로 내리면 KEDA 는 Kafka lag 를 보고 깨워야 하는데, **커밋된 오프셋이 없는 그룹은 lag 를
+#   계산할 수 없어 0 으로 보고**한다. 그러면 파드가 0 으로 내려간 뒤 **영영 안 깨어난다** —
+#   메시지는 쌓이는데 아무도 안 먹는 조용한 실패(과거 alloy 웨지 29h·PGSync 크래시루프 16h 와 같은 계열).
+#   실측(2026-07-30 전환 직전):
+#     deal-notifier   커밋 있음 lag=0        ✅
+#     retail-refiner  커밋 있음 lag=0        ✅
+#     recipe-refiner  **커밋 없음 lag=-**    ❌ ← 이 상태로 0 을 걸면 안 깨어난다
+#     user-event-sink **커밋 없음 lag=-**    ❌
+#
+#   ✅ **min 0 전환 조건**(전부 충족돼야 함):
+#     ① 4개 그룹 전부 커밋된 오프셋 보유(`kafka-consumer-groups.sh --describe` 에서 lag 가 숫자)
+#     ② lag 기반 **스케일업 실증**(부하 주입 → replica 증가 관측)
+#     ③ 콜드스타트 지연 측정(KEDA 폴링 30s + 파드 기동 + holdApplicationUntilProxyReady)이 수용 가능
+#   min 1 로 도는 동안 컨슈머가 오프셋을 커밋하므로 ①은 자연히 충족된다 — 그게 이 단계의 목적이다.
+#
+# lagThreshold 10: 파티션당 10건 밀리면 1대 늘린다. maxReplicaCount 는 **파티션 수를 넘기지 않는다**
+#   — Kafka 는 파티션 하나를 컨슈머 하나에만 주므로 그 이상은 놀고만 있다.
+#
+# 폴러 CronJob 은 대상이 아니다(§9.4) — CronJob 이 이미 그 역할이고, 크롤 예의·중복 수집 때문에 고정 1.
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: mp-retail-refiner
+spec:
+  scaleTargetRef:
+    name: mp-retail-refiner
+  minReplicaCount: 1 # 🔴 목표는 0 — 위 전환 조건 참조
+  maxReplicaCount: 3 # retail.crawl.raw 파티션 3
+  pollingInterval: 30
+  cooldownPeriod: 300
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka-kafka-bootstrap.data.svc:9092
+        consumerGroup: retail-refiner
+        topic: retail.crawl.raw
+        lagThreshold: "10"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: mp-deal-notifier
+spec:
+  scaleTargetRef:
+    name: mp-deal-notifier
+  minReplicaCount: 1
+  maxReplicaCount: 2 # retail.deal.raw 파티션 2
+  pollingInterval: 30
+  cooldownPeriod: 300
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka-kafka-bootstrap.data.svc:9092
+        consumerGroup: deal-notifier
+        topic: retail.deal.raw
+        lagThreshold: "10"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: mp-recipe-refiner
+spec:
+  scaleTargetRef:
+    name: mp-recipe-refiner
+  minReplicaCount: 1 # 🔴 이 그룹은 아직 오프셋 미커밋 — 0 으로 내리면 안 깨어난다(상단 참조)
+  maxReplicaCount: 3 # recipe.crawl.raw 파티션 3
+  pollingInterval: 30
+  cooldownPeriod: 300
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka-kafka-bootstrap.data.svc:9092
+        consumerGroup: recipe-refiner
+        topic: recipe.crawl.raw
+        lagThreshold: "10"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: mp-user-event-sink
+spec:
+  scaleTargetRef:
+    name: mp-user-event-sink
+  minReplicaCount: 1 # 🔴 이 그룹도 오프셋 미커밋. 유입이 상시라 실제로는 0 에 잘 안 간다(§9.4)
+  maxReplicaCount: 2 # events.user.activity — 클릭스트림 개통 시 1파티션 사고 이력(기억) 있어 보수적
+  pollingInterval: 30
+  cooldownPeriod: 300
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka-kafka-bootstrap.data.svc:9092
+        consumerGroup: user-event-sink
+        topic: events.user.activity
+        lagThreshold: "10"

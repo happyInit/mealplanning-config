@@ -15,6 +15,7 @@ resources:
   - pruners.yaml
   - pvc.yaml
   - monitoring.yaml
+  - scaledobjects.yaml  # KEDA — Kafka lag 스케일(P3). min 0 전환 조건은 파일 상단 주석
 
 # ── PodSecurity(warn=restricted) 경고 해소 — 전 워크로드 공통 securityContext ──────────
 # pipeline ns 는 enforce=baseline·warn=restricted 라 잡 생성마다 경고 4종이 찍히던 부채.

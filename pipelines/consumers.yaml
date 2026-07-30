@@ -9,7 +9,10 @@ metadata:
   labels:
     app: retail-refiner
 spec:
-  replicas: 1 # ✅ 전환창 §4-9 기동(2026-07-29) — 이제 K8s 컨슈머가 정본(.8 은 정지)
+  # 🔴 replicas 를 **의도적으로 안 적는다** — KEDA ScaledObject(scaledobjects.yaml)가 주인이다(P3).
+  #    git 에 남기면 ArgoCD sync 마다 KEDA 가 정한 replica 수를 1 로 되돌려, lag 가 쌓인 와중에
+  #    컨슈머가 줄어든다. 필드가 없으면 apply 가 live 값을 안 건드린다.
+  #    (기동 이력: 전환창 §4-9, 2026-07-29 — K8s 컨슈머가 정본이고 .8 은 정지)
   selector:
     matchLabels:
       app: retail-refiner
@@ -49,7 +52,10 @@ metadata:
   labels:
     app: deal-notifier
 spec:
-  replicas: 1 # ✅ 전환창 §4-9 기동(2026-07-29) — 이제 K8s 컨슈머가 정본(.8 은 정지)
+  # 🔴 replicas 를 **의도적으로 안 적는다** — KEDA ScaledObject(scaledobjects.yaml)가 주인이다(P3).
+  #    git 에 남기면 ArgoCD sync 마다 KEDA 가 정한 replica 수를 1 로 되돌려, lag 가 쌓인 와중에
+  #    컨슈머가 줄어든다. 필드가 없으면 apply 가 live 값을 안 건드린다.
+  #    (기동 이력: 전환창 §4-9, 2026-07-29 — K8s 컨슈머가 정본이고 .8 은 정지)
   selector:
     matchLabels:
       app: deal-notifier
@@ -89,7 +95,10 @@ metadata:
   labels:
     app: recipe-refiner
 spec:
-  replicas: 1 # ✅ 전환창 §4-9 기동(2026-07-29) — 이제 K8s 컨슈머가 정본(.8 은 정지)
+  # 🔴 replicas 를 **의도적으로 안 적는다** — KEDA ScaledObject(scaledobjects.yaml)가 주인이다(P3).
+  #    git 에 남기면 ArgoCD sync 마다 KEDA 가 정한 replica 수를 1 로 되돌려, lag 가 쌓인 와중에
+  #    컨슈머가 줄어든다. 필드가 없으면 apply 가 live 값을 안 건드린다.
+  #    (기동 이력: 전환창 §4-9, 2026-07-29 — K8s 컨슈머가 정본이고 .8 은 정지)
   selector:
     matchLabels:
       app: recipe-refiner
@@ -129,7 +138,10 @@ metadata:
   labels:
     app: user-event-sink
 spec:
-  replicas: 1 # ✅ 전환창 §4-9 기동(2026-07-29) — 이제 K8s 컨슈머가 정본(.8 은 정지)
+  # 🔴 replicas 를 **의도적으로 안 적는다** — KEDA ScaledObject(scaledobjects.yaml)가 주인이다(P3).
+  #    git 에 남기면 ArgoCD sync 마다 KEDA 가 정한 replica 수를 1 로 되돌려, lag 가 쌓인 와중에
+  #    컨슈머가 줄어든다. 필드가 없으면 apply 가 live 값을 안 건드린다.
+  #    (기동 이력: 전환창 §4-9, 2026-07-29 — K8s 컨슈머가 정본이고 .8 은 정지)
   selector:
     matchLabels:
       app: user-event-sink
