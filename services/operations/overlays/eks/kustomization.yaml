@@ -7,4 +7,4 @@ resources:
 images:
   - name: 192.168.0.10/mealplanning/mp-operations-service
     newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-operations-service
-    newTag: "4fda555ce1344b3d3614d4b17ebe2dec1433b506"
+    newTag: "e850ca6de1f46cb64a943b271f8d0e9ee9792acd"

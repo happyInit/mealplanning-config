@@ -27,7 +27,7 @@ spec:
       containers:
         - name: operations
           # CI가 food-budget-app 커밋 SHA 태그를 Harbor에 push한 뒤에만 ArgoCD sync 한다.
-          image: 192.168.0.10/mealplanning/mp-operations-service:4fda555ce1344b3d3614d4b17ebe2dec1433b506
+          image: 192.168.0.10/mealplanning/mp-operations-service:e850ca6de1f46cb64a943b271f8d0e9ee9792acd
           ports:
             - name: http
               containerPort: 8011
