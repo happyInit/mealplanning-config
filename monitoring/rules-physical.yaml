@@ -1,0 +1,129 @@
+# 물리 계층 알람 — `.11` 이식 (모니터링 컷오버 ③ 후반부). 스크레이프 = kube-prometheus-stack
+# values 의 additionalScrapeConfigs(job: hypervisor·vm-node·vm-cadvisor·vm-alloy — app repo 소관).
+# 원 규칙·주석의 사건 맥락(급사 3회 · io 폭주 판별)은 그대로 승계한다 — 판별 로직이 자산이다.
+# 단순 down 감시(vm-cadvisor·vm-alloy)는 스택 기본 TargetDown 이 커버해 별도 규칙 없음.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-physical-layer
+spec:
+  groups:
+    # 물리 하이퍼바이저(.12) 발열 감시. 2026-07-19·07-21(2회) 무흔적 급사 후속.
+    # ⚠️ 급사 자체의 실시간 통보는 불가 — 였던 .11 시절 제약이 **이 이식으로 풀렸다**:
+    #    Prometheus 가 이제 .12 밖(K8s 호스트 B)에 있어, .12 급사 시 hypervisor 타깃 down
+    #    (TargetDown)이 실제로 발송된다. 온도 곡선 보존 + 급사 전 경고라는 원래 가치는 동일.
+    # 센서 해독: chip=platform_coretemp_0 → temp1=Package, temp2~9=Core 0~7 / 0000:00:01_0_… → nouveau GPU.
+    # 임계값은 하드코딩하지 않고 각 센서가 스스로 보고하는 한계치를 쓴다(max: CPU 80·GPU 95 / crit: CPU 100·GPU 105).
+    - name: mp-hypervisor-thermal
+      rules:
+        - alert: MpHypervisorTempHigh
+          expr: |
+            node_hwmon_temp_celsius{job="hypervisor"}
+              >= on(instance, chip, sensor) node_hwmon_temp_max_celsius{job="hypervisor"}
+          for: 5m
+          labels:
+            severity: warning
+            service: hypervisor
+          annotations:
+            summary: "{{ $labels.instance }} {{ $labels.chip }}/{{ $labels.sensor }} 온도 {{ $value }}°C — 센서 자체 경고선(high) 도달"
+
+        - alert: MpHypervisorTempCritical
+          expr: |
+            node_hwmon_temp_celsius{job="hypervisor"}
+              >= on(instance, chip, sensor) (node_hwmon_temp_crit_celsius{job="hypervisor"} - 10)
+          for: 1m
+          labels:
+            severity: critical
+            service: hypervisor
+          annotations:
+            summary: "{{ $labels.instance }} {{ $labels.chip }}/{{ $labels.sensor }} 온도 {{ $value }}°C — 크리티컬 10°C 이내. 급사 임박 가능(과거 급사 전 유휴 90°C 관측)"
+
+        # 하드웨어가 스스로 임계 초과를 표시하는 플래그 — 급사 원인이 열이었는지 사후 확정해 주는 유일한 신호.
+        - alert: MpHypervisorTempCritAlarm
+          expr: node_hwmon_temp_crit_alarm_celsius{job="hypervisor"} > 0
+          labels:
+            severity: critical
+            service: hypervisor
+          annotations:
+            summary: "{{ $labels.instance }} {{ $labels.chip }}/{{ $labels.sensor }} 하드웨어 크리티컬 알람 발생 — 즉시 부하 차단"
+
+        # node-exporter 프로세스만 죽은 경우를 잡는다 — 방치하면 온도 감시가 조용히 사라진다.
+        - alert: MpHypervisorExporterDown
+          expr: up{job="hypervisor"} == 0
+          for: 10m
+          labels:
+            severity: warning
+            service: hypervisor
+          annotations:
+            summary: "{{ $labels.instance }} node-exporter 무응답 10분 — 하이퍼바이저 온도 감시가 꺼진 상태"
+
+    # 디스크 I/O 폭주 판별 — 07-21·07-22 sdb 390~400MB/s 읽기 폭주(범인 미상, docker-infra-status §7).
+    # 발동 시 같은 시각 게스트 fb-ioburst 덤프(/var/log/fb-ioburst/burst-*.txt)가 없으면 호스트측 범인
+    # (.12 에서 iotop -oPa / pidstat -d 5) — 임계값을 게스트 워처와 같은 100MB/s 로 맞춘 이유가 이 교차판정.
+    # ⚠️ util(io_time) 기반 금지(07-22 실측: sdb util 72%, 99.5% 는 dm-* LVM 계층) · dm-* 제외(4중 계상).
+    - name: mp-hypervisor-disk
+      rules:
+        - alert: MpHypervisorDiskReadBurst
+          expr: |
+            rate(node_disk_read_bytes_total{job="hypervisor", device=~"sd[a-z]+|nvme[0-9]+n[0-9]+"}[5m])
+              / 1024 / 1024 > 100
+          for: 5m
+          labels:
+            severity: warning
+            service: hypervisor
+          annotations:
+            summary: "{{ $labels.instance }} {{ $labels.device }} 읽기 {{ $value | printf \"%.0f\" }} MB/s 5분 지속 — 디스크 읽기 폭주(§7 미해결 건) 재발 가능"
+            description: >-
+              즉시 판별: 같은 시각 게스트에 fb-ioburst 덤프가 있는지 확인
+              (ansible vms -m shell -a 'ls -t /var/log/fb-ioburst/burst-*.txt | head -1').
+              덤프가 없으면 호스트측 프로세스가 범인 — .12 에서 iotop -oPa / pidstat -d 5 로 현장 포착할 것.
+
+    # 호스트 C(.10) — Harbor·Jenkins. Harbor 다운 = 클러스터 노드가 이미지를 못 당긴다(배포 전면 실패).
+    - name: mp-host-c
+      rules:
+        - alert: MpHostCDown
+          expr: up{job="vm-node"} == 0
+          for: 5m
+          labels:
+            severity: critical
+            service: ci
+          annotations:
+            summary: "{{ $labels.instance }} 무응답 5분 — Harbor·Jenkins 호스트. Harbor 다운이면 클러스터 이미지 풀 전면 장애"
+
+        # 구 DiskUsageHigh 이식 — 스택의 NodeFilesystem* 규칙은 job=node-exporter 만 봐서 외부 타깃은 공백.
+        - alert: MpVMDiskUsageHigh
+          expr: |
+            (1 - node_filesystem_avail_bytes{job=~"vm-node|hypervisor", mountpoint="/"}
+               / node_filesystem_size_bytes{job=~"vm-node|hypervisor", mountpoint="/"}) * 100 > 85
+          for: 10m
+          labels:
+            severity: warning
+            service: ci
+          annotations:
+            summary: "{{ $labels.instance }} 루트 디스크 사용률 85% 초과"
+
+        # 구 DockerDiskUsageHigh 이식 — 호스트 C 전용 docker 디스크(/dev/sdb, group_vars/ci.yml).
+        - alert: MpVMDockerDiskUsageHigh
+          expr: |
+            (1 - node_filesystem_avail_bytes{job="vm-node", mountpoint="/var/lib/docker"}
+               / node_filesystem_size_bytes{job="vm-node", mountpoint="/var/lib/docker"}) * 100 > 80
+          for: 10m
+          labels:
+            severity: warning
+            service: ci
+          annotations:
+            summary: "{{ $labels.instance }} /var/lib/docker 사용률 80% 초과 (Harbor 이미지·Jenkins 워크스페이스)"
+
+        # 구 ContainerMemoryNearLimit 의 호스트 C 대응 — K8s 파드용(monitoring/rules.yaml, KSM 조인)과
+        # 달리 호스트 C 컨테이너(Jenkins·Harbor)는 cadvisor 의 spec limit 로 직접 본다.
+        - alert: MpVMContainerMemoryNearLimit
+          expr: |
+            container_memory_working_set_bytes{job="vm-cadvisor", name!=""}
+              / (container_spec_memory_limit_bytes{job="vm-cadvisor", name!=""} > 0) > 0.85
+          for: 15m
+          labels:
+            severity: warning
+            service: ci
+          annotations:
+            summary: "{{ $labels.instance }}/{{ $labels.name }} 메모리가 한도의 {{ $value | humanizePercentage }} — OOM 임박"
