@@ -1,0 +1,25 @@
+# 정기 base backup — barman-cloud 플러그인, 매일 1회.
+#
+# 왜 필요한가: cluster 는 이미 연속 WAL 아카이빙(ContinuousArchiving)으로 RPO 를 ~분 단위로 막고 있으나,
+#   base backup 이 없거나 오래되면 ① 복구 시 마지막 base 이후 WAL 을 전부 재생 → RTO 열화,
+#   ② base+WAL 체인이 ObjectStore 보존(30d)을 벗어나면 복구 앵커 자체 소실.
+#   → 정기 base 로 "복구 앵커를 늘 최신"으로 유지 = 개선된 RTO(<10분) 를 상시 보장한다.
+#
+# 🔴 schedule = CNPG 6-field cron(초 포함) · 오퍼레이터 TZ=UTC → 18:00 UTC = 03:00 KST(피크 11–12·17–18 밖).
+# barmanObjectName 은 cluster.yaml 의 plugin 설정에서 상속하므로 pluginConfiguration 엔 name 만(기존 Backup CR 과 동일).
+# target 미지정 = prefer-standby(CNPG 가 primary 부하를 피해 standby 에서 백업 — 실측 pg-2 선택).
+# 보존은 ObjectStore(mp-pg-backup) retentionPolicy 30d 가 담당(여기서 중복 지정 안 함).
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: mp-pg-daily
+  namespace: data
+spec:
+  schedule: "0 0 18 * * *"          # 매일 03:00 KST
+  immediate: false                  # git 재생성 때마다 즉시 백업이 튀지 않게(스케줄만)
+  backupOwnerReference: self        # 생성된 Backup 을 이 ScheduledBackup 소유로 → 정리 일관
+  cluster:
+    name: pg
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
