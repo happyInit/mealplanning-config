@@ -4,3 +4,4 @@ namespace: app
 resources:
   - servicemonitor.yaml
   - rules.yaml
+  - rules-physical.yaml
