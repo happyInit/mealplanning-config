@@ -5,7 +5,14 @@ metadata:
 data:
   # ✅ P2 데이터 컷오버 (2026-07-29 전환창 스텝 7) — VM(.8) → in-cluster Service DNS.
   #    롤백(런북 §6)은 이 블록을 VM 좌표로 원복 + VM read_only 해제.
-  PGHOST: pg-rw.data.svc # CNPG primary 직접(Q8 — Pooler 는 P3)
+  # ✅ P3 Pooler 전환 (2026-07-30) — 앱 기본 좌표가 CNPG Pooler(PgBouncer, transaction 모드)다.
+  #    HPA 로 파드가 늘어도 PG 커넥션이 곱해지지 않게 하는 것이 목적(object_spec §4.5).
+  # 🔴 **이 값을 따르지 않는 예외 3종** — 각 overlay 의 pg-direct.yaml 이 pg-rw 로 되돌린다:
+  #    · ocr             세션 SET(statement_timeout)·read_only 가드가 transaction 풀링에서 무효화됨
+  #    · ranking-serving psycopg.connect 직접 사용 → prepare_threshold 기본값(5) 그대로
+  #    · (참고) 파이프라인·PGSync 는 애초에 이 ConfigMap 을 안 읽는다 — 각자 좌표 보유
+  # 롤백: 이 한 줄을 pg-rw.data.svc 로 되돌리고 sync (파드 재기동, 수 초).
+  PGHOST: pg-pooler.data.svc
   PGPORT: "5432"
   PGDATABASE: foodbudget
   PGUSER: fbapp              # 비밀 아님(비번만 Secret) — account config.py 필드명과 일치

@@ -1,0 +1,25 @@
+# 🔴 **ocr 은 Pooler 를 우회한다** — P3 전환에서 의도적으로 제외 (2026-07-30 실측 근거).
+#
+# 이유 ① 세션 상태를 쓴다: `app/pipeline/classify.py` 가 가제티어 로드 시
+#   `SET statement_timeout = '5s'` 와 `conn.read_only = True`(쓰기 원천 차단 가드)를 건다.
+#   둘 다 **세션 스코프**라 transaction 풀링에서는 다음 문이 다른 백엔드로 가며 **조용히 사라진다**.
+#   에러가 나는 게 아니라 가드가 무효화되는 쪽이라 더 위험하다.
+# 이유 ② 이득이 없다: HPA 대상이 아니다(object_spec §9.3) — 파드가 안 늘어나므로 커넥션
+#   다중화로 얻을 게 없다. PGSync 를 직결로 남긴 것과 같은 판단이다.
+# 이유 ③ 풀을 안 쓴다: psycopg.connect() 직접 호출(지연·일회성)이라 app#407 의
+#   prepare_threshold=None 패치 대상이 아니었다.
+#
+# 🔴 해제 조건: 위 세션 SET·read_only 를 트랜잭션 스코프(`SET LOCAL`)로 바꾸고 prepare_threshold 를
+#   끈 뒤에야 Pooler 로 옮길 수 있다. 그전엔 이 파일을 지우지 말 것.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-ocr
+spec:
+  template:
+    spec:
+      containers:
+        - name: ocr
+          env:
+            - name: PGHOST
+              value: pg-rw.data.svc

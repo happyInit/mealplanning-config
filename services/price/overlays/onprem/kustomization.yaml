@@ -3,9 +3,6 @@ kind: Kustomization
 namespace: app
 resources:
 - ../../base
-# 🟡 임시 — P3 Pooler 전환 카나리. 전체 전환 PR 에서 이 patches 블록과 파일을 같이 제거한다.
-patches:
-- path: pooler-canary.yaml
 # 🔴 Jenkins 가 아래 newTag 를 :sha 로 커밋(§7.4). :latest 금지.
 images:
 - name: 192.168.0.10/mealplanning/mp-price-service

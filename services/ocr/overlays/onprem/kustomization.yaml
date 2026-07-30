@@ -3,6 +3,9 @@ kind: Kustomization
 namespace: app
 resources:
 - ../../base
+# 🔴 Pooler 우회 — pg-direct.yaml 주석의 해제 조건 참조(P3, 2026-07-30)
+patches:
+- path: pg-direct.yaml
 # 🔴 Jenkins 가 아래 newTag 를 :sha 로 커밋(§7.4). :latest 금지.
 images:
 - name: 192.168.0.10/mealplanning/mp-ocr-service
