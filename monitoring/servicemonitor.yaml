@@ -26,7 +26,17 @@ spec:
       - { key: app, operator: Exists }
       - { key: app, operator: NotIn, values: [frontend, ranking-serving] }
   endpoints:
-    - port: http          # Service 의 포트 이름(전 서비스 공통) — 번호가 서비스마다 달라 이름으로 건다
-      path: /metrics
+    # 🔴 mTLS STRICT(PeerAuthentication) 전제 — 앱 :<port>/metrics 직접 scrape 는 사이드카가 평문으로 거부한다(object_spec §11.3).
+    #    Prometheus 는 메시 밖이라 mTLS 를 못 연다 → Istio 병합 엔드포인트 15020/stats/prometheus(pilot-agent,
+    #    Envoy mTLS 가로채기 밖)로만 도달 가능. 앱 메트릭이 병합에 실리는 건 각 deployment 파드의
+    #    prometheus.io/{scrape,path,port} 어노테이션 전제(services/*/base/deployment.yaml 과 한 쌍).
+    - port: http                 # http 포트로 파드(EndpointSlice)를 발견만 하고, 실제 scrape 주소는 아래 relabel 로 15020 으로 돌린다
+      path: /stats/prometheus
       interval: 30s
       scrapeTimeout: 10s
+      relabelings:
+        # podIP:<앱포트> → podIP:15020. 병합 엔드포인트는 Service 포트가 아니라 파드 agent 포트라 targetPort 대신 주소를 갈아끼운다.
+        - sourceLabels: [__address__]
+          regex: '(.+):\d+'
+          targetLabel: __address__
+          replacement: '${1}:15020'
