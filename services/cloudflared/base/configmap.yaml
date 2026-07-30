@@ -1,4 +1,5 @@
-# cloudflared 터널 설정 — 인클러스터 전용 터널 mp-app 이 app.mealbong.cloud 를 GW 로 나른다.
+# cloudflared 터널 설정 — 인클러스터 전용 터널 mp-app.
+#   app.mealbong.cloud → 공개 GW / argocd.mealbong.cloud → argocd-server 직결(--insecure). 나머지 404.
 #
 # 🔴 UUID·라우팅은 비밀이 아니라 여기(git)에 둔다. TunnelSecret 은 credentials.json(ESO Secret) 안.
 # service = GW 백킹 Service(mp-gw-public-istio) 의 443. originServerName 으로 SNI=app.mealbong.cloud 를
@@ -19,4 +20,8 @@ data:
         service: https://mp-gw-public-istio.app.svc.cluster.local:443
         originRequest:
           originServerName: app.mealbong.cloud
+      # ArgoCD UI — argocd-server 는 --insecure(평문 :80)라 GW 안 거치고 직결. argocd ns=메시 밖(평문 OK).
+      # 🔴 argocd=클러스터 전역 쓰기 → 이 호스트에 **Cloudflare Access(인증 게이트) 선행 필수**. 없으면 인터넷에 admin 노출.
+      - hostname: argocd.mealbong.cloud
+        service: http://argocd-server.argocd.svc.cluster.local:80
       - service: http_status:404
