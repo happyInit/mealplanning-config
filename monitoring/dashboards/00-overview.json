@@ -1,0 +1,174 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Service Detail", "type": "link", "url": "/d/fba-service-detail/01-service-detail"},
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": false, "title": "Infrastructure Overview", "type": "link", "url": "/d/fba-infra-overview/04-infrastructure-overview"}
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "8개 앱 서비스의 가동 여부입니다. 관제 시 가장 먼저 보는 항목 — 빨간 타일이 있으면 즉시 이상 상황입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name", "wideLayout": true
+      },
+      "targets": [
+        {"editorMode": "code", "expr": "min by(service) (up{job=~\"fastapi-.*\",service=\"recipe\"})", "legendFormat": "recipe", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "min by(service) (up{job=~\"fastapi-.*\",service=\"price\"})", "legendFormat": "price", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "min by(service) (up{job=~\"fastapi-.*\",service=\"account\"})", "legendFormat": "account", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "min by(service) (up{job=~\"fastapi-.*\",service=\"pantry\"})", "legendFormat": "pantry", "range": true, "refId": "D"},
+        {"editorMode": "code", "expr": "min by(service) (up{job=~\"fastapi-.*\",service=\"recipebook\"})", "legendFormat": "recipebook", "range": true, "refId": "E"},
+        {"editorMode": "code", "expr": "min by(service) (up{job=~\"fastapi-.*\",service=\"mealplan\"})", "legendFormat": "mealplan", "range": true, "refId": "F"},
+        {"editorMode": "code", "expr": "min by(service) (up{job=~\"fastapi-.*\",service=\"notify\"})", "legendFormat": "notify", "range": true, "refId": "G"},
+        {"editorMode": "code", "expr": "min by(service) (up{job=~\"fastapi-.*\",service=\"chat\"})", "legendFormat": "chat", "range": true, "refId": "H"}
+      ],
+      "title": "Service Status",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "서비스별 초당 요청 수(Rate) 추이입니다. 평소 패턴과 다르게 갑자기 튀거나 죽으면 트래픽 이상입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "req/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 8, "lineInterpolation": "linear",
+            "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false
+          },
+          "min": 0,
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4},
+      "id": 2,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"editorMode": "code", "expr": "sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"recipe\"}[$__rate_interval]))", "legendFormat": "recipe", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"price\"}[$__rate_interval]))", "legendFormat": "price", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"account\"}[$__rate_interval]))", "legendFormat": "account", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"pantry\"}[$__rate_interval]))", "legendFormat": "pantry", "range": true, "refId": "D"},
+        {"editorMode": "code", "expr": "sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"recipebook\"}[$__rate_interval]))", "legendFormat": "recipebook", "range": true, "refId": "E"},
+        {"editorMode": "code", "expr": "sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"mealplan\"}[$__rate_interval]))", "legendFormat": "mealplan", "range": true, "refId": "F"},
+        {"editorMode": "code", "expr": "sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"notify\"}[$__rate_interval]))", "legendFormat": "notify", "range": true, "refId": "G"},
+        {"editorMode": "code", "expr": "sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"chat\"}[$__rate_interval]))", "legendFormat": "chat", "range": true, "refId": "H"}
+      ],
+      "title": "Request Rate (Traffic)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "서비스별 P95 응답시간 추이입니다. 선이 튀는 시점 = 이상이 시작된 시각. 눈에 띄는 서비스는 01 Service Detail에서 드릴다운합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "seconds", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 8, "lineInterpolation": "linear",
+            "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false,
+            "thresholdsStyle": {"mode": "dashed"}
+          },
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.3}, {"color": "red", "value": 1}]},
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "id": 3,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=\"recipe\"}[$__rate_interval])))", "legendFormat": "recipe", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=\"price\"}[$__rate_interval])))", "legendFormat": "price", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=\"account\"}[$__rate_interval])))", "legendFormat": "account", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=\"pantry\"}[$__rate_interval])))", "legendFormat": "pantry", "range": true, "refId": "D"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=\"recipebook\"}[$__rate_interval])))", "legendFormat": "recipebook", "range": true, "refId": "E"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=\"mealplan\"}[$__rate_interval])))", "legendFormat": "mealplan", "range": true, "refId": "F"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=\"notify\"}[$__rate_interval])))", "legendFormat": "notify", "range": true, "refId": "G"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by(le) (rate(http_request_duration_seconds_bucket{job=~\"fastapi-.*\",service=\"chat\"}[$__rate_interval])))", "legendFormat": "chat", "range": true, "refId": "H"}
+      ],
+      "title": "P95 Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "서비스별 5xx 오류율(%) 추이입니다. 평소 0%대이며, 튀는 구간이 곧 장애 구간입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "%", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 8, "lineInterpolation": "linear",
+            "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false,
+            "thresholdsStyle": {"mode": "dashed"}
+          },
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 5}]},
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+      "id": 4,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"editorMode": "code", "expr": "100 * sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"recipe\",status=\"5xx\"}[$__rate_interval])) / sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"recipe\"}[$__rate_interval]))", "legendFormat": "recipe", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "100 * sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"price\",status=\"5xx\"}[$__rate_interval])) / sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"price\"}[$__rate_interval]))", "legendFormat": "price", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "100 * sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"account\",status=\"5xx\"}[$__rate_interval])) / sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"account\"}[$__rate_interval]))", "legendFormat": "account", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "100 * sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"pantry\",status=\"5xx\"}[$__rate_interval])) / sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"pantry\"}[$__rate_interval]))", "legendFormat": "pantry", "range": true, "refId": "D"},
+        {"editorMode": "code", "expr": "100 * sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"recipebook\",status=\"5xx\"}[$__rate_interval])) / sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"recipebook\"}[$__rate_interval]))", "legendFormat": "recipebook", "range": true, "refId": "E"},
+        {"editorMode": "code", "expr": "100 * sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"mealplan\",status=\"5xx\"}[$__rate_interval])) / sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"mealplan\"}[$__rate_interval]))", "legendFormat": "mealplan", "range": true, "refId": "F"},
+        {"editorMode": "code", "expr": "100 * sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"notify\",status=\"5xx\"}[$__rate_interval])) / sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"notify\"}[$__rate_interval]))", "legendFormat": "notify", "range": true, "refId": "G"},
+        {"editorMode": "code", "expr": "100 * sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"chat\",status=\"5xx\"}[$__rate_interval])) / sum(rate(http_requests_total{job=~\"fastapi-.*\",service=\"chat\"}[$__rate_interval]))", "legendFormat": "chat", "range": true, "refId": "H"}
+      ],
+      "title": "5xx Error Rate",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["food-budget-app", "overview"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "00 Overview",
+  "uid": "fba-overview",
+  "version": 1,
+  "weekStart": ""
+}

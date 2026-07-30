@@ -1,0 +1,179 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "장애 분류의 시작점입니다. 가용성과 클러스터 상태처럼 즉시 정상·비정상을 판정할 수 있는 값만 표시합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]},
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "PostgreSQL"},
+            "properties": [
+              {"id": "mappings", "value": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}]},
+              {"id": "links", "value": [{"targetBlank": false, "title": "PostgreSQL 상세 보기", "url": "/d/fba-postgresql-detail/detail-postgresql?${__url_time_range}"}]}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Elasticsearch"},
+            "properties": [
+              {"id": "mappings", "value": [{"options": {"1": {"color": "green", "text": "GREEN"}, "2": {"color": "yellow", "text": "YELLOW"}, "3": {"color": "red", "text": "RED"}}, "type": "value"}]},
+              {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2}, {"color": "red", "value": 3}]}},
+              {"id": "links", "value": [{"targetBlank": false, "title": "Elasticsearch 상세 보기", "url": "/d/fba-elasticsearch-detail/detail-elasticsearch?${__url_time_range}"}]}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Redis"},
+            "properties": [
+              {"id": "mappings", "value": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}]},
+              {"id": "links", "value": [{"targetBlank": false, "title": "Redis 상세 보기", "url": "/d/fba-redis-detail/detail-redis?${__url_time_range}"}]}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Kafka"},
+            "properties": [
+              {"id": "mappings", "value": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}]},
+              {"id": "links", "value": [{"targetBlank": false, "title": "Kafka 상세 보기", "url": "/d/fba-kafka-detail/detail-kafka?${__url_time_range}"}]}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {"editorMode": "code", "expr": "min(pg_up{job=\"postgres\"} or up{job=\"postgres\"})", "instant": true, "legendFormat": "PostgreSQL", "range": false, "refId": "A"},
+        {"editorMode": "code", "expr": "scalar(elasticsearch_cluster_health_status{job=\"elasticsearch\",color=\"green\"}) + 2 * scalar(elasticsearch_cluster_health_status{job=\"elasticsearch\",color=\"yellow\"}) + 3 * scalar(elasticsearch_cluster_health_status{job=\"elasticsearch\",color=\"red\"})", "instant": true, "legendFormat": "Elasticsearch", "range": false, "refId": "B"},
+        {"editorMode": "code", "expr": "min(redis_up{job=\"redis\"} or up{job=\"redis\"})", "instant": true, "legendFormat": "Redis", "range": false, "refId": "C"},
+        {"editorMode": "code", "expr": "min(clamp_max(kafka_brokers{job=\"kafka\"}, 1) or up{job=\"kafka\"})", "instant": true, "legendFormat": "Kafka", "range": false, "refId": "D"}
+      ],
+      "title": "Data Systems Status",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "연결 포화도와 초당 commit·rollback·deadlock 변화를 함께 확인합니다. 연결 상승과 오류 증가가 동시에 나타나는지 봅니다.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "ops"},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Connections"}, "properties": [{"id": "unit", "value": "percent"}, {"id": "custom.axisPlacement", "value": "left"}, {"id": "color", "value": {"fixedColor": "yellow", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/Commit|Rollback|Deadlock/"}, "properties": [{"id": "unit", "value": "ops"}, {"id": "custom.axisPlacement", "value": "right"}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "id": 2,
+      "links": [{"targetBlank": false, "title": "PostgreSQL 상세 보기", "url": "/d/fba-postgresql-detail/detail-postgresql?${__url_time_range}"}],
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "100 * sum(pg_stat_database_numbackends{job=\"postgres\",datname!~\"template.*\"}) / max(pg_settings_max_connections{job=\"postgres\"})", "legendFormat": "Connections", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum(rate(pg_stat_database_xact_commit{job=\"postgres\",datname!~\"template.*\"}[$__rate_interval]))", "legendFormat": "Commit/s", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(rate(pg_stat_database_xact_rollback{job=\"postgres\",datname!~\"template.*\"}[$__rate_interval]))", "legendFormat": "Rollback/s", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "sum(rate(pg_stat_database_deadlocks{job=\"postgres\",datname!~\"template.*\"}[$__rate_interval]))", "legendFormat": "Deadlock/s", "range": true, "refId": "D"}
+      ],
+      "title": "PostgreSQL Operations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "JVM heap 포화도, 검색 처리량·평균 처리시간과 미할당 shard를 확인합니다.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "JVM Heap"}, "properties": [{"id": "unit", "value": "percent"}, {"id": "custom.axisPlacement", "value": "left"}, {"id": "color", "value": {"fixedColor": "yellow", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "Search Avg"}, "properties": [{"id": "unit", "value": "s"}, {"id": "custom.axisPlacement", "value": "right"}]},
+          {"matcher": {"id": "byName", "options": "Search/s"}, "properties": [{"id": "unit", "value": "ops"}, {"id": "custom.axisPlacement", "value": "right"}]},
+          {"matcher": {"id": "byName", "options": "Unassigned Shards"}, "properties": [{"id": "custom.hideFrom", "value": {"legend": false, "tooltip": false, "viz": true}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "id": 3,
+      "links": [{"targetBlank": false, "title": "Elasticsearch 상세 보기", "url": "/d/fba-elasticsearch-detail/detail-elasticsearch?${__url_time_range}"}],
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "100 * sum(elasticsearch_jvm_memory_used_bytes{job=\"elasticsearch\",area=\"heap\"}) / sum(elasticsearch_jvm_memory_max_bytes{job=\"elasticsearch\",area=\"heap\"})", "legendFormat": "JVM Heap", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum(rate(elasticsearch_indices_search_query_total{job=\"elasticsearch\"}[$__rate_interval]))", "legendFormat": "Search/s", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(rate(elasticsearch_indices_search_query_time_seconds{job=\"elasticsearch\"}[$__rate_interval])) / clamp_min(sum(rate(elasticsearch_indices_search_query_total{job=\"elasticsearch\"}[$__rate_interval])), 0.000000001)", "legendFormat": "Search Avg", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "sum(elasticsearch_cluster_health_unassigned_shards{job=\"elasticsearch\"})", "legendFormat": "Unassigned Shards", "range": true, "refId": "D"}
+      ],
+      "title": "Elasticsearch Operations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "메모리 포화도, 최근 cache hit ratio, 명령 처리량과 eviction 발생 여부를 확인합니다.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"},
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": "/Memory|Hit Ratio/"}, "properties": [{"id": "unit", "value": "percent"}, {"id": "custom.axisPlacement", "value": "left"}]},
+          {"matcher": {"id": "byRegexp", "options": "/Commands|Evictions/"}, "properties": [{"id": "unit", "value": "ops"}, {"id": "custom.axisPlacement", "value": "right"}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "id": 4,
+      "links": [{"targetBlank": false, "title": "Redis 상세 보기", "url": "/d/fba-redis-detail/detail-redis?${__url_time_range}"}],
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "100 * redis_memory_used_bytes{job=\"redis\"} / redis_memory_max_bytes{job=\"redis\"}", "legendFormat": "Memory", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "100 * sum(rate(redis_keyspace_hits_total{job=\"redis\"}[$__rate_interval])) / clamp_min(sum(rate(redis_keyspace_hits_total{job=\"redis\"}[$__rate_interval])) + sum(rate(redis_keyspace_misses_total{job=\"redis\"}[$__rate_interval])), 0.000000001)", "legendFormat": "Hit Ratio", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(rate(redis_commands_processed_total{job=\"redis\"}[$__rate_interval]))", "legendFormat": "Commands/s", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "sum(rate(redis_evicted_keys_total{job=\"redis\"}[$__rate_interval]))", "legendFormat": "Evictions/s", "range": true, "refId": "D"}
+      ],
+      "title": "Redis Operations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "KRaft 단일 브로커의 메시지 유입 추정치와 topic·partition·Docker 디스크 용량을 확인합니다. Consumer lag은 02 Data Pipeline에서 다룹니다.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Messages In/s"}, "properties": [{"id": "unit", "value": "ops"}, {"id": "custom.axisPlacement", "value": "right"}]},
+          {"matcher": {"id": "byName", "options": "Docker Disk"}, "properties": [{"id": "unit", "value": "percent"}, {"id": "custom.axisPlacement", "value": "left"}, {"id": "color", "value": {"fixedColor": "yellow", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/Topics|Partitions/"}, "properties": [{"id": "custom.hideFrom", "value": {"legend": false, "tooltip": false, "viz": true}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "id": 5,
+      "links": [{"targetBlank": false, "title": "Kafka 상세 보기", "url": "/d/fba-kafka-detail/detail-kafka?${__url_time_range}"}],
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "clamp_min(sum(rate(kafka_topic_partition_current_offset{job=\"kafka\"}[$__rate_interval])), 0)", "legendFormat": "Messages In/s", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "count(kafka_topic_partitions{job=\"kafka\"})", "legendFormat": "Topics", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(kafka_topic_partitions{job=\"kafka\"})", "legendFormat": "Partitions", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "100 * (1 - node_filesystem_avail_bytes{job=\"node\",instance=\"fb-data\",mountpoint=\"/var/lib/docker\"} / node_filesystem_size_bytes{job=\"node\",instance=\"fb-data\",mountpoint=\"/var/lib/docker\"})", "legendFormat": "Docker Disk", "range": true, "refId": "D"}
+      ],
+      "title": "Kafka Operations & Capacity",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["food-budget-app", "data-systems", "overview"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "03 Data Systems Health",
+  "uid": "fba-data-systems-health",
+  "version": 5,
+  "weekStart": ""
+}

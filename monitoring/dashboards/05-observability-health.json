@@ -1,0 +1,204 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "관측 스택과 VM별 Alloy의 scrape 상태입니다. DOWN이면 해당 구성요소의 내부 지표도 신뢰할 수 없으므로 가장 먼저 확인합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "min by(job, instance) (up{job=~\"prometheus|loki|tempo|alertmanager|alloy\"})",
+          "legendFormat": "{{job}} / {{instance}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Observability Stack Status",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Prometheus가 전체 target을 정상적으로 scrape하는지와 현재 수집 규모를 확인합니다. Failed Targets가 1 이상이면 Targets 화면에서 원인을 조사합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Failed Targets"}, "properties": [{"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}]},
+          {"matcher": {"id": "byName", "options": "Max Scrape Duration"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 2}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 10}]}}]},
+          {"matcher": {"id": "byRegexp", "options": "/Samples \/ Scrape|Head Series/"}, "properties": [{"id": "color", "value": {"fixedColor": "blue", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 10},
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {"editorMode": "code", "expr": "sum(1 - up)", "legendFormat": "Failed Targets", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "max(scrape_duration_seconds)", "legendFormat": "Max Scrape Duration", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(scrape_samples_scraped)", "legendFormat": "Samples / Scrape", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "max(prometheus_tsdb_head_series)", "legendFormat": "Head Series", "range": true, "refId": "D"}
+      ],
+      "title": "Prometheus Doctor",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Alloy가 보낸 로그와 Loki가 받은 로그의 추세를 비교하고, drop·retry·discard 발생 여부를 확인합니다. 두 수신량은 네트워크와 batch 처리 때문에 순간적으로 다를 수 있습니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "entries/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false},
+          "unit": "ops"
+        },
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": "/Dropped|Retries|Discarded/"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 10},
+      "id": 3,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "sum(rate(loki_write_sent_entries_total{job=\"alloy\"}[$__rate_interval])) or vector(0)", "legendFormat": "Alloy Sent", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum(rate(loki_distributor_lines_received_total{job=\"loki\"}[$__rate_interval])) or vector(0)", "legendFormat": "Loki Received", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(rate(loki_write_dropped_entries_total{job=\"alloy\"}[$__rate_interval])) or vector(0)", "legendFormat": "Alloy Dropped", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "sum(rate(loki_write_batch_retries_total{job=\"alloy\"}[$__rate_interval])) or vector(0)", "legendFormat": "Alloy Retries", "range": true, "refId": "D"},
+        {"editorMode": "code", "expr": "sum(rate(loki_discarded_samples_total{job=\"loki\"}[$__rate_interval])) or vector(0)", "legendFormat": "Loki Discarded", "range": true, "refId": "E"}
+      ],
+      "title": "Loki & Alloy Doctor",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "현재는 Tempo 자체 생존과 내부 저장 오류만 판단합니다. 앱이 trace를 보내기 시작한 후 Tempo 수신·폐기 span 지표를 추가합니다.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Tempo"}, "properties": [{"id": "mappings", "value": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}]}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}]},
+          {"matcher": {"id": "byRegexp", "options": "/HTTP 5xx \/s|Backend Errors \/s/"}, "properties": [{"id": "unit", "value": "ops"}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.000001}]}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {"editorMode": "code", "expr": "min(up{job=\"tempo\"})", "legendFormat": "Tempo", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum(rate(tempo_request_duration_seconds_count{job=\"tempo\",method!=\"gRPC\",status_code=~\"5..\"}[$__rate_interval])) or vector(0)", "legendFormat": "HTTP 5xx /s", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(rate(tempodb_compaction_errors_total{job=\"tempo\"}[$__rate_interval])) + sum(rate(tempodb_retention_errors_total{job=\"tempo\"}[$__rate_interval])) or vector(0)", "legendFormat": "Backend Errors /s", "range": true, "refId": "C"}
+      ],
+      "title": "Tempo Doctor",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Watchdog는 항상 FIRING이어야 합니다. Watchdog가 없거나 Notification Failures가 증가하면 알림 전달 경로를 점검합니다.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Alertmanager"}, "properties": [{"id": "mappings", "value": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}]}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}]},
+          {"matcher": {"id": "byName", "options": "Watchdog"}, "properties": [{"id": "mappings", "value": [{"options": {"0": {"color": "red", "text": "MISSING"}, "1": {"color": "green", "text": "FIRING"}}, "type": "value"}]}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}]},
+          {"matcher": {"id": "byName", "options": "Active Alerts"}, "properties": [{"id": "color", "value": {"fixedColor": "blue", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "Notification Failures /s"}, "properties": [{"id": "unit", "value": "ops"}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.000001}]}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+      "id": 5,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {"editorMode": "code", "expr": "min(up{job=\"alertmanager\"})", "legendFormat": "Alertmanager", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum(alertmanager_alerts{job=\"alertmanager\",state=\"active\"}) or vector(0)", "legendFormat": "Active Alerts", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "max(ALERTS{alertname=\"Watchdog\",alertstate=\"firing\"}) or vector(0)", "legendFormat": "Watchdog", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "sum(rate(alertmanager_notifications_failed_total{job=\"alertmanager\"}[$__rate_interval])) or vector(0)", "legendFormat": "Notification Failures /s", "range": true, "refId": "D"}
+      ],
+      "title": "Alertmanager Doctor",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "관측 데이터 유실 신호를 한곳에서 비교합니다. 0이 정상이며 값이 발생하면 해당 Doctor 패널에서 원인을 좁힙니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "loss or errors", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 15, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false},
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.000001}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 26},
+      "id": 6,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "sum(1 - up)", "legendFormat": "Targets Down", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum(rate(loki_write_dropped_entries_total{job=\"alloy\"}[$__rate_interval])) or vector(0)", "legendFormat": "Alloy Dropped /s", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(rate(loki_discarded_samples_total{job=\"loki\"}[$__rate_interval])) or vector(0)", "legendFormat": "Loki Discarded /s", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "sum(rate(tempodb_compaction_errors_total{job=\"tempo\"}[$__rate_interval])) + sum(rate(tempodb_retention_errors_total{job=\"tempo\"}[$__rate_interval])) or vector(0)", "legendFormat": "Tempo Backend Errors /s", "range": true, "refId": "D"},
+        {"editorMode": "code", "expr": "sum(rate(alertmanager_notifications_failed_total{job=\"alertmanager\"}[$__rate_interval])) or vector(0)", "legendFormat": "Alert Failures /s", "range": true, "refId": "E"}
+      ],
+      "title": "Telemetry Data Loss",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["food-budget-app", "observability", "health"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "05 Observability Health",
+  "uid": "fba-observability-health",
+  "version": 3,
+  "weekStart": ""
+}
