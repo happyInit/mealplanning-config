@@ -24,10 +24,6 @@ spec:
         tier: ingress
       annotations:
         sidecar.istio.io/inject: "false"
-        # 🔴 config 는 subPath 마운트(volumeMounts) — ConfigMap 변경이 실행 파드에 자동 반영 안 된다(K8s 특성).
-        #    이 rev 를 bump 하면 파드 템플릿이 바뀌어 sync 시 롤아웃 → 새 파드가 갱신된 config 를 마운트한다.
-        #    터널 ingress 규칙을 바꿀 때마다 이 값을 올릴 것.
-        mp.io/tunnel-config-rev: "2"
     spec:
       automountServiceAccountToken: false        # K8s API 안 씀
       securityContext:
