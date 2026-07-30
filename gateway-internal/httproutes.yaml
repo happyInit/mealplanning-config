@@ -77,7 +77,9 @@ spec:
     - matches:
         - path: { type: PathPrefix, value: / }
       backendRefs:
-        - name: mp-jenkins-ext
+        - group: networking.istio.io   # ServiceEntry(backends-hostc.yaml)의 hosts 를 무는 Istio 확장
+          kind: Hostname
+          name: jenkins.hostc.mp.internal
           port: 8080
 ---
 apiVersion: gateway.networking.k8s.io/v1
@@ -94,7 +96,9 @@ spec:
     - matches:
         - path: { type: PathPrefix, value: / }
       backendRefs:
-        - name: mp-sonarqube-ext
+        - group: networking.istio.io
+          kind: Hostname
+          name: sonarqube.hostc.mp.internal
           port: 9000
 ---
 apiVersion: gateway.networking.k8s.io/v1
@@ -111,7 +115,9 @@ spec:
     - matches:
         - path: { type: PathPrefix, value: / }
       backendRefs:
-        - name: mp-harbor-ext
+        - group: networking.istio.io
+          kind: Hostname
+          name: harbor.hostc.mp.internal
           port: 443            # GW→Harbor 재암호화 — DestinationRule(backends-hostc.yaml)이 TLS 를 연다
 ---
 # HTTP(80) → HTTPS(301) 전량 리다이렉트 — 공개 GW 의 mp-https-redirect 와 동일 패턴.
