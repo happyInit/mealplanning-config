@@ -26,7 +26,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-kurly
-              image: 192.168.0.10/mealplanning/mp-crawler-kurly:21db938cdc2755a0614a52c6f560ae4c680d51e4
+              image: 192.168.0.10/mealplanning/mp-crawler-kurly:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               command: ["python", "crawler/kurly/prototype.py", "--kafka"]
               envFrom:
                 - configMapRef:
@@ -65,7 +65,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-oasis-dawn
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               command: ["python", "crawler/oasis/oasis_crawler.py", "--categories", "11,142,141,12,49,9,13,3,216,1274,1275,219,1191", "--kafka"]
               envFrom:
                 - configMapRef:
@@ -104,7 +104,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-oasis-noon
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               command: ["python", "crawler/oasis/oasis_crawler.py", "--categories", "11,142,141,12,49,9,13,3,216,1274,1275,219,1191", "--kafka"]
               envFrom:
                 - configMapRef:
@@ -143,7 +143,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-deal-timesale
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               command: ["python", "crawler/oasis/oasis_crawler.py", "--deal", "timeSale", "--kafka"]
               envFrom:
                 - configMapRef:
@@ -182,7 +182,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-deal-closesale
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               command: ["python", "crawler/oasis/oasis_crawler.py", "--deal", "closeSale", "--kafka"]
               envFrom:
                 - configMapRef:
@@ -222,7 +222,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-recipe
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               command: ["python", "/app/crawler/10k_recipe/10k_recipe_crawler.py", "--kafka", "--order", "date"]
               workingDir: /data/recipe-crawl
               envFrom:
@@ -269,7 +269,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-price-matview
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               command: ["python", "pipelines/ingest/refresh_price_matview.py"]
               envFrom:
                 - configMapRef:
@@ -308,7 +308,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-es-recipes
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               command: ["python", "pipelines/ingest/index_recipes_es.py"]
               envFrom:
                 - configMapRef:

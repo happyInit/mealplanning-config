@@ -19,7 +19,7 @@ spec:
       priorityClassName: pipeline-low
       containers:
         - name: reindex
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
           command: ["python", "pipelines/ingest/index_recipes_es.py"]
           envFrom:
             - configMapRef:
