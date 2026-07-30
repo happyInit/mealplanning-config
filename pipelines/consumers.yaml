@@ -21,7 +21,7 @@ spec:
       priorityClassName: pipeline-low
       containers:
         - name: retail-refiner
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
           command: ["python", "pipelines/stream/consume_retail.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
           envFrom:
             - configMapRef:
@@ -61,7 +61,7 @@ spec:
       priorityClassName: pipeline-low
       containers:
         - name: deal-notifier
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
           command: ["python", "pipelines/stream/consume_deal.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
           envFrom:
             - configMapRef:
@@ -101,7 +101,7 @@ spec:
       priorityClassName: pipeline-low
       containers:
         - name: recipe-refiner
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
           command: ["python", "pipelines/stream/consume_recipe.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
           envFrom:
             - configMapRef:
@@ -141,7 +141,7 @@ spec:
       priorityClassName: pipeline-low
       containers:
         - name: user-event-sink
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:21db938cdc2755a0614a52c6f560ae4c680d51e4
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
           command: ["python", "pipelines/stream/consume_user_event.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
           envFrom:
             - configMapRef:
