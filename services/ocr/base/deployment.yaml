@@ -12,6 +12,11 @@ spec:
       app: ocr
   template:
     metadata:
+      annotations:
+        # Istio 병합 대상 — 사이드카가 이 앱 /metrics 를 15020/stats/prometheus 로 합친다(STRICT-safe). scrape=ServiceMonitor mp-app-services.
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8010"
       labels:
         app: ocr
         tier: backend
