@@ -1,0 +1,59 @@
+# 보안 ③ NetworkPolicy — 티어 1: frontend (default-deny 양방향). object_spec §10.
+#
+# 안전순의 첫 티어인 이유: frontend 는 blast radius 가 가장 작다 — 백엔드 호출이 0(§1.3)이고
+# egress 가 DNS·istiod 뿐이라 규칙이 틀려도 앱 간 통신을 깨지 않는다. 여기서 default-deny 감을
+# 잡고 Hubble(`--verdict DROPPED`)로 예상 밖 흐름이 없는지 확인한 뒤 backend→data→pipeline 로 넓힌다.
+#
+# 🔴 표준 NetworkPolicy(플랜 §6.1 — EKS 이식성). policyTypes 에 Ingress+Egress 를 둘 다 명시하므로
+#    이 셀렉터(tier=frontend)에 대해 아래에 없는 것은 전부 차단된다(§10.1 화이트리스트 스위치).
+# 🔴 셀렉터는 tier 라벨 — Cilium 이 무시하는 라벨(statefulset.kubernetes.io/pod-name·pod-template-hash
+#    등)로 고르면 정책이 조용히 무효가 된다(runbook §9-27). app/tier 는 안전.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-frontend
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      tier: frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # 1) 공개 GW → frontend :8080 (GW 파드는 app/tier 라벨이 없어 gateway-name 으로 고른다)
+    - from:
+        - podSelector:
+            matchLabels:
+              gateway.networking.k8s.io/gateway-name: mp-gw-public
+      ports:
+        - { protocol: TCP, port: 8080 }
+    # 2) kubelet probe — STRICT 하에서 probe 는 istio-proxy :15021 로 rewrite 되고 소스는 파드가 뜬
+    #    노드의 IP 다(§10.2 "가장 놓치기 쉬운" 예외). 노드 서브넷 ipBlock 으로 허용(포트 무제한 —
+    #    rewrite 전/후·Cilium health 등 노드발 트래픽을 모두 통과. 파드 IP 는 노드만 라우팅하므로 실질 소스=노드).
+    #    🔴 노드 서브넷이 바뀌면(현재 192.168.0.x, master .17·worker .18/.19/.20 + 램프) 이 CIDR 을 갱신할 것.
+    - from:
+        - ipBlock:
+            cidr: 192.168.0.0/24
+  egress:
+    # 1) DNS (CoreDNS) — 없으면 이름 해석 전멸(§10.2)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) istiod XDS :15012 — 사이드카 설정 수신. 없으면 재시작 시 mTLS·라우팅 붕괴(§10.2)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+      ports:
+        - { protocol: TCP, port: 15012 }

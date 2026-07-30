@@ -5,5 +5,7 @@ namespace: app
 # README.md 는 kustomize 가 무시(리소스 아님).
 resources:
   - peerauthentication.yaml
-  # 보안 ③(NetworkPolicy default-deny)가 여기 추가된다 — frontend→backend→data→pipeline 순(계획).
-  # data·pipeline 대상 netpol 은 그 ns 로 가야 하므로 그때 app 이 아닌 별도 배치를 검토.
+  # 보안 ③ NetworkPolicy default-deny — frontend→backend→data→pipeline 순(계획). 티어별로 파일 추가·sync·Hubble 검증.
+  - netpol-frontend.yaml            # 티어 1: frontend (default-deny, ingress=GW+probe / egress=DNS+istiod)
+  # 티어 2 backend(+ocr→Gemini CiliumNetworkPolicy) → 티어 3 data → 티어 4 pipeline 이 순서대로 추가된다.
+  # 🔴 data·pipeline 대상 netpol 은 그 ns 로 가야 하므로(이 kustomization 은 namespace:app 강제) 그때 별도 배치.
