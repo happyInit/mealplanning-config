@@ -2,21 +2,21 @@
 #
 # 왜 lag 인가: 컨슈머의 병목은 CPU 가 아니라 "얼마나 밀렸나" 다. HPA 는 그걸 못 본다(object_spec §9.4).
 #
-# 🔴 **minReplicaCount 는 지금 1 이다 — 0 이 최종 목표이지만 아직 아니다**(사용자 확정 2026-07-30).
-#   0 으로 내리면 KEDA 는 Kafka lag 를 보고 깨워야 하는데, **커밋된 오프셋이 없는 그룹은 lag 를
-#   계산할 수 없어 0 으로 보고**한다. 그러면 파드가 0 으로 내려간 뒤 **영영 안 깨어난다** —
-#   메시지는 쌓이는데 아무도 안 먹는 조용한 실패(과거 alloy 웨지 29h·PGSync 크래시루프 16h 와 같은 계열).
-#   실측(2026-07-30 전환 직전):
-#     deal-notifier   커밋 있음 lag=0        ✅
-#     retail-refiner  커밋 있음 lag=0        ✅
-#     recipe-refiner  **커밋 없음 lag=-**    ❌ ← 이 상태로 0 을 걸면 안 깨어난다
-#     user-event-sink **커밋 없음 lag=-**    ❌
+# ✅ **minReplicaCount 0 = scale-to-zero 도달** (2026-07-30) — KEDA 를 쓰는 본래 목적.
+#   HPA 는 최소 1 이라 0 을 못 만든다. 0→1 은 KEDA 가 직접, 1→N 은 KEDA 가 만든 HPA 가 한다(§9.4).
+#   🔴 **pollingInterval·cooldownPeriod 는 min 0 일 때만 유효하다** — KEDA 가 min 1 시절
+#      "not relevant" 경고로 알려줬다. 이제 실제로 동작한다: 30s 마다 lag 를 보고,
+#      lag 가 0 이 된 뒤 300s 지나면 0 으로 내린다.
 #
-#   ✅ **min 0 전환 조건**(전부 충족돼야 함):
-#     ① 4개 그룹 전부 커밋된 오프셋 보유(`kafka-consumer-groups.sh --describe` 에서 lag 가 숫자)
-#     ② lag 기반 **스케일업 실증**(부하 주입 → replica 증가 관측)
-#     ③ 콜드스타트 지연 측정(KEDA 폴링 30s + 파드 기동 + holdApplicationUntilProxyReady)이 수용 가능
-#   min 1 로 도는 동안 컨슈머가 오프셋을 커밋하므로 ①은 자연히 충족된다 — 그게 이 단계의 목적이다.
+#   전환 전 검증(실측 2026-07-30):
+#     ① 오프셋 커밋 — 커밋 없는 그룹은 KEDA 가 lag 를 0 으로 보고해 **영영 안 깨어난다**.
+#        deal-notifier ✅ · retail-refiner ✅ · user-event-sink ✅(테스트 메시지 15,000 처리로 커밋)
+#        🔴 **recipe-refiner 만 아직 미커밋 → min 1 유지**(아래 개별 주석)
+#     ② 콜드스타트 14초 — 0 replica + lag 3,000 상태에서 파드 기동·Ready·백로그 소진까지.
+#        KEDA 폴링(≤30s)을 더하면 최악 ~45초. 컨슈머는 비대화형이라 수용 가능.
+#
+#   🔴 되돌리기: min 을 1 로 올리면 즉시 복귀한다(파드가 없으면 곧바로 뜬다).
+#      "메시지는 쌓이는데 컨슈머가 0" 이 보이면 그게 신호 — lag 알람이 없으므로 당분간 사람이 본다.
 #
 # lagThreshold 10: 파티션당 10건 밀리면 1대 늘린다. maxReplicaCount 는 **파티션 수를 넘기지 않는다**
 #   — Kafka 는 파티션 하나를 컨슈머 하나에만 주므로 그 이상은 놀고만 있다.
@@ -30,8 +30,8 @@ metadata:
 spec:
   scaleTargetRef:
     name: mp-retail-refiner
-  minReplicaCount: 1 # 🔴 목표는 0 — 위 전환 조건 참조
-  maxReplicaCount: 3 # retail.crawl.raw 파티션 3
+  minReplicaCount: 0 # ✅ scale-to-zero (오프셋 커밋 확인됨)
+  maxReplicaCount: 3 # retail.crawl.raw 파티션 3 — 파티션 수를 넘기면 남는 컨슈머는 논다
   pollingInterval: 30
   cooldownPeriod: 300
   triggers:
@@ -49,7 +49,7 @@ metadata:
 spec:
   scaleTargetRef:
     name: mp-deal-notifier
-  minReplicaCount: 1
+  minReplicaCount: 0 # ✅ scale-to-zero (오프셋 커밋 확인됨)
   maxReplicaCount: 2 # retail.deal.raw 파티션 2
   pollingInterval: 30
   cooldownPeriod: 300
@@ -68,7 +68,12 @@ metadata:
 spec:
   scaleTargetRef:
     name: mp-recipe-refiner
-  minReplicaCount: 1 # 🔴 이 그룹은 아직 오프셋 미커밋 — 0 으로 내리면 안 깨어난다(상단 참조)
+  # 🔴 **여기만 1 이다** — recipe-refiner 그룹은 아직 커밋된 오프셋이 없다(lag=-).
+  #    0 으로 내리면 KEDA 가 lag 를 계산 못 해 영영 안 깨어난다.
+  #    이 토픽은 만개레시피 크론(일·수 05:00)이 채우므로, 그 실행으로 오프셋이 커밋되면 0 으로 내린다.
+  #    (테스트 메시지 주입은 하지 않았다 — 이 컨슈머는 레시피를 PG 에 적재하고 PGSync 가 ES 로
+  #     복제해 **사용자 검색에 노출**되므로, 합성 레시피를 넣을 수 없다.)
+  minReplicaCount: 1
   maxReplicaCount: 3 # recipe.crawl.raw 파티션 3
   pollingInterval: 30
   cooldownPeriod: 300
@@ -87,8 +92,8 @@ metadata:
 spec:
   scaleTargetRef:
     name: mp-user-event-sink
-  minReplicaCount: 1 # 🔴 이 그룹도 오프셋 미커밋. 유입이 상시라 실제로는 0 에 잘 안 간다(§9.4)
-  maxReplicaCount: 2 # events.user.activity — 클릭스트림 개통 시 1파티션 사고 이력(기억) 있어 보수적
+  minReplicaCount: 0 # ✅ scale-to-zero (테스트 메시지로 오프셋 커밋 확보)
+  maxReplicaCount: 3 # events.user.activity 파티션 3 (실측 — 종전 2 는 과소)
   pollingInterval: 30
   cooldownPeriod: 300
   triggers:
