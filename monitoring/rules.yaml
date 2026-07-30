@@ -1,9 +1,45 @@
 # `.11` ContainerMemoryNearLimit 이식 — 클러스터 전 ns 대상 (kustomization 의 namespace: app 으로
 # 오브젝트는 app ns 에 놓이지만, 인클러스터 Prometheus 의 ruleSelector 가 `{}`(전체)라 평가는 전역이다).
 # 실증 근거: tempo 768M 크래시루프 전례(.11 규칙 주석) + 2026-07-30 컬리 폴러 OOMKill(1Gi 한도).
-# 🔴 tempo 규칙 2종(BlocklistIndexBroken·CompactionErrors)은 이식 보류 — 인클러스터 tempo 에 아직
-#    블록이 없어(tempodb_blocklist_length 시리즈 0) absent() 기반 규칙이 즉시 오발화한다.
-#    트레이스 재지향(.10 alloy → 인클러스터) 후 함께 들여온다.
+# ~~tempo 규칙 2종 이식 보류~~ → ✅ **편입 (2026-07-30 오후)** — Istio 메시 트레이싱 배선(app#393,
+#    샘플링 100%) 후 첫 블록 flush 실증(MinIO tempo 버킷 블록 3·tempodb_blocklist_length 시리즈 존재).
+#    absent() 오발화 전제가 해소돼 아래 mp-tempo 그룹으로 들여왔다. 라벨은 인클러스터 실측
+#    (job="tempo" — ServiceMonitor 산출이 .11 시절과 동일이라 식 무수정, owner 라벨만 제거).
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-tempo
+spec:
+  groups:
+    - name: mp-tempo
+      rules:
+        # 블록리스트 인덱스가 안 만들어지면 압축기·보존기가 대상 목록을 못 받아 전부 정지한다.
+        #   시리즈 '부재'가 신호다 — 폴러가 실패하면 tempodb_blocklist_length 자체가 노출되지
+        #   않는다(값이 0으로 떨어지는 게 아니다). 그래서 threshold 가 아니라 absent() 를 쓴다.
+        #   `and on() up==1` = Tempo 가 살아있는데도 부재인 경우로 한정 — 파드가 아예 죽은 경우는
+        #   TargetDown 계열이 이미 잡으므로 중복 소음을 막는다.
+        #   백테스트(.11, 2026-07-23): 실사고 구간 31시간 연속 발화·손상 블록 제거 직후 소멸.
+        - alert: MpTempoBlocklistIndexBroken
+          expr: absent(tempodb_blocklist_length) and on() (up{job="tempo"} == 1)
+          for: 15m
+          labels:
+            severity: critical
+            service: observability
+          annotations:
+            summary: "Tempo 블록리스트 인덱스 생성 실패 15분 — 압축·보존이 정지한다(파드는 Up 이라 다른 알람에 안 걸림)"
+            description: >-
+              kubectl -n observability logs sts/tempo | grep 'failed to poll' 확인. 급사 후라면
+              0바이트 meta.json 이 원인일 수 있다 — MinIO tempo 버킷에서 size 0 meta.json 을 찾아 해당 블록 제거.
+
+        - alert: MpTempoCompactionErrors
+          expr: increase(tempodb_compaction_errors_total[30m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+            service: observability
+          annotations:
+            summary: "Tempo 압축 에러 발생 — 보존·질의 성능 저하 진행 중 (tempo 로그의 compaction 에러 확인)"
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
