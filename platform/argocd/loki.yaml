@@ -98,28 +98,9 @@ spec:
         monitoring:
           serviceMonitor:
             enabled: true # kps 가 라벨 무관 수집(selectorNilUsesHelmValues=false)
-        # ── 클러스터-밖 로그 유입구 (모니터링 컷오버 ④, 2026-07-30) ──
-        # 호스트 C(.10) alloy 가 로그를 밀 NodePort. Grafana 30300 선례와 동일한 노출 방식 —
-        # LB 는 게이트웨이 전용(§3.3)이고 내부 게이트웨이(.15)는 아직 없다.
-        # (.15 가 서면 HTTPRoute 뒤로 옮기고 이 Service 는 회수. 노출 수위 = 구 .11 loki:3100
-        #  무인증 LAN 과 동일 — 후퇴 아님.)
-        extraObjects:
-          - apiVersion: v1
-            kind: Service
-            metadata:
-              name: mp-loki-push-nodeport
-              namespace: observability
-            spec:
-              type: NodePort
-              selector:
-                app.kubernetes.io/component: single-binary
-                app.kubernetes.io/instance: loki
-                app.kubernetes.io/name: loki
-              ports:
-                - name: http-push
-                  port: 3100
-                  targetPort: 3100
-                  nodePort: 31100
+        # ~~클러스터-밖 로그 유입구(NodePort 31100)~~ → **회수 (2026-07-30, .15 게이트웨이 개통)**
+        # alloy(.10·.11)는 https://loki.mealbong.cloud/loki/api/v1/push 로 민다 — 정본 =
+        # gateway-internal/(mp-loki-push-route). 게이트웨이 액세스 로그로 push 204 실증 후 제거.
   destination:
     server: https://kubernetes.default.svc
     namespace: observability
