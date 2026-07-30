@@ -1,0 +1,77 @@
+# 보안 ③ NetworkPolicy — 티어 2: backend 공통 (default-deny 양방향). object_spec §10.3.
+#
+# tier=backend 파드 전체에 걸리는 공통 규칙. 서비스별 외부 egress(account→OAuth, ocr/chat→Gemini)는
+# CiliumNetworkPolicy(netpol-backend-fqdn.yaml)로, operations 의 cross-ns(observability)는
+# netpol-operations.yaml 로 분리한다 — 여기에 다 몰면 모든 backend 가 그 목적지로 나갈 수 있어(최소권한 위반).
+# NetworkPolicy 는 additive(합집합)라 operations 는 이 공통 + 자기 전용 규칙을 둘 다 받는다.
+#
+# 🔴 표준 NetworkPolicy(플랜 §6.1 — EKS 이식성). 포트 8001~8011 = 배포된 backend 컨테이너 포트 전 범위
+#    (recipe 8001 … ocr 8010 · operations 8011). 서비스가 이 범위를 벗어나면 endPort 갱신.
+# 🔴 셀렉터는 tier 라벨 — Cilium 이 무시하는 라벨로 고르면 정책이 조용히 무효(runbook §9-27).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-backend
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # 1) 공개 GW → backend API (/api/*). GW 파드는 app/tier 라벨이 없어 gateway-name 으로 고른다(frontend 와 동일).
+    - from:
+        - podSelector:
+            matchLabels:
+              gateway.networking.k8s.io/gateway-name: mp-gw-public
+      ports:
+        - { protocol: TCP, port: 8001, endPort: 8011 }
+    # 2) 같은 ns backend ↔ backend (서비스 간 호출: mealplan→account/pantry/ranking · chat→account/pantry).
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: backend
+      ports:
+        - { protocol: TCP, port: 8001, endPort: 8011 }
+    # 3) kubelet probe — STRICT 하 probe 는 istio-proxy :15021 로 rewrite, 소스는 노드 IP(§10.2).
+    #    노드 서브넷 ipBlock(포트 무제한). 🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
+    - from:
+        - ipBlock:
+            cidr: 192.168.0.0/24
+  egress:
+    # 1) DNS (CoreDNS) — 없으면 이름 해석 전멸(§10.2)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) istiod XDS :15012 — 사이드카 설정 수신. 없으면 재시작 시 mTLS·라우팅 붕괴(§10.2)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+      ports:
+        - { protocol: TCP, port: 15012 }
+    # 3) data ns — PG(CNPG)·ES·Redis·Kafka. 포트 다양(5432/9200/6379/26379/9092/9093)이라 ns 스코프가 경계.
+    #    §10.3 도 "data ns"로 포트 무제한. 모든 backend 의 DB/검색/캐시/큐 접근이 여기로.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: data
+    # 4) 같은 ns backend ↔ backend (서비스 간 호출 egress 쪽 — ingress 2)의 짝)
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: backend
+      ports:
+        - { protocol: TCP, port: 8001, endPort: 8011 }
