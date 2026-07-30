@@ -5,6 +5,7 @@ resources:
   - gateway.yaml                    # mp-gw-internal (.15) — 80 리다이렉트 + 443 와일드카드 TLS
   - httproutes.yaml                 # 이름 6개 + https 리다이렉트
   - backends-hostc.yaml             # 호스트 C UI 3종(셀렉터리스 Service+EndpointSlice) + Harbor 백엔드 TLS
+  - argocd-ui.yaml                  # argo.mealbong.cloud → argocd-server (ServiceEntry, LAN·webhook 호스트와 분리)
   - minio-console-service.yaml      # 콘솔 9001 (기존 minio svc 는 S3 API 전용 유지)
   - externalsecret-cloudflare.yaml  # CF API 토큰(ESO) — DNS-01 발급 크리덴셜
   - issuer.yaml                     # Let's Encrypt ACME Issuer (staging/prod)
