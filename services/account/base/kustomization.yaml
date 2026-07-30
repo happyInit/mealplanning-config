@@ -5,6 +5,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - externalsecret.yaml    # JWT_SECRET·PGPASSWORD (fb-secrets/app-secrets → account-secrets)
+  - hpa.yaml               # P3 — CPU 70%(ContainerResource) · min 2 · max 4. Pooler 전환이 전제(§4.5)
 # TODO(Gateway 소유·이름 확정되면 추가):
 #   - httproute.yaml       # /api/auth · /api/users → account:8004 (Gateway parentRef 필요)
 #   - networkpolicy.yaml   # Ready 확인 후 붙임(§10.2 변수격리) — ingress GW / egress .8·DNS·istiod
