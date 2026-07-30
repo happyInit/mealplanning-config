@@ -35,7 +35,6 @@ spec:
           ports:
             - name: http                     # 🔴 Istio L7 판별 = 포트 이름
               containerPort: 8001
-              appProtocol: http
           envFrom:
             - configMapRef:
                 name: app-common             # PG·ES·Redis·Kafka·크로스서비스 URL(§2.3)

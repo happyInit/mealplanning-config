@@ -36,7 +36,6 @@ spec:
           ports:
             - name: http                     # 🔴 Istio L7 판별 = 포트 이름(§4.4). 없으면 TCP 취급
               containerPort: 8004
-              appProtocol: http
           envFrom:
             - configMapRef:                  # PGHOST(.8)·ESHOST·OTEL 등 — app 이전 단계 생성
                 name: app-common
