@@ -3,3 +3,4 @@ kind: Kustomization
 namespace: app
 resources:
   - app-common.yaml
+  - pullsecret.yaml # Harbor pull secret(ESO) — §9-21 부채 해소
