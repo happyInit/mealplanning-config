@@ -27,7 +27,9 @@ spec:
   location: MESH_EXTERNAL
   resolution: STATIC
   ports:
-    - number: 8080
+    # 🔴 8081 이다 — 호스트 C 의 8080 은 cAdvisor 가 점유(roles/jenkins/defaults 주석).
+    #    8080 으로 배선하면 jenkins.mealbong.cloud 가 cAdvisor 대시보드를 서빙한다(2026-07-30 실발생).
+    - number: 8081
       name: http
       protocol: HTTP
   endpoints:
