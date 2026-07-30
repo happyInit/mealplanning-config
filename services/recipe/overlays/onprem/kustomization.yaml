@@ -6,4 +6,4 @@ resources:
 # 🔴 Jenkins 가 아래 newTag 를 :sha 로 커밋(§7.4). :latest 금지.
 images:
   - name: 192.168.0.10/mealplanning/mp-recipe-service
-    newTag: "576e84bd4d6d7db14909ffdf8b3e984a6769de08"
+    newTag: "fbbbf3fe82e9ea51b78241a0fa74a15183590a0b"
