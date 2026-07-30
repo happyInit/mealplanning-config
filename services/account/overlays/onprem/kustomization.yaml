@@ -2,10 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: app
 resources:
-  - ../../base
+- ../../base
 # 🔴 Jenkins 가 아래 newTag 를 :sha 로 커밋한다(6단계). 지금은 베이스라인 placeholder.
 #    :latest 금지 — ArgoCD 가 감지할 변경이 없다(플랜 §7.4).
-images:
-  - name: 192.168.0.10/mealplanning/mp-account-service
     # 🔴 실제 Harbor 태그는 :sha + :latest 뿐 (:1.1.9 릴리스 런 미실시). 현재 :latest 가 가리키는 sha 로 핀.
-    newTag: "6f51dd39ddd2d5e1ddd9de602bc634813aac82c5"
+images:
+- name: 192.168.0.10/mealplanning/mp-account-service
+  newName: 192.168.0.10/mealplanning/mp-account-service
+  newTag: e850ca6de1f46cb64a943b271f8d0e9ee9792acd
