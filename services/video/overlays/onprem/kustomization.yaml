@@ -7,4 +7,4 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-video-service
   newName: 192.168.0.10/mealplanning/mp-video-service
-  newTag: 5322ad84e669e1fc89e49dad58054ee19e48e1e0
+  newTag: 87231f1f1d373256d83cbbce03930dc392ffce32
