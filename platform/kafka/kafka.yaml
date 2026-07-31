@@ -22,6 +22,21 @@ spec:
         port: 9092
         type: internal
         tls: false
+        # 보안 ③ 티어3-4 — 9092(클라이언트 plain 리스너)를 최소권한으로 조인다. 미설정이면 Strimzi 가
+        # 9092 를 클러스터 전체에 개방한다(Redis/ES/PG 와 달리 default-allow 잔존) → 아래로 소스 특정.
+        # 🔴 Strimzi 는 이 값으로 kafka-network-policy-kafka 의 9092 ingress 만 바꾼다(broker 9090/9091·
+        #    operator 8443·exporter 는 자동 유지) → broker 롤링재시작 없음(netpol 리소스만 갱신).
+        # 클라이언트(실측): app backend·pipeline 컨슈머/프로듀서(KAFKA_BOOTSTRAP :9092) + KEDA 스케일러(lag 폴링).
+        networkPolicyPeers:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: app
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: pipeline
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: keda
     config:
       auto.create.topics.enable: "false"
       default.replication.factor: 3
