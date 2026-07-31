@@ -1,0 +1,142 @@
+# Kubecost 3.2.0 — 플랫폼 child Application (정본 = 이 파일).
+#
+# 서버에 설치된 기존 Argo CD가 이 Application을 읽어 Kubecost를 설치·관리한다.
+# 별도의 Argo CD 설치 리소스나 AppProject 변경은 포함하지 않는다.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kubecost
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # YAML 한 파일만으로 배포하기 위해 현재 전체 권한이 허용된 default 프로젝트를 사용한다.
+  project: default
+  source:
+    repoURL: https://kubecost.github.io/kubecost/
+    chart: kubecost
+    targetRevision: "3.2.0"
+    helm:
+      releaseName: kubecost
+      valuesObject:
+        global:
+          clusterId: mealplanning-k8s
+          defaultStorageClass: openebs-lvm
+
+        # 자동 workload 변경 기능은 초기 설치에서 사용하지 않는다.
+        clusterController:
+          enabled: false
+
+        # 온프레미스 1차 설치에서는 클라우드 청구 연동을 사용하지 않는다.
+        cloudCost:
+          enabled: false
+
+        # 기본 비용 수집을 안정화한 뒤 필요할 때 활성화한다.
+        forecasting:
+          enabled: false
+
+        # Cilium·Istio·PSS 검증 후 별도로 활성화한다.
+        networkCosts:
+          enabled: false
+          serviceMonitor:
+            enabled: false
+
+        localStore:
+          enabled: true
+          # Aggregator의 LocalPV와 합치면 A1 용량을 초과하므로 B2로 분리한다.
+          nodeSelector:
+            kubernetes.io/hostname: k8s-worker-b2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          persistentVolume:
+            enabled: true
+            storageClass: openebs-lvm
+            size: 32Gi
+
+        aggregator:
+          enabled: true
+          # 192.168.0.20 = k8s-worker-a1. DB 64Gi + 설정 1Gi는 A1의 현재 VG
+          # 여유 약 89Gi 안에 들어간다.
+          nodeSelector:
+            kubernetes.io/hostname: k8s-worker-a1
+          retention1d: 30
+          retention1h: 14
+          retention10m: 7
+          persistentConfigsStorage:
+            storageClass: openebs-lvm
+            storageRequest: 1Gi
+          aggregatorDbStorage:
+            storageClass: openebs-lvm
+            storageRequest: 64Gi
+          resources:
+            requests:
+              cpu: 100m
+              memory: 3Gi
+          # Aggregator와 내장 ClickHouse 상태를 기존 Prometheus가 수집한다.
+          serviceMonitor:
+            enabled: true
+            interval: 1m
+            scrapeTimeout: 10s
+
+        finopsagent:
+          enabled: true
+          # A1은 Aggregator 3Gi를 위해 비운다. 선호 affinity로 A1을 먼저 차지하면
+          # Aggregator가 Pending될 수 있으므로 FinOps Agent는 B2로 고정한다.
+          nodeSelector:
+            kubernetes.io/hostname: k8s-worker-b2
+          # 비용·allocation 메트릭을 기존 kube-prometheus-stack/Grafana에 편입한다.
+          metrics:
+            enabled: true
+            serviceMonitor:
+              enabled: true
+              namespace: observability
+              interval: 1m
+              scrapeTimeout: 10s
+              # 기존 kube-state-metrics와 중복되는 KSMv1 복사본만 외부 수집에서 제외한다.
+              metricRelabelings:
+                - action: drop
+                  sourceLabels:
+                    - __name__
+                  regex: "kube_.*"
+          agent:
+            collectorDataSource:
+              enabled: true
+              scrapeInterval: 60s
+
+        frontend:
+          enabled: true
+          # 요청량이 작아 Aggregator와 함께 A1에 배치한다.
+          nodeSelector:
+            kubernetes.io/hostname: k8s-worker-a1
+
+        telemetry:
+          enabled: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cost
+
+  syncPolicy:
+    automated:
+      # Git 파일 삭제가 StatefulSet/PVC 삭제로 바로 번지지 않게 한다.
+      prune: false
+      selfHeal: true
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/warn: restricted
+        pod-security.kubernetes.io/audit: restricted
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
