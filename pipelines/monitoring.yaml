@@ -59,21 +59,36 @@ spec:
         # 🔴 감시 지표는 KEDA 가 아니라 **kafka-exporter**(data/mp-kafka-exporter) 를 본다 —
         #    고장난 당사자의 자기 신고에 기대면 KEDA 가 멈춘 국면을 못 잡는다.
         #    KEDA 지표는 "스케일러가 트리거를 못 읽는다"(MpKedaScalerErrors)에만 쓴다.
-        # 실측 기준선(2026-07-31, 보존기간 전체): lag_sum 최댓값 = **1** — 정상은 0~1 이다.
+        # 실측 기준선(2026-07-31, 보존기간 전체): lag 최댓값 = **1** — 정상은 0~1 이다.
         # 정상 기동 시간: 콜드스타트 14s + KEDA 폴링 30s ≈ **45s** (아래 for: 값들의 근거).
         # keda-operator·metrics-apiserver 의 다운은 스택 기본 TargetDown 이 이미 커버한다.
         #
-        # 🔴 **전부 max_over_time/absent_over_time 으로 감싼 이유 — 실측(2026-07-31)**:
-        #    `kafka_consumergroup_lag_sum` 은 **한 스크레이프씩 조용히 빠진다**. retail-refiner 기준
-        #    3시간 361샘플 중 51개 결측(14%, 최대 연속 90초). 그때도 스크레이프는 정상(0.077s)이고
-        #    같은 그룹의 `kafka_consumergroup_current_offset` 3파티션은 전부 살아 있으며 익스포터
-        #    로그엔 오류가 없다(원인 미규명 — 다른 그룹은 동시 결측 0건).
-        #    Prometheus 는 시계열이 스크레이프에서 사라지면 staleness 마커를 넣어 **즉시** 없는
-        #    것으로 만들고, instant 규칙은 샘플이 한 번만 빠져도 **`for:` 시계가 리셋된다.**
-        #    → 감싸지 않으면 평균 4분마다 리셋되어 `for: 15m` 을 못 채운다(= 안 우는 규칙).
-        #    **과거 3시간 재생 실측**: 감싸지 않은 식의 최장 연속 참 구간 = **14.5분**(for 15m 미달,
-        #    즉 원안은 retail-refiner 에 대해 한 번도 발화할 수 없었다) → 감싼 뒤 = 180.5분(전 구간).
-        #    창 5m 은 관측된 최대 결측 90초의 3.3배. 대가 = 해제가 최대 5분 늦다(수용).
+        # 🔴 **`kafka_consumergroup_lag_sum` 을 쓰지 않는다 — 익스포터 결함 실측(2026-07-31)**:
+        #    kafka-exporter(업스트림 v1.9.0 정품, 리비전 8ec2407)가 **합계 시계열 하나만 조용히
+        #    누락한다**. 익스포터를 직접 반복 스크레이프해 원문 바이트를 대조한 결과, 결측 응답은
+        #    정상 응답과 763줄이 완전히 동일하고 `kafka_consumergroup_lag_sum{consumergroup=
+        #    "retail-refiner",topic="retail.crawl.raw"}` **한 줄만** 없다. 같은 응답 안에 그 값의
+        #    재료인 파티션별 `kafka_consumergroup_lag` 3개와, 소스상 lag_sum **바로 앞 줄에서
+        #    조건 없이 방출되는** `current_offset_sum` 은 멀쩡히 있다.
+        #    `scrape_samples_scraped` 도 결측 시 651 vs 정상 652 로 딱 1개 적다 → **Prometheus 가
+        #    아니라 익스포터가 안 낸 것**(중복샘플 카운터 0, 익스포터 로그 오류 0줄).
+        #    소스(kafka_exporter.go v1.9.0 683~688)상 두 지표는 조건 없이 연달아 방출되므로 코드만
+        #    봐선 불가능한 조합이다 — **기전 미규명**. 업스트림에 동일 보고 없음.
+        #
+        #    24시간 실측 비교(30초 초과 공백 횟수 / 최대 공백):
+        #      lag_sum                       retail 387회 · user-event 23회 · price-anomaly 27회 / 180초
+        #      sum(kafka_consumergroup_lag)  **전 그룹 0회** / 30초(= 스크레이프 간격)
+        #    두 값은 동시 존재 구간에서 완전히 일치한다(3시간 최대 절대오차 0).
+        #    → **파티션별을 우리가 합산**해 결함 시계열에 대한 의존을 없앤다. 결측 내성만 덧대는
+        #      것보다 낫다 — 감싸기는 증상을 가릴 뿐이고 그동안 값은 낡은 채로 쓰인다.
+        #
+        # 🔴 그래도 `max_over_time[2m]` 을 남긴 이유(이중 방어): 이 익스포터가 시계열을 **조용히**
+        #    떨어뜨린다는 게 실증됐고, Prometheus 는 스크레이프에서 사라진 시계열에 staleness 마커를
+        #    넣어 즉시 없는 것으로 만든다. instant 규칙은 샘플이 한 번만 빠져도 **`for:` 시계가
+        #    리셋**되므로 결측 한 번이 15분짜리 규칙을 통째로 무력화한다.
+        #    (lag_sum 을 감싸지 않고 썼다면: 과거 3시간 재생 기준 최장 연속 참 구간이 **14.5분**으로
+        #     `for: 15m` 에 미달 — retail-refiner 에 대해 한 번도 발화할 수 없는 규칙이었다.)
+        #    창 2m = 스크레이프 4회분. 대가 = 해제가 최대 2분 늦다(수용).
 
         # "메시지는 쌓이는데 컨슈머가 0" — scale-to-zero 가 만들어낸 조용한 실패 그 자체.
         # KEDA 활성화 임계는 기본 0 이라 **lag 가 1이라도 45초 안에 1대가 떠야** 정상이다.
@@ -84,12 +99,12 @@ spec:
         - alert: MpConsumerIdleWithBacklog
           expr: |
             (
-              max by(consumergroup) (max_over_time(kafka_consumergroup_lag_sum{consumergroup=~"retail-refiner|deal-notifier|user-event-sink|recipe-refiner"}[5m])) > 0
+              sum by(consumergroup) (max_over_time(kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|user-event-sink|recipe-refiner"}[2m])) > 0
             )
             and on(consumergroup)
             (
               label_replace(
-                max_over_time(kube_deployment_status_replicas_available{namespace="pipeline", deployment=~"mp-(retail-refiner|deal-notifier|user-event-sink|recipe-refiner)"}[5m]) == 0,
+                max_over_time(kube_deployment_status_replicas_available{namespace="pipeline", deployment=~"mp-(retail-refiner|deal-notifier|user-event-sink|recipe-refiner)"}[2m]) == 0,
                 "consumergroup", "$1", "deployment", "mp-(.*)"
               )
             )
@@ -108,7 +123,7 @@ spec:
         # (일·수 05:00) 실적을 보고 조인다.
         - alert: MpConsumerBacklogStuck
           expr: |
-            max by(consumergroup, topic) (max_over_time(kafka_consumergroup_lag_sum{consumergroup=~"retail-refiner|deal-notifier|recipe-refiner|user-event-sink|price-anomaly-notifier"}[5m])) > 100
+            sum by(consumergroup, topic) (max_over_time(kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|recipe-refiner|user-event-sink|price-anomaly-notifier"}[2m])) > 100
           for: 15m
           labels:
             severity: warning
@@ -141,14 +156,15 @@ spec:
         # recipe-refiner 는 **의도적으로 제외** — 아직 커밋 오프셋이 없어 시계열 자체가 없다(부채 #2).
         #    넣으면 첫날부터 상시 발화한다. min 1 이라 컨슈머가 항상 있어 눈먼 위험도 낮다.
         #    부채 #2 로 오프셋이 커밋되고 min 0 으로 내릴 때 이 목록에 함께 추가한다.
-        # `absent` 가 아니라 `absent_over_time(...[10m])` 인 이유 = 위의 단발 결측(최대 90초).
-        #   absent 면 결측 때마다 pending 으로 튀었다가 되돌아온다. for(1h)와 합치면 실질 기준은
+        # `absent` 가 아니라 `absent_over_time(...[10m])` 인 이유 = 헤더의 조용한 결측 실적.
+        #   파티션별 지표는 24시간 공백 0회지만, 이 익스포터가 시계열을 소리 없이 떨어뜨린다는 게
+        #   실증된 이상 단발 결측에 튀지 않게 둔다. for(1h)와 합치면 실질 기준은
         #   "최근 70분간 샘플이 하나도 없음" 이다.
         - alert: MpConsumerLagUnobserved
           expr: |
-            absent_over_time(kafka_consumergroup_lag_sum{consumergroup="retail-refiner"}[10m])
-            or absent_over_time(kafka_consumergroup_lag_sum{consumergroup="deal-notifier"}[10m])
-            or absent_over_time(kafka_consumergroup_lag_sum{consumergroup="user-event-sink"}[10m])
+            absent_over_time(kafka_consumergroup_lag{consumergroup="retail-refiner"}[10m])
+            or absent_over_time(kafka_consumergroup_lag{consumergroup="deal-notifier"}[10m])
+            or absent_over_time(kafka_consumergroup_lag{consumergroup="user-event-sink"}[10m])
           for: 1h
           labels:
             severity: warning
