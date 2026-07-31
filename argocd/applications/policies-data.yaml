@@ -1,0 +1,26 @@
+# child app — data ns 보안 정책(티어 3 NetworkPolicy 스토어별 잠금). 보안 롤아웃 ③.
+# root app-of-apps 가 이 파일을 집어 mp-policies-data Application 을 만든다(mp-policies 와 동일 패턴).
+#
+# 🔴 syncPolicy.automated 를 일부러 안 켠다 = 수동 sync. data ns default-deny 는 복제·HA·백업을
+#    조용히 끊을 수 있는 민감한 변경이라 "머지=강제"가 되면 안 된다. 스토어 하나 sync 후
+#    cilium monitor --type drop 로 예상 밖 드롭 0 + 복제/HA 살아있음을 확인한 뒤 다음 스토어를 sync 한다.
+# 🔴 app ns 의 mp-policies 와 별개 앱 — dest namespace 가 data 다(policies kustomization 은 app 강제라 재사용 불가).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mp-policies-data
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # 없으면 Application 삭제해도 리소스가 유령으로 남음
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: platform/policies-data
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=false
