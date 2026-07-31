@@ -6,6 +6,6 @@ namespace: data
 # 🔴 app ns 정책(platform/policies, namespace:app 강제)과 분리 — 여기는 namespace:data.
 # 스토어별로 하나씩 추가·sync·관찰: Redis(첫) → ES → PG(백업·apiserver·복제) → (Kafka 는 Strimzi 소유라 제외).
 resources:
-  - netpol-redis.yaml               # Redis(mp-redis + sentinel) default-deny
-  # - netpol-es.yaml                # 티어3-2 ES (예정)
+  - netpol-redis.yaml               # Redis(mp-redis + sentinel) default-deny — 3-1 ✅ 검증완료
+  - netpol-es.yaml                  # ES(ECK, cluster=es) default-deny — 3-2
   # - netpol-pg.yaml                # 티어3-3 PG (예정 — 백업 S3 FQDN·apiserver egress 주의)

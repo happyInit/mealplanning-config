@@ -1,0 +1,67 @@
+# 보안 ③ NetworkPolicy — 티어 3(data ns) 스토어별 잠금: Elasticsearch(ECK). object_spec §10.3.
+#
+# Redis(3-1) 다음 스토어. Redis 보다 단순 — 외부 egress 0 · apiserver egress 0 · Prometheus 스크레이프 없음
+#   (ECK 는 Prometheus 네이티브 노출 없음, exporter 미배포 — kafka·redis 만 스크레이프됨).
+#
+# 🔴 data ns=메시 밖 — kubelet probe 가 파드 :9200 로 직접(rewrite 없음, 소스=노드 IP). STRICT 무관.
+# 🔴 셀렉터 = ECK 라벨 elasticsearch.k8s.elastic.co/cluster-name=es (3노드: nodeSet a=1 + b=2). Cilium 존중 라벨.
+#
+# 구조(실측): Elasticsearch CR `es`, http TLS off(평문+basic auth). 클라이언트(backend·pipeline·PGSync)는
+#   es-es-http.data.svc:9200 로 붙는다. 노드간 클러스터링(디스커버리·샤딩·코디네이팅 포워딩)은 transport :9300.
+#   클라이언트 9200 → 코디네이팅 노드가 내부적으로 9300 으로 데이터노드에 포워드 (노드간 9200 없음).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-es
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      elasticsearch.k8s.elastic.co/cluster-name: es
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # 1) app backend (레시피·상품 검색) → HTTP API :9200
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: app } }
+          podSelector: { matchLabels: { tier: backend } }
+      ports:
+        - { protocol: TCP, port: 9200 }
+    # 2) pipeline ns (reindex·refiner·ingest — pipelines/configmap ESHOST 실측) → :9200
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: pipeline } }
+      ports:
+        - { protocol: TCP, port: 9200 }
+    # 3) PGSync (data ns, app=pgsync — PG WAL → ES bulk 색인. 현재 replicas 0 dark 지만 0→1 대비) → :9200
+    - from:
+        - podSelector: { matchLabels: { app: pgsync } }
+      ports:
+        - { protocol: TCP, port: 9200 }
+    # 4) intra-ES: 노드간 transport :9300 (디스커버리·샤드 복제·코디네이팅 포워딩). 없으면 클러스터 red.
+    - from:
+        - podSelector: { matchLabels: { elasticsearch.k8s.elastic.co/cluster-name: es } }
+      ports:
+        - { protocol: TCP, port: 9300 }
+    # 5) ECK operator (elastic-system) → :9200 (헬스·라이선스·샤드 관리 오케스트레이션)
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: elastic-system } }
+      ports:
+        - { protocol: TCP, port: 9200 }
+    # 6) kubelet probe — data ns=메시 밖이라 파드 포트로 직접(소스=노드 IP). 포트 무제한.
+    #    🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
+    - from:
+        - ipBlock: { cidr: 192.168.0.0/24 }
+  egress:
+    # 1) DNS (CoreDNS) — 노드 디스커버리가 파드 호스트네임 해석.
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) intra-ES transport :9300 (ingress 4)의 나가는 짝). 외부·apiserver·S3 egress 없음(ES 미백업=재파생).
+    - to:
+        - podSelector: { matchLabels: { elasticsearch.k8s.elastic.co/cluster-name: es } }
+      ports:
+        - { protocol: TCP, port: 9300 }
