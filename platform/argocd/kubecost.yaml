@@ -76,8 +76,7 @@ spec:
           resources:
             requests:
               cpu: 100m
-              # A1의 현재 요청 여유는 약 2.4Gi라 3Gi면 스케줄되지 않는다.
-              memory: 2Gi
+              memory: 3Gi
           # Aggregator와 내장 ClickHouse 상태를 기존 Prometheus가 수집한다.
           serviceMonitor:
             enabled: true
