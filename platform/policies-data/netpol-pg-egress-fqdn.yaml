@@ -1,0 +1,40 @@
+# 보안 ③ CiliumNetworkPolicy — 티어 3: PG instance 의 외부/엔티티 egress. object_spec §10.4.
+#
+# 표준 netpol(netpol-pg.yaml mp-pg-instance)이 default-deny egress 를 걸고 DNS·intra-PG 만 연다.
+# 여기서 표준으로 불가능한 두 egress 를 additive 로 더한다(둘 다 pg instance 파드 전용):
+#   ① AWS S3 (barman WAL/base 백업) — CDN 뒤 IP 변동이라 FQDN 학습 필요(toFQDNs).
+#   ② kube-apiserver — CNPG 인스턴스매니저가 상태보고·페일오버 조율. Cilium 예약 엔티티(ClusterIP↔host 변환 처리).
+#
+# 🔴 toFQDNs 전제: DNS L7 가시성 규칙이 같은 정책에 있어야 Cilium 이 응답을 학습한다(아래 toEndpoints+rules.dns).
+# 🔴 이 둘 중 하나라도 막히면: ① 백업 체인 단절(WAL 아카이빙 실패) ② 인스턴스매니저 기능 상실. 둘 다 조용히 온다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pg-instance-egress
+  namespace: data
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  egress:
+    # DNS L7 (FQDN 학습 전제) — kube-dns 로 질의를 Cilium DNS 프록시가 관측
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    # ① barman WAL/base 백업 → AWS S3 (objectstore.yaml: s3://mp-backup-ap2/pg @ ap-northeast-2)
+    - toFQDNs:
+        - matchName: "s3.ap-northeast-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+    # ② CNPG 인스턴스매니저 → kube-apiserver (예약 엔티티 — ClusterIP 10.96.0.1:443 ↔ master:6443 변환을 Cilium 이 처리)
+    - toEntities:
+        - kube-apiserver
