@@ -1,0 +1,19 @@
+# 가용성 — PodDisruptionBudget (object_spec §9.5)
+#
+# 🔴 PDB 는 **자발적 중단만** 막는다. 노드 급사·커널 패닉·OOM kill 은 못 막는다
+#    (급사 3회 이력은 PDB 영역이 아니라 replica 분산이 담당한다 — 플랜 §5.2).
+#      막는 것 : kubectl drain(노드 정비·업그레이드) · 오토스케일러 노드 축소
+#      못 막는 것 : 노드 급사 · 커널 패닉 · OOM kill · eviction
+#
+# 전제 = Deployment replicas 2 + `app: frontend` topologySpreadConstraints.
+#   replica 1 에 minAvailable:1 을 걸면 drain 이 영원히 막히고,
+#   2 여도 같은 노드에 몰리면 그 노드가 drain 불가가 된다. 둘 다 deployment.yaml 에서 해결했다.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mp-frontend-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: frontend

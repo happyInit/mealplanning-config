@@ -4,3 +4,4 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - service.yaml
+  - pdb.yaml               # 가용성 — drain 중 최소 1 유지(§9.5). replicas 2 + app 단위 spread 가 전제

@@ -6,7 +6,11 @@ metadata:
     app: frontend              # §2.3: 라벨은 bare
     tier: frontend
 spec:
-  replicas: 1
+  # 🔴 2 인 이유 = 용량이 아니라 **가용성**이다. frontend 는 UI 유입의 단일 경로라 죽으면
+  #    전면 불가이고, replica 1 이면 노드 정비(drain)·노드 상실에 그대로 내려간다
+  #    (기본 tolerationSeconds 300s 탓에 재스케줄까지 최대 5분).
+  #    PDB 의 전제이기도 하다 — minAvailable:1 을 replica 1 에 걸면 drain 이 영원히 막힌다(object_spec §9.5).
+  replicas: 2
   selector:
     matchLabels:
       app: frontend
@@ -16,6 +20,26 @@ spec:
         app: frontend
         tier: frontend
     spec:
+      # 🔴 셀렉터가 `app: frontend` 다 — 백엔드의 `tier: backend` 와 다르다.
+      #    백엔드는 10종이 replica 1 이라 자기 파드만 세면 셀 게 하나뿐이라 tier 로 묶었지만,
+      #    여기서 필요한 건 **이 서비스의 2 replica 를 서로 다른 노드에** 두는 것이다.
+      #    둘 다 같은 노드에 앉으면 PDB(minAvailable:1)가 그 노드를 **drain 불가**로 만든다
+      #    — 첫 파드는 축출되지만 두 번째에서 0 이 되므로 거부되고 drain 이 끝나지 않는다.
+      # ⚠️ ScheduleAnyway(soft) 인 이유 = object_spec §9.6. DoNotSchedule 이면 자리가 없을 때
+      #    Pending 으로 멈춘다(가용성을 지키려다 서비스가 안 뜨는 최악).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: frontend
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: frontend
       automountServiceAccountToken: false    # nginx 는 K8s API 안 씀
       securityContext:                       # 🔴 PSS restricted
         runAsNonRoot: true

@@ -48,6 +48,17 @@ spec:
           labelSelector:
             matchLabels:
               tier: backend
+        # 🔴 위 둘(tier: backend)은 **백엔드 파드 전체**의 균형이라, account 자신의 replica 가
+        #    서로 다른 노드에 간다는 보장을 주지 않는다 — 13개가 고르게 퍼진 채로도
+        #    account 2개가 같은 노드에 앉을 수 있다. 그러면 PDB(minAvailable:1)가 그 노드를
+        #    **drain 불가**로 만든다(두 번째 축출에서 0 이 되어 거부). 그래서 app 단위 제약을 더한다.
+        #    account 는 HPA 로 최대 4까지 늘어나므로 이 제약이 실제로 셀 것이 있다.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: account
       automountServiceAccountToken: false   # 앱은 K8s API 안 씀 → 토큰은 공격표면(§10.6)
       # imagePullSecret 은 app ns default SA 에 붙인다(§7.8) — 여기 명시 안 함. app 이전 단계 생성.
       securityContext:                       # 🔴 PSS restricted (app ns enforce) — 없으면 파드 거부
