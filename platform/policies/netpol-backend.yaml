@@ -40,6 +40,19 @@ spec:
     - from:
         - ipBlock:
             cidr: 192.168.0.0/24
+    # 4) 🔴 Prometheus(observability) → :15020 Istio 병합 메트릭 스크레이프.
+    #    ServiceMonitor mp-app-services 가 podIP:15020/stats/prometheus 를 긁는다(STRICT 하 유일 경로 —
+    #    step① 메트릭 이전의 목적). 이 룰이 없으면 backend 9타깃이 전부 DOWN(메트릭 실명). frontend·ranking 은
+    #    ServiceMonitor 가 명시 제외라 스크레이프 대상 아님(그래서 mp-frontend 엔 불필요).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - { protocol: TCP, port: 15020 }
   egress:
     # 1) DNS (CoreDNS) — 없으면 이름 해석 전멸(§10.2)
     - to:
