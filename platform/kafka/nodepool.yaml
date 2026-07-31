@@ -37,3 +37,18 @@ spec:
             matchLabels:
               strimzi.io/cluster: kafka
               strimzi.io/pool-name: combined
+        # 🔴 노드(hostname) 단위 제약 — 2026-07-31 추가. **없으면 zone 제약만으로는 부족하다.**
+        #    실사고에 준하는 실측: zone spread(host-b 2 · host-a 1)는 만족한 상태에서 host-b 몫
+        #    2개가 **둘 다 k8s-worker-b1** 에 얹혀 있었다(combined-0·combined-2, 로컬 PV 로 고정).
+        #    combined 는 controller+broker 라 b1 하나가 죽으면 **KRaft 정족수 3중 2를 잃어
+        #    Kafka 가 통째로 정지**한다 — RF=3 도 그 순간 무의미하다.
+        #    maxSkew 1 + 워커 4대 = 노드당 최대 1대. zone 제약과 함께 걸려야 "B에 2·A에 1 이면서
+        #    서로 다른 노드"가 성립한다.
+        #    ⚠️ 이 제약은 대칭이라 "다수가 B" 까지는 표현하지 못한다 — 그건 최초 배치로 잡는다.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              strimzi.io/cluster: kafka
+              strimzi.io/pool-name: combined
