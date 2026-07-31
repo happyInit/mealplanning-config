@@ -21,6 +21,30 @@ spec:
         app: price
         tier: backend
     spec:
+      # 🔴 셀렉터가 `app: <자기이름>` 이 아니라 **공통 `tier: backend`** 인 게 핵심이다 (2026-07-31).
+      #    11종 중 10종이 replica 1 이라, 자기 파드만 세는 제약은 셀 게 하나뿐이라 **아무 일도 안 한다**.
+      #    tier 로 묶어야 "백엔드 파드 전체를 노드/호스트에 고르게" 가 성립한다.
+      # 배경: 제약이 전무해 분포가 a1 7 · b2 7 · b1 1 이었다 — b2 하나가 죽으면 7개 서비스가
+      #    동시에 유일 replica 를 잃는다. hostname = 노드 상실, zone = 물리 호스트 상실 대비.
+      # ⚠️ **ScheduleAnyway(soft) 인 이유** = b1·b2 요청률이 77~80% 라, DoNotSchedule 이면
+      #    가장 적게 담은 노드에 자리가 없을 때 파드가 **Pending 으로 멈춘다**(가용성 사고).
+      #    균형은 점수로 유도하고 스케줄 자체는 막지 않는다.
+      # ⚠️ 이건 **blast radius 축소이지 HA 가 아니다** — replica 1 서비스는 노드가 죽으면
+      #    그대로 내려가고, 기본 tolerationSeconds 300s 탓에 재스케줄까지 최대 5분 걸린다.
+      #    진짜 HA 는 replicas>=2 + PDB 이며 별건이다.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              tier: backend
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              tier: backend
       automountServiceAccountToken: false    # 앱은 K8s API 안 씀 → 토큰=공격표면
       securityContext:                       # 🔴 PSS restricted (app ns enforce)
         runAsNonRoot: true
