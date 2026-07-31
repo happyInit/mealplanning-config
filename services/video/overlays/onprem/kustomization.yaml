@@ -2,9 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: app
 resources:
-  - ../../base
+- ../../base
 # 🔴 Jenkins CD 가 newTag 를 :sha 로 커밋(§7.4). :latest 금지.
 images:
-  - name: 192.168.0.10/mealplanning/mp-video-service
-    newName: 192.168.0.10/mealplanning/mp-video-service
-    newTag: latest
+- name: 192.168.0.10/mealplanning/mp-video-service
+  newName: 192.168.0.10/mealplanning/mp-video-service
+  newTag: 5322ad84e669e1fc89e49dad58054ee19e48e1e0
