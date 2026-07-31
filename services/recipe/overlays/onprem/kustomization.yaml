@@ -2,8 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: app
 resources:
-  - ../../base
+- ../../base
 # 🔴 Jenkins 가 아래 newTag 를 :sha 로 커밋(§7.4). :latest 금지.
 images:
-  - name: 192.168.0.10/mealplanning/mp-recipe-service
-    newTag: "fbbbf3fe82e9ea51b78241a0fa74a15183590a0b"
+- name: 192.168.0.10/mealplanning/mp-recipe-service
+  newName: 192.168.0.10/mealplanning/mp-recipe-service
+  newTag: 1d5b233c5258eb0eb9501472cef4d9da70bc2870

@@ -2,11 +2,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: app
 resources:
-  - ../../base
+- ../../base
 # 🔴 Pooler 우회 — pg-direct.yaml 주석의 해제 조건 참조(P3, 2026-07-30)
 patches:
 - path: pg-direct.yaml
 # 🔴 Jenkins 가 아래 newTag 를 :sha 로 커밋(§7.4). :latest 금지.
 images:
-  - name: 192.168.0.10/mealplanning/mp-ranking-serving
-    newTag: "a2268432159f3093e6ef85478393102260939c7b"
+- name: 192.168.0.10/mealplanning/mp-ranking-serving
+  newName: 192.168.0.10/mealplanning/mp-ranking-serving
+  newTag: 1d5b233c5258eb0eb9501472cef4d9da70bc2870
