@@ -419,7 +419,7 @@ spec:
   startingDeadlineSeconds: 600
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
-  suspend: true
+  suspend: false                          # AWS 키 주입 완료(fb-secrets/pipeline-secrets) → 가동
   jobTemplate:
     spec:
       backoffLimit: 0
@@ -437,6 +437,8 @@ spec:
               image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               imagePullPolicy: IfNotPresent
               command: ["python", "pipelines/ingest/score_review_sentiment.py"]
+              env:
+                - {name: AWS_REGION, value: "ap-northeast-2"}   # 비밀 아님(팀장) · AWS 키는 envFrom mp-pipeline-secrets
               envFrom:
                 - configMapRef: {name: mp-pipeline-env}
                 - secretRef: {name: mp-pipeline-secrets}
@@ -456,7 +458,7 @@ spec:
   startingDeadlineSeconds: 600
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
-  suspend: true
+  suspend: false                          # AWS 키 주입 완료 → 가동
   jobTemplate:
     spec:
       backoffLimit: 0
@@ -474,6 +476,8 @@ spec:
               image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
               imagePullPolicy: IfNotPresent
               command: ["python", "pipelines/ingest/summarize_reviews.py"]
+              env:
+                - {name: AWS_REGION, value: "ap-northeast-2"}   # 비밀 아님(팀장) · AWS 키는 envFrom mp-pipeline-secrets
               envFrom:
                 - configMapRef: {name: mp-pipeline-env}
                 - secretRef: {name: mp-pipeline-secrets}
