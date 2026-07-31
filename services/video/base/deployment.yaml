@@ -37,6 +37,7 @@ spec:
             - {name: http, containerPort: 8011, protocol: TCP}
           envFrom:
             - configMapRef: {name: app-common}
+            - secretRef: {name: mp-video-secrets}   # PGPASSWORD (gazetteer item_id 정규화용 PG 접속)
           env:
             - {name: OTEL_SERVICE_NAME, value: "video"}
             - {name: VIDEO_EXTRACT_MODEL, value: "gemini-3.5-flash-lite"}   # 🔴 -latest 별칭 금지(PR #272)
