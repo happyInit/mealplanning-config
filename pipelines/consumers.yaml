@@ -201,7 +201,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: price-anomaly-notifier
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
           imagePullPolicy: IfNotPresent
           command: ["python", "pipelines/stream/consume_price_anomaly.py"]
           env:
