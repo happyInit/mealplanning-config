@@ -43,9 +43,16 @@ spec:
             - {name: VIDEO_EXTRACT_MODEL, value: "gemini-3.5-flash-lite"}   # 🔴 -latest 별칭 금지(PR #272)
             - {name: VIDEO_RETRY_MODEL,   value: "gemini-3.5-flash"}
             - {name: VIDEO_REFINE_ENABLED, value: "false"}                  # 기본 OFF(비용)
-            - {name: VIDEO_GENAI_BACKEND, value: "api_key"}                 # Vertex 전환은 OCR 과 독립(후속)
+            # ── Vertex 전환 (결정 gcp-migration-plan §4.2 · PoC 완료 2026-07-29) ──
+            # extract.py 는 genai.Client(vertexai=True)=ADC → SA키 **파일 마운트** 필요(OCR 의 env JSON 과 다름).
+            # 문제 시 VIDEO_GENAI_BACKEND=api_key 로 원복(VIDEO_GEMINI_API_KEY = mp-video-secrets 유지).
+            - {name: VIDEO_GENAI_BACKEND, value: "vertex"}
+            - {name: GCP_PROJECT_ID, value: "mealplanning-503911"}
+            - {name: GCP_LOCATION,   value: "global"}                       # 서울 미배치 → global(팀 승인)
+            - {name: GOOGLE_APPLICATION_CREDENTIALS, value: "/etc/gcp/gcp-sa.json"}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            - {name: gcp-sa, mountPath: /etc/gcp, readOnly: true}
           livenessProbe:
             httpGet: {path: /health, port: 8011}
             initialDelaySeconds: 20
@@ -63,3 +70,5 @@ spec:
             limits: {memory: 512Mi}
       volumes:
         - {name: tmp, emptyDir: {}}
+        - name: gcp-sa
+          secret: {secretName: mp-gcp-sa, defaultMode: 0444}   # 0400 아님 — 비root(10001)가 읽어야 함

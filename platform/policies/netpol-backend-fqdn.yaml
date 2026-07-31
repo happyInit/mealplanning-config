@@ -99,7 +99,7 @@ spec:
         - ports:
             - { port: "443", protocol: TCP }
 ---
-# video → Gemini api_key 모드(VIDEO_GEMINI_API_KEY). AI 파트 추가 · draft 2026-07-31.
+# video → GCP Vertex AI (결정 gcp-migration-plan §4.2·PoC 완료). AI 파트 추가 · draft 2026-07-31.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -122,7 +122,9 @@ spec:
             dns:
               - matchPattern: "*"
     - toFQDNs:
-        - matchName: "generativelanguage.googleapis.com"
+        - matchName: "aiplatform.googleapis.com"           # Vertex AI (location=global)
+        - matchName: "oauth2.googleapis.com"               # SA 키 토큰 교환(ADC)
+        - matchName: "generativelanguage.googleapis.com"   # api_key 롤백용 유지
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
