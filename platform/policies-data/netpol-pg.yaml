@@ -1,0 +1,121 @@
+# 보안 ③ NetworkPolicy — 티어 3(data ns) 스토어별 잠금: PostgreSQL(CNPG). object_spec §10.3.
+#
+# tier-3 의 마지막이자 가장 위험한 스토어. Redis/ES 와 달리 세 겹의 함정:
+#   ① pg 파드 → AWS S3(barman WAL/base 백업) 외부 egress + ② CNPG 인스턴스매니저 → kube-apiserver egress
+#      → 둘 다 표준 netpol 로 불가(FQDN·엔티티) = netpol-pg-egress-fqdn.yaml(CiliumNetworkPolicy)이 담당.
+#   ③ pooler(PgBouncer)와 instance 는 라벨 `cnpg.io/cluster=pg` 를 공유하지만 트래픽이 전혀 다르다
+#      → `cnpg.io/podRole` 로 분리(instance / pooler) = 아래 두 정책.
+#
+# 🔴 WAL 아카이빙이 막히면 백업 체인(base+WAL 연속성)이 통째로 단절된다 — 조용히. 적용 후 반드시 확인.
+# 🔴 apiserver egress 가 막히면 인스턴스매니저가 상태보고/페일오버를 못 한다. Cilium 은 kube-apiserver 예약 엔티티.
+# 🔴 data ns=메시 밖 → probe 파드 직접(노드 IP)·STRICT 무관.
+#
+# 클라이언트(실측): 앱 backend 대부분 → pg-pooler(app-common PGHOST) · ocr/ranking → pg-rw 직결(overlay) ·
+#   pipeline → pg-rw 직결(pipelines configmap) · PGSync → pg(논리복제 슬롯). pooler(type:rw) → pg-rw(primary):5432.
+---
+# ── instance (pg-1 primary / pg-2 replica) ────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-pg-instance
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # 1) pooler(PgBouncer) → primary :5432 (type:rw 포워드)
+    - from:
+        - podSelector: { matchLabels: { cnpg.io/podRole: pooler } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 2) app backend :5432 — ocr/ranking 직결 + (pooler 미경유 경로). tier=backend 신뢰 경계.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: app } }
+          podSelector: { matchLabels: { tier: backend } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 3) pipeline ns → pg-rw 직결 :5432 (pipelines/configmap PGHOST=pg-rw 실측)
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: pipeline } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 4) PGSync(app=pgsync) → 논리복제 슬롯 :5432 (현재 dark 지만 0→1 대비)
+    - from:
+        - podSelector: { matchLabels: { app: pgsync } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 5) intra-PG: 스트리밍 복제(primary↔standby) :5432. 없으면 복제 정지 = standby stale.
+    - from:
+        - podSelector: { matchLabels: { cnpg.io/podRole: instance } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 6) CNPG operator(cnpg-system) → 인스턴스매니저 상태 :8000 (+ 안전상 :5432). exec 도 씀.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } }
+      ports:
+        - { protocol: TCP, port: 8000 }
+        - { protocol: TCP, port: 5432 }
+    # 7) Prometheus(observability) → cnpg 메트릭 :9187 (mp-pg PodMonitor)
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: prometheus } }
+      ports:
+        - { protocol: TCP, port: 9187 }
+    # 8) kubelet probe — data ns=메시 밖, 파드 포트로 직접. 🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
+    - from:
+        - ipBlock: { cidr: 192.168.0.0/24 }
+  egress:
+    # 1) DNS
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) intra-PG 스트리밍 복제 egress :5432 (ingress 5)의 짝)
+    - to:
+        - podSelector: { matchLabels: { cnpg.io/podRole: instance } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 🔴 S3 백업 FQDN + kube-apiserver egress 는 netpol-pg-egress-fqdn.yaml(CiliumNetworkPolicy)에서 additive 로 추가.
+---
+# ── pooler (pg-pooler, PgBouncer ×2) ──────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-pg-pooler
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/podRole: pooler
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # 1) app backend → pooler :5432 (app-common PGHOST=pg-pooler). pipeline 은 pooler 미경유(직결)이라 제외.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: app } }
+          podSelector: { matchLabels: { tier: backend } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 2) kubelet probe (노드 IP 직접, 메시 밖)
+    - from:
+        - ipBlock: { cidr: 192.168.0.0/24 }
+  egress:
+    # 1) DNS
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) PgBouncer → primary instance :5432 (실제 쿼리 포워드)
+    - to:
+        - podSelector: { matchLabels: { cnpg.io/podRole: instance } }
+      ports:
+        - { protocol: TCP, port: 5432 }
