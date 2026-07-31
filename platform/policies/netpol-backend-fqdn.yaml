@@ -48,8 +48,10 @@ metadata:
   namespace: app
 spec:
   endpointSelector:
-    matchLabels:
-      app: ocr
+    # app=ocr + 모델드리프트 주간 카나리(app=ocr-config-canary, canary.yaml) — 둘 다 GENAI_BACKEND=vertex 라
+    # 같은 FQDN(aiplatform·oauth2)이 필요. matchLabels app=ocr 만 쓰면 카나리 egress 가 default-deny 로 막힌다.
+    matchExpressions:
+      - { key: app, operator: In, values: [ocr, ocr-config-canary] }
   egress:
     - toEndpoints:
         - matchLabels:
@@ -125,6 +127,7 @@ spec:
         - matchName: "aiplatform.googleapis.com"           # Vertex AI (location=global)
         - matchName: "oauth2.googleapis.com"               # SA 키 토큰 교환(ADC)
         - matchName: "generativelanguage.googleapis.com"   # api_key 롤백용 유지
+        - matchName: "www.youtube.com"                     # oembed 영상 존재·임베드 검증(pipeline.py urlopen). 없으면 매 추출 timeout 지연(fail-open이라 치명적이진 않음).
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
