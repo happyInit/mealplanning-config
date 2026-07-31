@@ -63,7 +63,10 @@ spec:
             dns:
               - matchPattern: "*"
     - toFQDNs:
-        - matchName: "generativelanguage.googleapis.com"
+        - matchName: "generativelanguage.googleapis.com"   # api_key 롤백용 유지
+        # ── Vertex 전환 (AI 파트 추가 · draft 2026-07-31) — 없으면 GENAI_BACKEND=vertex 시 egress drop ──
+        - matchName: "aiplatform.googleapis.com"           # Vertex AI API (location=global)
+        - matchName: "oauth2.googleapis.com"               # SA 키 토큰 교환(ADC)
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
@@ -92,6 +95,36 @@ spec:
               - matchPattern: "*"
     - toFQDNs:
         - matchName: "generativelanguage.googleapis.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+# video → GCP Vertex AI (결정 gcp-migration-plan §4.2·PoC 완료). AI 파트 추가 · draft 2026-07-31.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-video-egress-fqdn
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: video
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "aiplatform.googleapis.com"           # Vertex AI (location=global)
+        - matchName: "oauth2.googleapis.com"               # SA 키 토큰 교환(ADC)
+        - matchName: "generativelanguage.googleapis.com"   # api_key 롤백용 유지
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }

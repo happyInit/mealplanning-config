@@ -172,3 +172,52 @@ spec:
               memory: 128Mi
             limits:
               memory: 512Mi
+---
+# ── #9 가격 이상탐지 fan-out 알림 컨슈머 (AI 파트 추가 · draft 2026-07-31) ──
+# ⚠️ mp-pipeline-consumers PodMonitor 의 selector app in(...) 목록에 price-anomaly-notifier 추가 필요(monitoring.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-price-anomaly-notifier
+  namespace: pipeline
+  labels:
+    app: price-anomaly-notifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: price-anomaly-notifier
+  template:
+    metadata:
+      labels:
+        app: price-anomaly-notifier
+    spec:
+      priorityClassName: pipeline-low
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: price-anomaly-notifier
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
+          imagePullPolicy: IfNotPresent
+          command: ["python", "pipelines/stream/consume_price_anomaly.py"]
+          env:
+            - name: METRICS_PORT
+              value: "9407"
+          envFrom:
+            - configMapRef: {name: mp-pipeline-env}
+            - secretRef: {name: mp-pipeline-secrets}
+          ports:
+            - name: metrics
+              containerPort: 9407
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}

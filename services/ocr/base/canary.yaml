@@ -1,0 +1,58 @@
+# OCR 모델 드리프트 주간 카나리 (AI 파트 추가 · draft 2026-07-31).
+# 🔴 운영 mp-ocr 과 **같은 백엔드**를 봐야 의미가 있다 → env 를 Vertex 로 맞춘다(deployment 와 동일).
+# app ns · mp-ocr-service 이미지(overlay 가 :sha·namespace:app 적용). SA키는 envFrom mp-ocr-secrets(GCP_SA_KEY_JSON).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-ocr-config-canary
+  labels:
+    app: ocr-config-canary
+    tier: backend
+spec:
+  schedule: "15 5 * * 1"                  # 월 05:15 KST — 주간 1회
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 5               # 실패 이력이 유일한 드리프트 신호
+  suspend: false
+  jobTemplate:
+    spec:
+      backoffLimit: 1                     # 일시 네트워크 오탐 1회 흡수. 진짜 드리프트는 계속 실패.
+      template:
+        metadata:
+          labels:
+            app: ocr-config-canary
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 30
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: ocr-config-canary
+              image: 192.168.0.10/mealplanning/mp-ocr-service:latest   # ← overlay 가 :sha 로 덮음(deployment 와 동일 이미지)
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "app.config_canary"]
+              envFrom:
+                - configMapRef: {name: app-common}
+                - secretRef: {name: mp-ocr-secrets}      # GEMINI_API_KEY(롤백) + GCP_SA_KEY_JSON(vertex)
+              env:                                       # 🔴 mp-ocr deployment 와 동일 백엔드
+                - {name: OCR_BACKEND,    value: "vision"}
+                - {name: GENAI_BACKEND,  value: "vertex"}
+                - {name: GCP_PROJECT_ID, value: "mealplanning-503911"}
+                - {name: GCP_LOCATION,   value: "global"}
+              volumeMounts:
+                - {name: tmp, mountPath: /tmp}
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {memory: 512Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+          volumes:
+            - {name: tmp, emptyDir: {}}

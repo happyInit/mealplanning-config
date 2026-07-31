@@ -69,6 +69,15 @@ spec:
               value: ocr
             - name: OCR_BACKEND
               value: "vision"
+            # ── Vertex 전환 (AI 파트 추가 · draft 2026-07-31) ──
+            # 비밀 아님(롤백 레버) — 문제 시 GENAI_BACKEND=api_key 로 즉시 원복. SA키는 envFrom mp-ocr-secrets(GCP_SA_KEY_JSON).
+            # ⚠️ 배포 전 선행: ① fb-secrets 에 GCP_SA_KEY_JSON 주입 ② mp-ocr-egress-fqdn 에 aiplatform·oauth2 허용(netpol-backend-fqdn.yaml)
+            - name: GENAI_BACKEND
+              value: "vertex"
+            - name: GCP_PROJECT_ID
+              value: "mealplanning-503911"
+            - name: GCP_LOCATION
+              value: "global"              # gemini-3.5-flash-lite 서울 미배치 → global (팀 승인 2026-07-30)
           startupProbe:
             httpGet: { path: /health, port: 8010 }
             periodSeconds: 5

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: video                             # DNS: http://video:8011 (라이브 관례 = mp- 없이 짧게)
+  labels:
+    app: video
+spec:
+  selector:
+    app: video
+  ports:
+    - {name: http, port: 8011, targetPort: 8011, protocol: TCP}
