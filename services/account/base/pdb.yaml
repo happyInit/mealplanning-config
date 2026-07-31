@@ -1,0 +1,21 @@
+# 가용성 — PodDisruptionBudget (object_spec §9.5)
+#
+# 🔴 PDB 는 **자발적 중단만** 막는다(drain·노드 축소). 노드 급사·OOM kill 은 못 막는다.
+#
+# account 는 **인증 관문**이다 — 죽으면 로그인·토큰 갱신이 전면 차단되고, 기존 세션도
+#   만료되면 끝이다. 그래서 fan-in(현재 mealplan 1곳 — chat 은 ACCOUNT_INTEGRATION_ENABLED=false)
+#   이 아니라 **역할**을 근거로 replica ≥ 2 를 유지한다.
+#
+# replicas 필드는 Deployment 에 **없다** — HPA(min 2 · max 4)가 소유한다.
+#   매니페스트에 replicas 가 있으면 ArgoCD sync 마다 오토스케일러 결정을 되돌린다(status §5.1).
+#   따라서 minAvailable:1 의 전제(replica ≥ 2)는 HPA minReplicas 가 보장한다 —
+#   🔴 HPA 의 minReplicas 를 1 로 내리면 이 PDB 가 drain 을 영구히 막는다. 함께 봐야 한다.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mp-account-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: account

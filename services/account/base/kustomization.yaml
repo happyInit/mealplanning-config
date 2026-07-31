@@ -5,6 +5,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - externalsecret.yaml    # JWT_SECRET·PGPASSWORD (fb-secrets/app-secrets → account-secrets)
+  - pdb.yaml               # 가용성 — drain 중 최소 1 유지(§9.5). 전제 replica>=2 는 아래 HPA minReplicas 가 보장
   - hpa.yaml               # P3 — CPU 70%(ContainerResource) · min 2 · max 4. Pooler 전환이 전제(§4.5)
 # TODO(Gateway 소유·이름 확정되면 추가):
 #   - httproute.yaml       # /api/auth · /api/users → account:8004 (Gateway parentRef 필요)
