@@ -72,6 +72,16 @@ spec:
               value: "false"
             - name: OPERATIONS_PROMETHEUS_URL
               value: http://kube-prometheus-stack-prometheus.observability.svc:9090
+            # 임시: 내부 CNPG 여유 확보 전까지 더존비즈온 교육용 외부 PG(team2) 사용.
+            # app-common의 PGHOST/PGPORT/PGUSER/PGDATABASE(내부 CNPG용)를 이 컨테이너만 덮어씀.
+            - name: PGHOST
+              value: "211.46.52.152"
+            - name: PGPORT
+              value: "15432"
+            - name: PGUSER
+              value: team2
+            - name: PGDATABASE
+              value: postgres
           startupProbe:
             httpGet: { path: /health, port: 8011 }
             periodSeconds: 5
