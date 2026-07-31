@@ -1,0 +1,65 @@
+# 영상→레시피 추출 서비스 (#11). AI 파트 신규 · draft 2026-07-31. 초기 api_key 모드(VIDEO_GEMINI_API_KEY).
+# 이미지 태그는 overlays/onprem 에서 Jenkins CD 가 :sha 로 핀한다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-video
+  labels:
+    app: video
+    tier: backend
+spec:
+  replicas: 1                              # #299 replica-safe(잡 상태 Redis) — HPA 가능
+  selector:
+    matchLabels:
+      app: video
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8011"
+      labels:
+        app: video
+        tier: backend
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:                     # app ns = PodSecurity enforce=restricted
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: video
+          image: 192.168.0.10/mealplanning/mp-video-service:latest   # ← overlay 가 :sha 로 덮음
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8011, protocol: TCP}
+          envFrom:
+            - configMapRef: {name: app-common}
+            - secretRef: {name: mp-video-secrets}
+          env:
+            - {name: OTEL_SERVICE_NAME, value: "video"}
+            - {name: VIDEO_EXTRACT_MODEL, value: "gemini-3.5-flash-lite"}   # 🔴 -latest 별칭 금지(PR #272)
+            - {name: VIDEO_RETRY_MODEL,   value: "gemini-3.5-flash"}
+            - {name: VIDEO_REFINE_ENABLED, value: "false"}                  # 기본 OFF(비용)
+            - {name: VIDEO_GENAI_BACKEND, value: "api_key"}                 # Vertex 전환은 OCR 과 독립(후속)
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+          livenessProbe:
+            httpGet: {path: /health, port: 8011}
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: {path: /health, port: 8011}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+      volumes:
+        - {name: tmp, emptyDir: {}}

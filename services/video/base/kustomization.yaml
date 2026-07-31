@@ -4,4 +4,3 @@ resources:
   - deployment.yaml
   - service.yaml
   - externalsecret.yaml
-  - canary.yaml            # 모델 드리프트 주간 카나리(AI 추가 · draft) — overlay 가 :sha·ns 적용

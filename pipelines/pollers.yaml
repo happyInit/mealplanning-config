@@ -321,3 +321,235 @@ spec:
                   memory: 128Mi
                 limits:
                   memory: 512Mi
+---
+# ── #9 가격 이상탐지 배치 (AI 파트 추가 · draft 2026-07-31) ──
+# 04:40 KST — 컬리(03:30)·오아시스(04:10) 유입 후. 성숙도 게이트(MATURE_SAMPLES=28)로 2026-08-18까지 발행 0.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-price-anomaly
+  namespace: pipeline
+spec:
+  schedule: "40 4 * * *"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: poller-price-anomaly
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile: {type: RuntimeDefault}
+          terminationGracePeriodSeconds: 30
+          containers:
+            - name: poller-price-anomaly
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
+              imagePullPolicy: IfNotPresent
+              command: ["python", "pipelines/ingest/detect_price_anomaly.py", "--emit"]
+              envFrom:
+                - configMapRef: {name: mp-pipeline-env}
+                - secretRef: {name: mp-pipeline-secrets}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {memory: 512Mi}
+---
+# #10 요리후기 수집 (AI 파트 추가 · draft 2026-07-31)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-poller-recipe-review
+  namespace: pipeline
+spec:
+  schedule: "0 6 * * 0,3"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: poller-recipe-review
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+          terminationGracePeriodSeconds: 30
+          containers:
+            - name: poller-recipe-review
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
+              imagePullPolicy: IfNotPresent
+              command: ["python", "crawler/10k_recipe/review_crawler.py"]
+              envFrom:
+                - configMapRef: {name: mp-pipeline-env}
+                - secretRef: {name: mp-pipeline-secrets}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+---
+# #10 리뷰 감정분류 (Bedrock nova-micro). 🔴 suspend:true — mp-pipeline-secrets 에 AWS_* 주입 후 false 로 가동
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-score-review-sentiment
+  namespace: pipeline
+spec:
+  schedule: "0 7 * * 0,3"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  suspend: true
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: score-review-sentiment
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+          terminationGracePeriodSeconds: 30
+          containers:
+            - name: score-review-sentiment
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
+              imagePullPolicy: IfNotPresent
+              command: ["python", "pipelines/ingest/score_review_sentiment.py"]
+              envFrom:
+                - configMapRef: {name: mp-pipeline-env}
+                - secretRef: {name: mp-pipeline-secrets}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+---
+# #10 리뷰 종합요약 (Bedrock claude-3-5-sonnet). 🔴 suspend:true — AWS_* 주입 후 false
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-summarize-reviews
+  namespace: pipeline
+spec:
+  schedule: "0 8 * * 0,3"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  suspend: true
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: summarize-reviews
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+          terminationGracePeriodSeconds: 30
+          containers:
+            - name: summarize-reviews
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
+              imagePullPolicy: IfNotPresent
+              command: ["python", "pipelines/ingest/summarize_reviews.py"]
+              envFrom:
+                - configMapRef: {name: mp-pipeline-env}
+                - secretRef: {name: mp-pipeline-secrets}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+---
+# 데이터 불변식 주간 점검 (AI 파트 추가 · draft 2026-07-31)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-data-invariants
+  namespace: pipeline
+spec:
+  schedule: "0 6 * * 1"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: data-invariants
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+          terminationGracePeriodSeconds: 30
+          containers:
+            - name: data-invariants
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
+              imagePullPolicy: IfNotPresent
+              command: ["python", "pipelines/ingest/data_invariants.py"]
+              envFrom:
+                - configMapRef: {name: mp-pipeline-env}
+                - secretRef: {name: mp-pipeline-secrets}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+---
+# 재고 소비기한 재계산 주간 (AI 파트 추가 · draft 2026-07-31)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-pantry-expire-recompute
+  namespace: pipeline
+spec:
+  schedule: "30 5 * * 0"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: pantry-expire-recompute
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+          terminationGracePeriodSeconds: 30
+          containers:
+            - name: pantry-expire-recompute
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
+              imagePullPolicy: IfNotPresent
+              command: ["python", "pipelines/ingest/recompute_pantry_expire.py", "--apply"]
+              envFrom:
+                - configMapRef: {name: mp-pipeline-env}
+                - secretRef: {name: mp-pipeline-secrets}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
