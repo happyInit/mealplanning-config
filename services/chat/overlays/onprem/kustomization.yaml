@@ -7,4 +7,4 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-chat-service
   newName: 192.168.0.10/mealplanning/mp-chat-service
-  newTag: 397f2524070c29a29ad32d50a2a53e1ded9c63aa
+  newTag: 6d169aa2bcdda6e557d7ae11903944cc29c2b9a0
