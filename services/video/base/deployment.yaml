@@ -1,4 +1,4 @@
-# 영상→레시피 추출 서비스 (#11). AI 파트 신규 · draft 2026-07-31. 초기 api_key 모드(VIDEO_GEMINI_API_KEY).
+# 영상→레시피 추출 서비스 (#11). AI 파트 신규 · 2026-07-31. Vertex AI 전용(SA키 파일 마운트).
 # 이미지 태그는 overlays/onprem 에서 Jenkins CD 가 :sha 로 핀한다.
 apiVersion: apps/v1
 kind: Deployment
@@ -37,7 +37,6 @@ spec:
             - {name: http, containerPort: 8011, protocol: TCP}
           envFrom:
             - configMapRef: {name: app-common}
-            - secretRef: {name: mp-video-secrets}
           env:
             - {name: OTEL_SERVICE_NAME, value: "video"}
             - {name: VIDEO_EXTRACT_MODEL, value: "gemini-3.5-flash-lite"}   # 🔴 -latest 별칭 금지(PR #272)
@@ -45,7 +44,7 @@ spec:
             - {name: VIDEO_REFINE_ENABLED, value: "false"}                  # 기본 OFF(비용)
             # ── Vertex 전환 (결정 gcp-migration-plan §4.2 · PoC 완료 2026-07-29) ──
             # extract.py 는 genai.Client(vertexai=True)=ADC → SA키 **파일 마운트** 필요(OCR 의 env JSON 과 다름).
-            # 문제 시 VIDEO_GENAI_BACKEND=api_key 로 원복(VIDEO_GEMINI_API_KEY = mp-video-secrets 유지).
+            # 영상 = Vertex 전용 확정(2026-07-31) — api_key 롤백/ mp-video-secrets 폐기. 인증은 SA키 파일 하나뿐.
             - {name: VIDEO_GENAI_BACKEND, value: "vertex"}
             - {name: GCP_PROJECT_ID, value: "mealplanning-503911"}
             - {name: GCP_LOCATION,   value: "global"}                       # 서울 미배치 → global(팀 승인)
