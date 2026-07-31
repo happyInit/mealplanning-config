@@ -63,8 +63,18 @@ spec:
           replicas: 0
         singleBinary:
           replicas: 1
+          # 관측은 B (배치 원칙 — Prometheus·MinIO 동일). zone 은 그대로 두고 **노드만 b1 로 좁힌다**
+          # (2026-07-31) — zone B 안에서 볼륨이 b2 한 곳에 몰려 데이터 티어가 자리를 못 잡았다:
+          #   b2 openebs-vg 134Gi/150Gi 사용(prometheus 30 · minio 50 · kubecost 32 · es 10 · loki 10
+          #   · alertmanager 2) → 여유 16Gi. Kafka 브로커 재배치(20Gi PVC)가 여기서 막혔다.
+          #   반면 b1 은 80Gi, a2 는 150Gi 가 놀고 있었다.
+          # 🔴 로컬 PV 는 "옮기기 = 볼륨 재생성" 이라 워크로드마다 대가가 다른데, **Loki 가 가장 싸다** —
+          #   청크·인덱스는 MinIO(S3)로 나가고 이 10Gi 는 `/var/loki` 작업 디렉터리(WAL·캐시)뿐이라
+          #   잃는 건 아직 플러시 안 된 최근 WAL 정도다. prometheus(메트릭 이력 전부)·minio(Loki·Tempo
+          #   블록 + 모델 아티팩트)는 같은 이동이 실데이터 손실이라 건드리지 않았다.
+          # hostname 고정이 새 취약점을 만들진 않는다 — 로컬 PV 라 어차피 그 노드에 묶여 있다.
           nodeSelector:
-            topology.kubernetes.io/zone: host-b # 관측은 B (배치 원칙 — Prometheus·MinIO 동일)
+            kubernetes.io/hostname: k8s-worker-b1
           persistence:
             size: 10Gi
             storageClass: openebs-lvm
