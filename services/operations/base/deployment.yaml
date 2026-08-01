@@ -67,7 +67,7 @@ spec:
             - name: OPERATIONS_DATABASE_ENABLED
               value: "true"
             - name: OPERATIONS_COLLECTOR_ENABLED
-              value: "false"
+              value: "true"
             - name: OPERATIONS_KUBERNETES_EVIDENCE_ENABLED
               value: "false"
             - name: OPERATIONS_PROMETHEUS_URL
