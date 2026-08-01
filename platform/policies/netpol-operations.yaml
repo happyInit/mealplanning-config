@@ -36,3 +36,9 @@ spec:
               kubernetes.io/metadata.name: observability
       ports:
         - { protocol: TCP, port: 9090 }
+    # operations → team2 external PostgreSQL :15432 (temporary Operations DB)
+    - to:
+        - ipBlock:
+            cidr: 211.46.52.152/32
+      ports:
+        - { protocol: TCP, port: 15432 }
