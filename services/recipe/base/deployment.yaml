@@ -35,19 +35,55 @@ spec:
       # ⚠️ 이건 **blast radius 축소이지 HA 가 아니다** — replica 1 서비스는 노드가 죽으면
       #    그대로 내려가고, 기본 tolerationSeconds 300s 탓에 재스케줄까지 최대 5분 걸린다.
       #    진짜 HA 는 replicas>=2 + PDB 이며 별건이다.
+      # 🔴 2026-08-01 — `tier: backend`(soft) 2종을 **app 단위 hard 2종으로 교체**했다.
+      #
+      # 왜 바꿨나: 종전 제약은 `tier: backend`(14 파드) **총량**의 균형이라, recipe 자신의
+      #    replica 가 갈라진다는 보장을 주지 않았다. 실측 = 총량이 host-a 8 / host-b 6 으로
+      #    퍼진 채로 **recipe 2개는 둘 다 a1·a2(전부 host-a)** 에 앉아 있었다. 급사 3회가
+      #    전부 호스트 A 였음을 감안하면 "검색 전멸" 상태였고 종전 제약은 이걸 못 막는다.
+      #    recipe 는 이제 replicas>=2(HPA min2/max4) + PDB 라 **자기 단위 HA 가 성립**하므로,
+      #    "replica 1 이라 셀 게 없다" 던 tier 묶기의 전제가 이 서비스엔 더는 해당되지 않는다.
+      #    (replica 1 인 나머지 10종은 tier 제약을 그대로 유지 — 그쪽은 여전히 유효하다.
+      #     그 제약들의 labelSelector 가 tier:backend 라 recipe 파드도 계속 카운트에 잡힌다.)
+      #
+      # 🔴 왜 두 종류를 겹쳐 두지 않았나 (중요): `topologySpreadConstraints` 의
+      #    strategic-merge patchMergeKey 가 **topologyKey** 다. 같은 topologyKey 를 가진 항목이
+      #    둘이면 병합이 깨진다 — 실제로 `kubectl apply --dry-run=server` 에서 병합 결과의
+      #    **maxSkew 가 소실**됐다("doesn't match $setElementOrder list"). API 검증은
+      #    (topologyKey, whenUnsatisfiable) 쌍만 보므로 통과하지만, apply 경로에서 조용히
+      #    망가진다. → **워크로드당 topologyKey 는 유일하게 유지한다.**
+      #
+      # 🔴 tier 제약은 soft 인데 이건 hard 인 게 모순이 아닌 이유:
+      #    tier 제약은 14 파드를 4 노드에 맞추는 촘촘한 제약이라 노드가 차면 Pending 위험이
+      #       실재한다(노드 메모리 요청률 62~84%). 그래서 그쪽은 점수 유도(soft)가 맞다.
+      #    이건 자기 파드 2~4개를 **2 zone / 4 노드** 에 놓는 성긴 제약이라 자리가 없어
+      #       못 뜨는 국면이 사실상 안 온다. 반대로 soft 는 **조용히 안 지켜진다** —
+      #       롤링 업데이트 중엔 아직 안 죽은 구 파드까지 세어 분포가 왜곡되고,
+      #       ImageLocality·리소스 밸런싱 점수에 밀린다. 보장이 필요한 축은 hard 여야 한다.
+      #
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              tier: backend
+        # 🔴 nodeTaintsPolicy: Honor 가 hard 의 유일한 함정을 막는다.
+        #    기본값 Ignore 면 host-a 가 통째로 죽어도 host-a 가 "파드 0개 도메인" 으로 계산에
+        #    남는다 → 죽은 파드를 host-b 로 옮기면 skew 2 라 **거부 → Pending**. 막으려던 그
+        #    장애에서 복구가 막힌다. Honor 면 급사·cordon 노드에 붙는 `NoSchedule` 테인트
+        #    (파드가 톨러레이션 미보유)를 보고 그 노드를 도메인 계산에서 제외 → host-a 도메인이
+        #    사라져 failover 가 정상 동작한다.
+        #    ⚠️ 파드 기본 not-ready/unreachable 톨러레이션은 `effect: NoExecute` 전용이라
+        #       `NoSchedule` 변종에는 안 걸린다 → 제외가 실제로 성립한다.
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
           labelSelector:
             matchLabels:
-              tier: backend
+              app: recipe
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              app: recipe
       automountServiceAccountToken: false    # 앱은 K8s API 안 씀 → 토큰=공격표면
       securityContext:                       # 🔴 PSS restricted (app ns enforce)
         runAsNonRoot: true
