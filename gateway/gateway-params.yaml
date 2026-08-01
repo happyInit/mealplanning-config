@@ -1,0 +1,41 @@
+# 외부 유입 게이트웨이 HA 파라미터 — Gateway.spec.infrastructure.parametersRef 대상
+#
+# 🔴 왜 ConfigMap 인가 (Deployment 를 직접 고치면 안 되는 이유)
+#   `mp-gw-public-istio` Deployment 는 우리가 만든 게 아니다 — Gateway/mp-gw-public 을 보고
+#   istiod(`istio.io-gateway-controller`)가 대신 만들고 **소유**한다.
+#   그래서 Deployment 에 kubectl 로 replicas·TSC 를 박아 넣으면 컨트롤러의 다음 재조정에서
+#   되돌려진다. istiod 가 인정하는 유일한 커스터마이즈 경로가 이 parametersRef → ConfigMap 이다.
+#   허용 키 5개: service · deployment · serviceAccount · horizontalPodAutoscaler · podDisruptionBudget.
+#   각 값은 istiod 가 렌더한 오브젝트 위에 얹는 **오버레이**(전체 정의가 아니라 덮어쓸 조각만 쓴다).
+#
+# 🔴 podDisruptionBudget 키는 일부러 비워 뒀다.
+#   PDB 는 `pdb.yaml` 에서 직접 만든다. 여기에 키를 넣으면 istiod 가 PDB 를 **또** 만들어
+#   같은 파드에 PDB 2개가 걸린다(중복 관리·소유자 이원화). 둘 중 하나만 있어야 한다.
+#
+# 배경: 이 게이트웨이는 외부 유입의 **유일한 입구**였는데 replica 1 로 b2 단독에 떠 있었다.
+#   백엔드 11종은 spread 가 걸려 있는데 정작 입구가 SPOF 였다 → replica 2 + 노드 분산.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-gw-public-params
+  namespace: app
+data:
+  deployment: |
+    spec:
+      replicas: 2
+      template:
+        spec:
+          # 노드 분산 — soft(ScheduleAnyway).
+          # 🔴 hard(DoNotSchedule)로 안 간 이유: 입구가 스케줄 실패로 아예 못 뜨는 게
+          #    같은 노드에 몰리는 것보다 나쁘다. app ns 는 ResourceQuota(6core/6Gi) 천장이 있어
+          #    특정 노드에 자리가 없을 국면이 실재한다. 우선 soft 로 실측하고, 두 파드가
+          #    실제로 갈라져 뜨는 게 확인되면 그때 hard 승격을 재고려한다.
+          # labelSelector 는 pod-template-hash 가 아니라 gateway-name 을 본다 —
+          #    롤링 업데이트로 해시가 바뀌어도 분산 기준이 유지돼야 하기 때문.
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: mp-gw-public

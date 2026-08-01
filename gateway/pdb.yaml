@@ -1,0 +1,25 @@
+# 가용성 — PodDisruptionBudget (object_spec §9.5)
+#
+# 🔴 PDB 는 **자발적 중단만** 막는다(drain·노드 축소). 노드 급사·OOM kill 은 못 막는다.
+#   그래서 이건 replica 2 + topologySpreadConstraints(gateway-params.yaml) 와 한 세트다 —
+#   TSC 가 "평시에 두 노드로 갈라 놓고", PDB 가 "drain 이 그 둘을 동시에 걷어가지 못하게" 한다.
+#
+# mp-gw-public 은 **외부 유입의 유일한 입구**다 — 죽으면 앱 전체가 밖에서 안 보인다.
+#   백엔드(account·recipe·frontend)에 PDB 를 걸어 둔 것과 같은 근거이고, 입구인 만큼 더 세다.
+#
+# 🔴 셀렉터는 Deployment 이름(`mp-gw-public-istio`)이 아니라 게이트웨이 파드 라벨을 본다.
+#   그 Deployment 는 istiod 가 만드는 파생물이라 이름·라벨 규칙이 우리 소유가 아니다.
+#   `gateway.networking.k8s.io/gateway-name` 은 Gateway API 표준 라벨이라 더 안정적이다.
+#
+# 🔴 minAvailable:1 의 전제 = replica ≥ 2. 그 2 는 Gateway 의 parametersRef →
+#   ConfigMap `mp-gw-public-params` 의 `deployment.spec.replicas` 가 보장한다.
+#   거기를 1 로 내리면 이 PDB 가 노드 drain 을 **영구히** 막는다. 함께 봐야 한다.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mp-gw-public-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: mp-gw-public

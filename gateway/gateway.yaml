@@ -22,6 +22,15 @@ spec:
     annotations:
       metallb.universe.tf/address-pool: gateway-pool
       metallb.universe.tf/loadBalancerIPs: 192.168.0.14
+    # 🔴 HA 파라미터(replica 2 + 노드 분산) — gateway-params.yaml 참조.
+    #    istiod 가 만드는 Deployment 를 직접 고치면 재조정에 되돌려진다.
+    #    이 ConfigMap 이 istiod 가 인정하는 유일한 커스터마이즈 경로다.
+    #    ⚠️ 같은 ns(app) 안에서만 참조 가능하고, 대상이 없으면 Gateway 가
+    #       Accepted=False(InvalidParameters)로 떨어질 수 있다 — 반드시 함께 배포한다.
+    parametersRef:
+      group: ""
+      kind: ConfigMap
+      name: mp-gw-public-params
   listeners:
     - name: http
       protocol: HTTP
