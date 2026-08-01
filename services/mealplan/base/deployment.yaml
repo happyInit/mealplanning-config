@@ -86,7 +86,9 @@ spec:
               exec: { command: ["sleep", "5"] }
           resources:
             requests:
-              cpu: 100m
+              cpu: 150m                       # 100m→150m (2026-08-01): 부하실측 정합.
+              #   thin proxy — 부하 무관하게 ~145m 바닥(cart 지연은 다운스트림 account 추종,
+              #   자체 연산 없음). HPA-무용(replica 늘려도 소용없음). 근거 = loadtest/stage1_results.md.
               memory: 128Mi
             limits:
               memory: 256Mi                  # OOM 보호(compose mem_limit 정합)

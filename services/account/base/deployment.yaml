@@ -99,7 +99,10 @@ spec:
               exec: { command: ["sleep", "5"] }   # 무중단 배포 — EndpointSlice 전파 대기(§13.8)
           resources:
             requests:
-              cpu: 250m
+              cpu: 500m                       # 250m→500m (2026-08-01): 부하실측 정합.
+              #   로그인 부하시 pod당 ~400~900m(bcrypt) 관측 — 250m 기준 HPA util% 가 1532% 로
+              #   무의미했다. 500m 로 올려 관측범위가 0~100%+ 로 읽히고 스케줄 예약도 실측 근사.
+              #   HPA 거동은 불변(실부하선 여전히 max 4). 근거 = loadtest/stage1_results.md.
               memory: 256Mi
             limits:
               memory: 512Mi                  # OOM 보호(compose mem_limit 512m)
