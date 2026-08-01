@@ -3,6 +3,8 @@ kind: Kustomization
 namespace: app
 resources:
   - gateway.yaml
+  - gateway-params.yaml            # HA 파라미터(replica 2 + TSC) — Gateway parametersRef 대상
+  - pdb.yaml                       # mp-gw-public-pdb (minAvailable 1) — istiod 생성분 아님
   - httproutes.yaml
   - request-body-limit.yaml
   - externalsecret-cloudflare.yaml   # CF API 토큰(ESO) — DNS-01 발급 크리덴셜
