@@ -25,16 +25,34 @@ data:
       replicas: 2
       template:
         spec:
-          # 노드 분산 — soft(ScheduleAnyway).
-          # 🔴 hard(DoNotSchedule)로 안 간 이유: 입구가 스케줄 실패로 아예 못 뜨는 게
-          #    같은 노드에 몰리는 것보다 나쁘다. app ns 는 ResourceQuota(6core/6Gi) 천장이 있어
-          #    특정 노드에 자리가 없을 국면이 실재한다. 우선 soft 로 실측하고, 두 파드가
-          #    실제로 갈라져 뜨는 게 확인되면 그때 hard 승격을 재고려한다.
+          # 분산은 **2계층**이다. 노드만 갈라선 부족하다는 게 실측으로 드러났다.
+          #
+          # 🔴 1차 반영(hostname TSC 만) 결과 = 두 파드가 a1·a2 에 떴다. 노드는 갈라졌지만
+          #    **둘 다 물리 호스트 A** 였다. 그런데 이 클러스터의 실제 고장 이력은
+          #    "무흔적 급사 3회, 전부 호스트 A" 다(status §4.x). 즉 노드 SPOF 를 없애면서
+          #    호스트 SPOF 를 새로 만든 셈이고, 하필 **실제로 일어난 적 있는 고장 모드**에
+          #    대해선 이전(b2 단독 = 호스트 A 급사에 생존)보다 나빠졌다.
+          #    → zone(`topology.kubernetes.io/zone` = host-a/host-b) 레이어를 한 겹 더 얹는다.
+          #
+          # 순서가 중요하다: 스케줄러는 TSC 를 **모두** 만족시키려 점수를 매기므로
+          #    hostname·zone 둘 다 있으면 "다른 노드 + 다른 호스트" 가 최고점이 된다.
+          #
+          # 둘 다 soft(ScheduleAnyway)로 두는 이유: 입구가 스케줄 실패로 아예 못 뜨는 게
+          #    몰려 뜨는 것보다 나쁘다. app ns 는 ResourceQuota(6core/6Gi) 천장이 있어
+          #    특정 노드·호스트에 자리가 없을 국면이 실재한다. soft 는 배치를 유도할 뿐
+          #    Pending 을 만들지 않는다. hard 승격은 실측이 더 쌓인 뒤 별건으로 판단한다.
+          #
           # labelSelector 는 pod-template-hash 가 아니라 gateway-name 을 본다 —
           #    롤링 업데이트로 해시가 바뀌어도 분산 기준이 유지돼야 하기 때문.
           topologySpreadConstraints:
             - maxSkew: 1
               topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: mp-gw-public
+            - maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
               whenUnsatisfiable: ScheduleAnyway
               labelSelector:
                 matchLabels:
