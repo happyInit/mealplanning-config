@@ -4,3 +4,5 @@ resources:
   - deployment.yaml
   - service.yaml
   - externalsecret.yaml
+  - pdb.yaml               # 가용성 — drain 중 최소 1 유지(§9.5). 전제 replica>=2 는 HPA minReplicas 가 보장
+  - hpa.yaml               # 부하시험 승격(2026-08-01) — CPU 70%(ContainerResource) · min 2 · max 4

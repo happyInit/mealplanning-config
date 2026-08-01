@@ -1,0 +1,19 @@
+# 가용성 — PodDisruptionBudget (object_spec §9.5)
+#
+# 🔴 PDB 는 **자발적 중단만** 막는다(drain·노드 축소). 노드 급사·OOM kill 은 못 막는다.
+#
+# recipe 는 이제 HPA(min 2 · max 4)로 상시 ≥2 replica 다 — HA 서비스가 됐으므로 drain 중
+#   최소 1 을 유지해 검색 무중단을 보장한다.
+#
+# replicas 필드는 Deployment 에 **없다** — HPA 가 소유한다(deployment.yaml 주석).
+#   minAvailable:1 의 전제(replica ≥ 2)는 HPA minReplicas 가 보장한다 —
+#   🔴 HPA 의 minReplicas 를 1 로 내리면 이 PDB 가 drain 을 영구히 막는다. 함께 봐야 한다.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mp-recipe-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: recipe
