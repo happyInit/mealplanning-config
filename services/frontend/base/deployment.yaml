@@ -38,11 +38,20 @@ spec:
       #    host-b 가 통째로 죽어도 "파드 0개 도메인" 으로 계산에 남아 host-a 이전이 skew 2 로
       #    거부돼 **막으려던 장애에서 복구가 막힌다**. Honor 는 급사·cordon 노드에 붙는
       #    `NoSchedule` 테인트(파드가 톨러레이션 미보유)를 보고 그 도메인을 제외한다.
+      # 🔴🔴 matchLabelKeys: [pod-template-hash] 없이는 **hard 도 안 지켜진다** — 이 서비스가
+      #    바로 그 반례였다. hard 로 올린 첫 롤아웃 결과가 다시 a1+a2(전부 host-a) 였다.
+      #    TSC 는 스케줄 시점에 selector 에 걸리는 모든 파드를 세므로 **아직 안 죽은 구 RS
+      #    파드**가 계산에 낀다: 구 파드가 host-b 에 있으면 신규 2개가 연달아 host-a 에 가도
+      #    매 순간 skew 1 이라 통과하고, 구 파드가 죽은 뒤에야 2/0 이 된다.
+      #    matchLabelKeys 는 pod-template-hash 를 selector 에 AND 해 **같은 RS 파드만** 세게
+      #    한다 → 구 파드가 빠져 신규 2번째가 반대 zone 으로 강제된다. (1.34 기본 활성)
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
           labelSelector:
             matchLabels:
               app: frontend
@@ -50,6 +59,8 @@ spec:
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
           nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
           labelSelector:
             matchLabels:
               app: frontend
