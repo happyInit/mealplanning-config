@@ -11,8 +11,8 @@ data:
   RATE_LIMIT_ENABLED: "false"
   MONTHLY_CAP_ENABLED: "false"
   MONTHLY_BUDGET_WON: "7200"
-  ACCOUNT_INTEGRATION_ENABLED: "false"
-  MULTITURN_ENABLED: "false"
-  CHAT_PERSIST_ENABLED: "false"
+  ACCOUNT_INTEGRATION_ENABLED: "true"   # 개인화 — 제외재료·재고 반영(하류: chat_message 스키마·JWT·회원가입 동의 준비됨)
+  MULTITURN_ENABLED: "true"             # 팔로우업 맥락(session_id)
+  CHAT_PERSIST_ENABLED: "true"          # 대화 chat.chat_message 영속 → chat-insights→랭킹 개인화 연료
   CHAT_PANTRY_ENABLED: "true"            # 🔴 프로드 복원 — 냉장고 재고 기반 추천(미인증 시 폴백)
   CHAT_FOCUS_ENABLED: "true"             # 🔴 프로드 복원 — 대화 일관성(recipe-in-focus·반복 가드)
