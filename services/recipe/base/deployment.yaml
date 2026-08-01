@@ -6,7 +6,10 @@ metadata:
     app: recipe              # §2.3: 라벨은 bare(논리 신원·Service selector·OTEL)
     tier: backend
 spec:
-  replicas: 1
+  # 🔴 replicas 를 **의도적으로 안 적는다** — HPA(hpa.yaml)가 이 필드의 주인이다(2026-08-01).
+  #    git 에 남겨두면 ArgoCD sync 마다 HPA 결정을 1 로 되돌려 피크 중 파드가 진동한다.
+  #    베이스라인이 필요하면 HPA 의 minReplicas 를 본다(현재 2). 근거 = 부하시험(단일 pod
+  #    recipe_search p95 2.7s@1000VU → 4 pod 재현서 45.6ms, ES 여유 실증. loadtest/stage1_results.md).
   selector:
     matchLabels:
       app: recipe
@@ -86,7 +89,9 @@ spec:
               exec: { command: ["sleep", "5"] }
           resources:
             requests:
-              cpu: 100m
+              cpu: 300m                       # 100m→300m (2026-08-01): HPA util% 기준 정상화.
+              #   부하시 pod당 ~400~525m 실측(4 pod) → target 70%(=210m)에서 확장. cpu limit 없음:
+              #   ES 검색은 버스트가 본질이라 CFS 스로틀이 지연을 악화시킨다(account bcrypt 와 동일 논리).
               memory: 128Mi
             limits:
               memory: 256Mi                  # OOM 보호(compose mem_limit 정합)

@@ -1,0 +1,37 @@
+# recipe HPA — 부하시험 근거로 승격(2026-08-01). account 다음으로 실측 근거가 생긴 서비스다.
+#
+# 🔴 **근거(loadtest/stage1_results.md)**: 단일 pod 에서 recipe 검색이 브라우징 첫 병목이었다 —
+#   동시 1000명서 recipe_search p95 **2.7s**(단일 pod CPU ~1.2core plateau). replica 1→4 통제
+#   재현서 같은 부하가 **45.6ms**(59× ↓)로 떨어지고 4 pod 가 각 380~525m 로 균등 분산됐다.
+#   → 병목은 **pod CPU 한 개**였고, 뒤단 ES 는 여유(46ms 가 증거)다. HPA 로 옆으로 늘리면 풀린다.
+#
+# 🔴 **Pooler 전제는 이미 충족**(P3, 2026-07-30): 앱은 CNPG Pooler(PgBouncer transaction) 경유라
+#   pod 가 늘어도 max_connections 벽에 안 막힌다. 위 4 pod 재현이 0.05% 에러로 이를 실증했다.
+#
+# 🔴 **ContainerResource(Resource 아님)**: 이 pod 엔 recipe 앱 + istio-proxy 가 함께 산다.
+#   Resource 타입은 pod 전체(sum/sum)로 봐 사이드카(requests 10m)가 조금 튀어도 비율이 흔들린다.
+#   우리가 보려는 신호는 앱의 검색 CPU 이므로 컨테이너를 지정한다(K8s 1.30 GA · 현재 1.34).
+#
+# min 2 = 예측 가능 피크타임(11-12·17-18시) 대비 반응시간 확보 + 단일 pod 재시작 공백 제거.
+# max 4 = 노드 4대 정합·6코어 쿼터 내(recipe 4×300m=1.2core + account 4×250m=1.0core, 여유 큼).
+#   목적은 "무한 확장"이 아니라 브라우징 천장(~700 동시)을 걷어내는 것 — 근거 없이 키우지 않는다.
+# behavior 기본값 — scaleDown 안정화 300s 가 피크 직후 진동을 막는다.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mp-recipe
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mp-recipe
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: recipe           # 🔴 Deployment 의 컨테이너 이름과 일치해야 한다(불일치 시 메트릭 미수집)
+        target:
+          type: Utilization
+          averageUtilization: 70    # requests 300m 기준 → 파드당 210m 에서 확장
