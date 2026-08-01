@@ -1,0 +1,103 @@
+# 보안 ④ CiliumNetworkPolicy — 티어 4-2(pipeline ns) 외부 egress: 크롤 대상. object_spec §10.5.
+#
+# 표준 netpol(netpol-pipeline-egress)이 default-deny egress 를 걸고 DNS·4스토어만 연다.
+# 여기서 표준으로 불가능한 외부 HTTPS egress 를 크롤러 파드에만 additive 로 더한다(toFQDNs).
+#
+# 🔴 toFQDNs 전제: DNS L7 가시성 규칙(toEndpoints kube-dns + rules.dns)이 **같은 정책에** 있어야
+#    Cilium DNS 프록시가 응답을 관측해 IP 를 학습한다(tier-3 mp-pg-instance-egress 와 동일 패턴).
+# 🔴 크롤러별로 대상 사이트가 달라 CNP 를 분리한다(CNP 는 endpointSelector 1개). 사이트별 최소권한.
+# 🔴 전부 :443(HTTPS) — kurly/oasis/recipe 모두 https. 실측 소스:
+#    kurly = crawler/kurly/prototype.py (Playwright, www.kurly.com/categories, domcontentloaded)
+#    oasis = crawler/oasis/oasis_crawler.py (requests, www.oasis.co.kr/api/...)
+#    recipe = crawler/10k_recipe/{10k_recipe_crawler,review_crawler}.py (requests, www.10000recipe.com)
+# ⚠️ Playwright chromium 이 DoH(DNS-over-HTTPS)로 kube-dns 를 우회하면 toFQDNs 가 학습 못 해 크롤이
+#    깨진다 — 컬리(03:30 KST) 실패 시 이 지점 의심. chromium 은 컨테이너에서 시스템 리졸버 사용이 기본이라 저위험.
+---
+# ── 마켓컬리 (poller-kurly) ────────────────────────────────────────────────────────────────
+# Playwright 가 페이지 렌더 중 CDN 서브도메인(product-image.kurly.com·img-cf.kurly.com)·api.kurly.com 을
+# 당긴다 → 와일드카드로 kurly 도메인 전체를 연다(서드파티는 domcontentloaded 라 막혀도 크롤 무영향).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pipeline-fqdn-kurly
+  namespace: pipeline
+spec:
+  endpointSelector:
+    matchLabels:
+      app: poller-kurly
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "kurly.com"
+        - matchPattern: "*.kurly.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+# ── 오아시스마켓 (poller-oasis-dawn/noon · poller-deal-timesale/closesale) ────────────────────
+# requests 기반 JSON API — 단일 호스트 www.oasis.co.kr. 4개 크론이 같은 이미지·같은 크롤러라 묶는다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pipeline-fqdn-oasis
+  namespace: pipeline
+spec:
+  endpointSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [poller-oasis-dawn, poller-oasis-noon, poller-deal-timesale, poller-deal-closesale] }
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "www.oasis.co.kr"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+# ── 만개의레시피 (poller-recipe · poller-recipe-review) ──────────────────────────────────────
+# requests 기반 HTML — 단일 호스트 www.10000recipe.com. review 크롤러는 PG 직결(egress-common 이 커버).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pipeline-fqdn-recipe
+  namespace: pipeline
+spec:
+  endpointSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [poller-recipe, poller-recipe-review] }
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "www.10000recipe.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

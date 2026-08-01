@@ -7,4 +7,7 @@ namespace: pipeline
 #    분리 — 여기는 namespace:pipeline. pipeline ns=메시 밖이라 netpol 이 유일 경계(data 와 동일).
 # 증분: ① ingress 봉쇄(이 PR, 위험 0) → ② egress(DNS+4스토어) + 외부 FQDN CNP(별 PR, 크롤·AI).
 resources:
-  - netpol-pipeline-ingress.yaml    # ingress 봉쇄(Prometheus→metrics 외 deny) — 4-1
+  - netpol-pipeline-ingress.yaml         # ingress 봉쇄(Prometheus→metrics 외 deny) — 4-1 ✅
+  - netpol-pipeline-egress.yaml          # egress default-deny + DNS·Kafka·PG·ES·Redis — 4-2
+  - netpol-pipeline-fqdn-crawlers.yaml   # 외부 FQDN: kurly·oasis·10000recipe (CiliumNetworkPolicy) — 4-2
+  - netpol-pipeline-fqdn-ai.yaml         # 외부 FQDN: bedrock·gemini (CiliumNetworkPolicy) — 4-2

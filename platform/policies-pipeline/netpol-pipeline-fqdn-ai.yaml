@@ -1,0 +1,66 @@
+# 보안 ④ CiliumNetworkPolicy — 티어 4-2(pipeline ns) 외부 egress: AI API. object_spec §10.5.
+#
+# 크롤 FQDN(netpol-pipeline-fqdn-crawlers)과 같은 계열 — AI 배치의 외부 HTTPS egress 를 additive 로 더한다.
+# 🔴 toFQDNs 전제 = DNS L7 가시성 규칙 동봉(각 CNP 안). 🔴 대상별 CNP 분리(endpointSelector 1개/CNP).
+# 🔴 정적 AWS 키(AWS_ACCESS_KEY_ID/SECRET, mp-pipeline-secrets) 사용 → IMDS(169.254.169.254)·STS 불요 =
+#    bedrock-runtime 엔드포인트 하나로 충분. 실측 소스:
+#    bedrock = pipelines/ingest/{score_review_sentiment,summarize_reviews}.py (boto3 bedrock-runtime, ap-northeast-2)
+#    gemini  = ml/chat-insights/reports.py (google.genai, REPORT_GEMINI_API_KEY)
+---
+# ── AWS Bedrock (score-review-sentiment · summarize-reviews) ─────────────────────────────────
+# #10 리뷰 감정분류(nova-micro)·종합요약(claude-3-5-sonnet). AWS_REGION=ap-northeast-2 고정.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pipeline-fqdn-bedrock
+  namespace: pipeline
+spec:
+  endpointSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [score-review-sentiment, summarize-reviews] }
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "bedrock-runtime.ap-northeast-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+# ── Google Gemini (chat-insights) ───────────────────────────────────────────────────────────
+# 대화분석 리포트 생성 시 genai 호출(REPORT_GEMINI_API_KEY). PG 읽기는 egress-common 이 커버.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pipeline-fqdn-gemini
+  namespace: pipeline
+spec:
+  endpointSelector:
+    matchLabels:
+      app: chat-insights
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "generativelanguage.googleapis.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

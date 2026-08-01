@@ -1,0 +1,65 @@
+# 보안 ④ NetworkPolicy — 티어 4-2(pipeline ns) egress 잠금: 내부 데이터플레인. object_spec §10.5.
+#
+# tier-4-1(ingress 봉쇄) 다음. 여기서 pipeline 전 파드의 **egress 를 default-deny** 로 돌리고
+# 정당한 목적지만 화이트리스트한다. 이 파일 = 내부(data ns 4스토어) + DNS. 외부(크롤·AI)는
+# 짝 파일 netpol-pipeline-fqdn-*.yaml(CiliumNetworkPolicy toFQDNs)이 담당 — **같은 sync 에 함께 적용**.
+#
+# 🔴 설계결정 = 2-class(스토어별 per-pod 격리 포기). 근거:
+#   ① review 크롤러가 Kafka 아니라 **PG 직결**(db_connect, --kafka 없음) → "크롤러=Kafka전용" 격리 불가.
+#   ② 전 워크로드 **동일 이미지(mp-data-pipeline)+동일 시크릿(mp-pipeline-secrets: PG·ES·AWS 다 포함)**
+#      → pod 마다 스토어를 나눠도 크레덴셜은 공유라 per-store netpol 은 theater.
+#   진짜 경계 = pipeline ↔ 데이터플레인 밖(app ns·apiserver·노드·임의 인터넷) → 그걸 default-deny 가 막는다.
+#
+# 🔴 이 egress 규칙들은 tier-3 가 **각 스토어에 이미 열어준 pipeline-ns ingress 의 짝**이다
+#   (mp-redis/mp-es/mp-pg-instance 의 `namespaceSelector: pipeline` 룰). 스토어쪽 ingress 와 정확히 대칭이라
+#   추가로 뚫는 구멍이 없다 — pipeline 파드가 나가는 쪽만 명시한다.
+# 🔴 pipeline 은 **pg-rw 직결**(pooler 미경유, configmap PGHOST=pg-rw) → 타깃은 cnpg.io/podRole=instance.
+# 🔴 apiserver egress 없음(automount off, KEDA 는 keda ns 에서 polling) · 외부 egress 는 FQDN CNP 로만.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-pipeline-egress
+  namespace: pipeline
+spec:
+  # 빈 셀렉터 = 전 파드. 이 순간 pipeline 전 파드가 default-deny **egress**.
+  # 🔴 크롤·AI 파드는 인터넷이 이 순간 막힌다 → FQDN CNP 가 같은 sync 에 있어야 크롤이 안 깨진다.
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # 1) DNS (CoreDNS) — 전 파드. 서비스 DNS·FQDN 해석의 전제. 없으면 이름 해석 전멸.
+    #    (FQDN 학습용 L7 가시성 규칙은 각 FQDN CNP 안에 별도로 있다 — 여기는 L3/L4 허용만.)
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) Kafka → data ns 브로커 :9092 (produce[크롤/폴러] + consume[refiner/sink]).
+    #    타깃=strimzi.io/cluster=kafka(브로커 3파드). bootstrap Service 접속도 Cilium 이 pod 로 변환.
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } }
+          podSelector: { matchLabels: { strimzi.io/cluster: kafka } }
+      ports:
+        - { protocol: TCP, port: 9092 }
+    # 3) PG → data ns primary(pg-rw 직결) :5432. refiner write · AI/review read·write · 배치.
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } }
+          podSelector: { matchLabels: { cnpg.io/podRole: instance } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 4) ES → data ns :9200 (poller-es-recipes 재색인 등). transport 9300 은 노드간 전용이라 제외.
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } }
+          podSelector: { matchLabels: { elasticsearch.k8s.elastic.co/cluster-name: es } }
+      ports:
+        - { protocol: TCP, port: 9200 }
+    # 5) Redis → data ns Sentinel :26379 + master :6379 (Sentinel-aware — deal-notifier·pruner·matview 등).
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } }
+          podSelector:
+            matchExpressions:
+              - { key: app, operator: In, values: [mp-redis, mp-redis-s] }
+      ports:
+        - { protocol: TCP, port: 6379 }
+        - { protocol: TCP, port: 26379 }
