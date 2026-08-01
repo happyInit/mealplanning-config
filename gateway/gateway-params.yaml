@@ -59,13 +59,26 @@ data:
           #    ⚠️ 파드 기본 not-ready/unreachable 톨러레이션은 `effect: NoExecute` 전용이라
           #       `NoSchedule` 변종에 안 걸린다 → 제외가 실제로 성립한다.
           #
-          # labelSelector 는 pod-template-hash 가 아니라 gateway-name 을 본다 —
-          #    롤링 업데이트로 해시가 바뀌어도 분산 기준이 유지돼야 하기 때문.
+          # 🔴🔴 4차 — matchLabelKeys: [pod-template-hash] 추가. **hard 만으론 부족했다.**
+          #    3차(hard) 반영 직후 실측에서 신규 파드 2개가 **둘 다 host-a(a1·a2)** 에 떴다.
+          #    TSC 는 스케줄 시점에 selector 에 걸리는 모든 파드를 세는데, 롤링 업데이트 중엔
+          #    **아직 안 죽은 구 RS 파드**가 거기 낀다:
+          #      구 파드 host-b 1개 → 신규①을 host-a 에(1/1 통과) → 신규②도 host-a 에(2/1 통과)
+          #      → 구 파드 종료 → 신규 2개가 전부 host-a. 제약은 매 순간 지켜졌는데 결과가 몰린다.
+          #    matchLabelKeys 는 들어오는 파드의 pod-template-hash 를 labelSelector 에 AND 해
+          #    **같은 RS 파드만** 세게 만든다 → 구 파드가 계산에서 빠져 신규②가 반대 zone 으로
+          #    강제된다. K8s 1.34 에서 기본 활성(beta).
+          #
+          # labelSelector 는 여전히 gateway-name 을 본다(파드 신원). 해시는 matchLabelKeys 가
+          #    런타임에 AND 하는 것이라, 셀렉터를 해시로 바꾸는 것과는 다르다 — 매니페스트에
+          #    해시를 적을 수는 없다(롤아웃마다 바뀐다).
           topologySpreadConstraints:
             - maxSkew: 1
               topologyKey: topology.kubernetes.io/zone
               whenUnsatisfiable: DoNotSchedule
               nodeTaintsPolicy: Honor
+              matchLabelKeys:
+                - pod-template-hash
               labelSelector:
                 matchLabels:
                   gateway.networking.k8s.io/gateway-name: mp-gw-public
@@ -73,6 +86,8 @@ data:
               topologyKey: kubernetes.io/hostname
               whenUnsatisfiable: DoNotSchedule
               nodeTaintsPolicy: Honor
+              matchLabelKeys:
+                - pod-template-hash
               labelSelector:
                 matchLabels:
                   gateway.networking.k8s.io/gateway-name: mp-gw-public

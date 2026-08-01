@@ -61,11 +61,18 @@ spec:
       #    Honor 는 급사·cordon 노드의 `NoSchedule` 테인트(파드가 톨러레이션 미보유)를 보고
       #    그 노드를 도메인 계산에서 제외한다. ⚠️ 파드 기본 not-ready/unreachable 톨러레이션은
       #    `effect: NoExecute` 전용이라 `NoSchedule` 변종에 안 걸린다 → 제외가 성립한다.
+      # 🔴🔴 matchLabelKeys: [pod-template-hash] 없이는 hard 도 안 지켜진다 — TSC 는 스케줄
+      #    시점에 selector 에 걸리는 모든 파드를 세므로 **아직 안 죽은 구 RS 파드**가 계산에
+      #    낀다. 실제로 hard 로 올린 첫 롤아웃에서 mp-frontend·게이트웨이가 다시 한 호스트로
+      #    몰렸다(구 파드가 반대 zone 을 채워 주는 바람에 신규 2개가 같은 zone 을 통과).
+      #    matchLabelKeys 는 pod-template-hash 를 selector 에 AND 해 같은 RS 파드만 세게 한다.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
           labelSelector:
             matchLabels:
               app: account
@@ -73,6 +80,8 @@ spec:
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
           nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
           labelSelector:
             matchLabels:
               app: account
