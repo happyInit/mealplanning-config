@@ -25,18 +25,31 @@ spec:
       #    여기서 필요한 건 **이 서비스의 2 replica 를 서로 다른 노드에** 두는 것이다.
       #    둘 다 같은 노드에 앉으면 PDB(minAvailable:1)가 그 노드를 **drain 불가**로 만든다
       #    — 첫 파드는 축출되지만 두 번째에서 0 이 되므로 거부되고 drain 이 끝나지 않는다.
-      # ⚠️ ScheduleAnyway(soft) 인 이유 = object_spec §9.6. DoNotSchedule 이면 자리가 없을 때
-      #    Pending 으로 멈춘다(가용성을 지키려다 서비스가 안 뜨는 최악).
+      # 🔴 2026-08-01 — soft → **hard(DoNotSchedule) + nodeTaintsPolicy: Honor** 로 승격.
+      #    종전 주석("soft 인 이유 = 자리 없으면 Pending")의 우려는 타당하지만, 실측이
+      #    반대쪽 비용을 더 크게 만들었다: soft 로 둔 결과 **frontend 2 replica 가 둘 다
+      #    host-b(b1·b2)** 에 앉아 있었다(recipe 는 둘 다 host-a). soft 는 롤링 업데이트 중
+      #    아직 안 죽은 구 파드까지 세어 분포 계산이 왜곡되고 ImageLocality·리소스 밸런싱
+      #    점수에 밀려 **조용히 안 지켜진다** — 즉 종전 구성은 위 주석이 막으려던 상황
+      #    (둘이 같은 실패 도메인 → PDB 가 drain 을 막음)을 실제로 허용하고 있었다.
+      #    Pending 위험은 여기서 낮다: 파드 2~3개(surge 포함)를 **2 zone / 4 노드** 에 놓는
+      #    성긴 제약이고, 노드 CPU 요청률 42~50% 다. 촘촘한 tier 단위 제약과는 상황이 다르다.
+      # 🔴 nodeTaintsPolicy: Honor 가 hard 의 유일한 함정을 막는다 — 기본값 Ignore 면
+      #    host-b 가 통째로 죽어도 "파드 0개 도메인" 으로 계산에 남아 host-a 이전이 skew 2 로
+      #    거부돼 **막으려던 장애에서 복구가 막힌다**. Honor 는 급사·cordon 노드에 붙는
+      #    `NoSchedule` 테인트(파드가 톨러레이션 미보유)를 보고 그 도메인을 제외한다.
       topologySpreadConstraints:
         - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
           labelSelector:
             matchLabels:
               app: frontend
         - maxSkew: 1
-          topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: ScheduleAnyway
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
           labelSelector:
             matchLabels:
               app: frontend

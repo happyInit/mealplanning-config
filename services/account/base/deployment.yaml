@@ -35,27 +35,44 @@ spec:
       # ⚠️ 이건 **blast radius 축소이지 HA 가 아니다** — replica 1 서비스는 노드가 죽으면
       #    그대로 내려가고, 기본 tolerationSeconds 300s 탓에 재스케줄까지 최대 5분 걸린다.
       #    진짜 HA 는 replicas>=2 + PDB 이며 별건이다.
+      #
+      # 🔴 2026-08-01 — account 는 그 "별건" 에 해당하게 됐다(HPA min2/max4 + PDB).
+      #    그래서 `tier: backend`(soft) 2종을 **app 단위 hard 2종으로 교체**한다.
+      #    근거: 같은 구성(tier soft)이던 recipe 가 실제로 **2 replica 둘 다 host-a**,
+      #    frontend(app soft)가 **둘 다 host-b** 에 앉아 있었다. soft 는 롤링 업데이트 중
+      #    아직 안 죽은 구 파드까지 세어 분포가 왜곡되고 다른 스케줄 점수에 밀려
+      #    **조용히 안 지켜진다.** account 가 지금 갈라져 있는 건 보장이 아니라 운이었다.
+      #    hostname 만으론 부족하다 — 노드는 갈라도 a1·a2 는 같은 물리 호스트라, 급사 3회
+      #    이력이 있는 호스트 A 가 죽으면 전멸한다. 그래서 zone 축이 따로 필요하다.
+      #    (replica 1 인 나머지 10종은 tier 제약 유지 — 그쪽 전제는 여전히 유효하고,
+      #     그 제약들의 selector 가 tier:backend 라 account 파드도 계속 카운트에 잡힌다.)
+      #
+      # 🔴 왜 tier 제약을 남겨서 겹치지 않았나: `topologySpreadConstraints` 의
+      #    strategic-merge patchMergeKey 가 **topologyKey** 라, 같은 topologyKey 항목이 둘이면
+      #    병합이 깨진다 — `kubectl apply --dry-run=server` 에서 병합 결과의 **maxSkew 가
+      #    소실**됐다. API 검증은 (topologyKey, whenUnsatisfiable) 쌍만 봐서 통과하지만
+      #    apply 경로에서 조용히 망가진다. → **워크로드당 topologyKey 는 유일하게 유지한다.**
+      #
+      # 🔴 tier 제약이 soft 였던 건 옳다(14 파드를 4 노드에 맞추는 촘촘한 제약 → hard 면
+      #    노드가 찼을 때 Pending). app 단위는 파드 2~4개를 2 zone/4 노드에 놓는 성긴
+      #    제약이라 자리 부족 국면이 사실상 안 온다 — 그래서 여기선 hard 가 맞다.
+      # 🔴 nodeTaintsPolicy: Honor 없이 hard 만 걸면 **막으려던 장애에서 복구가 막힌다** —
+      #    host-a 가 죽어도 "파드 0개 도메인" 으로 남아 host-b 이전이 skew 2 로 거부된다.
+      #    Honor 는 급사·cordon 노드의 `NoSchedule` 테인트(파드가 톨러레이션 미보유)를 보고
+      #    그 노드를 도메인 계산에서 제외한다. ⚠️ 파드 기본 not-ready/unreachable 톨러레이션은
+      #    `effect: NoExecute` 전용이라 `NoSchedule` 변종에 안 걸린다 → 제외가 성립한다.
       topologySpreadConstraints:
         - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              tier: backend
-        - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
           labelSelector:
             matchLabels:
-              tier: backend
-        # 🔴 위 둘(tier: backend)은 **백엔드 파드 전체**의 균형이라, account 자신의 replica 가
-        #    서로 다른 노드에 간다는 보장을 주지 않는다 — 13개가 고르게 퍼진 채로도
-        #    account 2개가 같은 노드에 앉을 수 있다. 그러면 PDB(minAvailable:1)가 그 노드를
-        #    **drain 불가**로 만든다(두 번째 축출에서 0 이 되어 거부). 그래서 app 단위 제약을 더한다.
-        #    account 는 HPA 로 최대 4까지 늘어나므로 이 제약이 실제로 셀 것이 있다.
+              app: account
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
           labelSelector:
             matchLabels:
               app: account
