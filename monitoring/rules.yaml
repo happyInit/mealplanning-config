@@ -344,3 +344,64 @@ spec:
           annotations:
             summary: "{{ $labels.container }} 컨테이너가 OOMKilled 로 재시작 (pod {{ $labels.pod }})"
             description: "메모리 사용량, limit, 요청량 증가 및 메모리 누수 가능성을 즉시 확인하세요."
+---
+# descheduler CronJob 생사 감시 (2026-08-01)
+#
+# 왜 필요한가: descheduler 는 **HPA scale-down 이 깬 zone 분산을 자동 복구**하는 유일한 장치다
+#   (platform/argocd/descheduler.yaml). 그게 조용히 멈추면 분산은 깨진 채로 남는데,
+#   descheduler 자체는 아무 소리도 안 낸다 — CronJob 을 고른 이유가 바로 이 생사를
+#   Job 단위 이벤트로 잡을 수 있어서였다. 그 근거를 실제 알람으로 회수한다.
+#
+# 🔴 **이 알람들이 잡는 것과 못 잡는 것을 분명히 해둔다.**
+#   잡는 것   = descheduler 가 **안 도는** 경우(Job 실패·CronJob 삭제·suspend).
+#   못 잡는 것 = descheduler 가 **돌긴 도는데 아무것도 안 하는** 경우.
+#     ⚠️ 이건 가상의 우려가 아니다 — 2026-08-01 실제로 그랬다. podProtections 설정 하나 때문에
+#        Istio 사이드카의 emptyDir 이 "로컬스토리지" 로 잡혀 app ns 파드 20개가 전부 필터링됐고,
+#        Job 은 Complete·evictedPods=0·Application 은 Healthy 였다. 완벽하게 조용한 실패였다.
+#     → 그 경우를 잡는 건 위쪽 **MpDeploymentPodsOnSingleZone**(결과 기반, 20분 창)이다.
+#        두 알람은 대체재가 아니라 **원인·결과 한 쌍**이다. 한쪽만 두지 말 것.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-descheduler
+spec:
+  groups:
+    - name: mp-descheduler
+      rules:
+        # 임계 5400s = 90분 = 30분 스케줄 기준 **3회 연속 실패**. 1~2회는 노드 압박·이미지 pull
+        #   지연 같은 일시적 사유로 날 수 있어 소음이 되고, 3회면 사람이 볼 일이다.
+        #   suspend 도 같은 알람으로 묶는다 — "누가 잠깐 끄고 잊었다" 가 실제로 흔한 실패 경로다.
+        - alert: MpDeschedulerNotRunning
+          expr: |
+            (
+              time() - max by (namespace, cronjob) (
+                kube_cronjob_status_last_successful_time{namespace="kube-system", cronjob="mp-descheduler"}
+              ) > 5400
+            )
+            or
+            (kube_cronjob_spec_suspend{namespace="kube-system", cronjob="mp-descheduler"} == 1)
+          for: 10m
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "descheduler 가 90분째 성공 실행이 없다(또는 suspend) — HPA 축소로 깨진 zone 분산이 복구되지 않는다"
+            description: >-
+              확인 = kubectl get cronjob,job -n kube-system | grep mp-descheduler 후
+              실패 Job 의 로그(kubectl logs job/<name> -n kube-system).
+              분산 자체가 이미 깨졌는지는 MpDeploymentPodsOnSingleZone 을 같이 볼 것.
+
+        # CronJob 오브젝트가 통째로 사라지는 경우(ArgoCD Application 삭제·prune 사고).
+        #   위 알람은 시계열이 없어지면 **같이 침묵**하므로 absent() 로 따로 받아야 한다.
+        #   for 를 길게(20m) 두는 이유 = 정상적인 재배포 중 잠깐 사라지는 것에 안 울리게.
+        - alert: MpDeschedulerAbsent
+          expr: absent(kube_cronjob_spec_suspend{namespace="kube-system", cronjob="mp-descheduler"})
+          for: 20m
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "descheduler CronJob 오브젝트가 없다 — zone 분산 자동 복구가 통째로 사라진 상태"
+            description: >-
+              ArgoCD Application `descheduler`(platform 프로젝트) 상태를 확인할 것.
+              의도적으로 걷어낸 거라면 이 알람 2종도 같이 지워야 한다(고아 알람 방지).
