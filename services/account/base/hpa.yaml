@@ -37,4 +37,4 @@ spec:
         container: account          # 🔴 Deployment 의 컨테이너 이름과 일치해야 한다(불일치 시 메트릭 미수집)
         target:
           type: Utilization
-          averageUtilization: 70    # requests 250m 기준 → 파드당 175m 에서 확장
+          averageUtilization: 70    # requests 500m 기준 → 파드당 350m 에서 확장(2026-08-01 request 상향)

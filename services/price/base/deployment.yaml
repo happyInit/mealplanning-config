@@ -84,7 +84,9 @@ spec:
               exec: { command: ["sleep", "5"] }
           resources:
             requests:
-              cpu: 100m
+              cpu: 300m                       # 100m→300m (2026-08-01): 부하실측 정합.
+              #   Stage2 부하시 0.5~0.7 core 관측 — 100m 는 과소예약(노드 오버커밋 위험). HPA 없음
+              #   (캐시로 안정=고정 replica). 근거 = loadtest/stage1_results.md.
               memory: 128Mi
             limits:
               memory: 256Mi                  # OOM 보호(compose mem_limit 정합)
