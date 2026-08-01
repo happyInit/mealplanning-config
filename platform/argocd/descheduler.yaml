@@ -104,9 +104,20 @@ spec:
                     #    끼어들지 않는다. 우리 롤아웃은 1분 내 끝나므로 사실상 완전 회피.
                     minPodAge: 5m
                     podProtections:
-                      # 🔴 defaultDisabled 를 **비운다** — 차트 기본은 PodsWithLocalStorage
-                      #    보호를 끄는데, 우리는 기본 보호(로컬스토리지·DaemonSet·시스템크리티컬·
-                      #    고아 파드)를 전부 켠 채로 둔다.
+                      # 🔴🔴 이걸 안 끄면 descheduler 가 **완전한 no-op 이 된다** (실증).
+                      #    처음엔 "기본 보호를 다 켜두는 게 안전하다" 며 이 줄을 비웠다. 그랬더니
+                      #    app ns 파드 20개 전부가 이 사유로 걸러졌다:
+                      #      "pod has local storage and is protected against eviction"
+                      #    원인 = **Istio 사이드카가 주입하는 emptyDir**(workload-socket ·
+                      #    credential-socket · workload-certs · istio-envoy · istio-data).
+                      #    즉 **메시에 들어간 모든 파드가 자동으로 '로컬스토리지 보유'** 가 된다.
+                      #    🪤 무서운 건 이게 조용히 실패한다는 점이다 — Job 은 Complete,
+                      #       evictedPods=0, Application 은 Healthy. 위반이 나도 영원히 안 고친다.
+                      #    실측으로 확인: 대상 4종의 emptyDir 은 **전부 Istio 주입분**이고 앱 자체
+                      #    emptyDir 은 0 개다. 소켓·인증서·envoy 런타임이라 파드 재기동 시 재생성된다
+                      #    → 축출로 잃을 데이터가 없다.
+                      defaultDisabled:
+                        - "PodsWithLocalStorage"
                       extraEnabled:
                         - "PodsWithPVC" # 데이터 티어 보호(이중 안전장치 — ns 스코프로도 이미 배제)
                         # 🔴 이게 실질적인 최종 안전선이다: **PDB 없는 파드는 축출 대상이 아니다.**
