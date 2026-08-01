@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pipeline
+# 보안 ④ 티어 4 — pipeline ns 잠금 묶음.
+# child app = argocd/applications/policies-pipeline.yaml (mp-policies-pipeline, 수동 sync).
+# 🔴 app ns 정책(platform/policies, namespace:app 강제)·data 정책(platform/policies-data, namespace:data)과
+#    분리 — 여기는 namespace:pipeline. pipeline ns=메시 밖이라 netpol 이 유일 경계(data 와 동일).
+# 증분: ① ingress 봉쇄(이 PR, 위험 0) → ② egress(DNS+4스토어) + 외부 FQDN CNP(별 PR, 크롤·AI).
+resources:
+  - netpol-pipeline-ingress.yaml    # ingress 봉쇄(Prometheus→metrics 외 deny) — 4-1

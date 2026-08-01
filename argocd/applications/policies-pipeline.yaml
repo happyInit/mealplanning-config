@@ -1,0 +1,26 @@
+# child app — pipeline ns 보안 정책(티어 4 NetworkPolicy). 보안 롤아웃 ④.
+# root app-of-apps 가 이 파일을 집어 mp-policies-pipeline Application 을 만든다(mp-policies-data 와 동일 패턴).
+#
+# 🔴 syncPolicy.automated 를 일부러 안 켠다 = 수동 sync. pipeline egress default-deny 는 크롤·컨슈머·
+#    배치를 조용히 끊을 수 있어 "머지=강제"가 되면 안 된다. sync 후 cilium monitor --type drop 로
+#    예상 밖 드롭 0 + 크론/lag 정상을 확인한 뒤 다음 단계를 sync 한다(tier-3 와 동일 운영).
+# 🔴 app ns 의 mp-policies·data 의 mp-policies-data 와 별개 앱 — dest namespace 가 pipeline 이다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mp-policies-pipeline
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # 없으면 Application 삭제해도 리소스가 유령으로 남음
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: platform/policies-pipeline
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pipeline
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=false

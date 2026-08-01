@@ -1,0 +1,36 @@
+# 보안 ④ NetworkPolicy — 티어 4(pipeline ns) ingress 봉쇄. object_spec §10.5(신설 예정).
+#
+# tier-4 는 pipeline ns(컨슈머 5 + CronJob 15+)를 잠근다. tier-3(data 스토어) 이후의 짝 —
+# 스토어 쪽 ingress 는 잠갔으니, 이제 그 스토어를 쓰는 pipeline 쪽 egress/ingress 를 조인다.
+# PR 을 둘로 나눈다: ① 이 파일 = ingress 봉쇄(위험 0, egress 미건드림) → ② egress(별 PR).
+#
+# 🔴 pipeline ns 는 data ns 처럼 **메시 밖**(사이드카 없음, istio-injection 라벨 없음 실측):
+#   · Prometheus 가 :15020 merged 가 아니라 **파드 metrics 포트로 직접** 스크레이프(PodMonitor port: metrics 실측).
+#   · STRICT mTLS 무관(PeerAuth 는 app ns 만). netpol 만이 유일한 L3/L4 경계.
+# 🔴 이 정책은 policyTypes: [Ingress] 만 — egress 는 **의도적으로 안 건다**(그래야 default-deny 가 egress 를
+#    건드리지 않아 컨슈머/크론이 안 깨진다). egress 잠금은 별도 PR(netpol-pipeline-egress + FQDN CNP).
+#
+# pipeline 에 붙는 정당한 소스는 딱 하나(실측): Prometheus → consumer 5종 metrics.
+#   · probe 없음(어떤 워크로드도 readiness/liveness 미정의) → kubelet ingress 불필요.
+#   · Service 없음(PodMonitor 는 pod IP 직접) · KEDA 는 Kafka lag polling 이지 pipeline 파드에 안 붙음.
+#   → Prometheus 외 전부 deny.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-pipeline-ingress
+  namespace: pipeline
+spec:
+  # 빈 셀렉터 = pipeline ns 전 파드(컨슈머·폴러·프루너·잡). 이 순간 전 파드가 default-deny **ingress**.
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Prometheus(observability) → 상주 consumer 5종 metrics(retail:9401·deal:9402·recipe:9403·
+    #   user-event:9405·price-anomaly:9407). 전부 컨테이너 포트명 `metrics` 라 named 포트로 건다
+    #   — 새 consumer 가 metrics 포트를 추가해도 자동 커버(포트 번호 나열 시 갱신 부채 회피).
+    #   CronJob 파드는 이 포트를 안 열어 무해(리스너 없음).
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: prometheus } }
+      ports:
+        - { protocol: TCP, port: metrics }
