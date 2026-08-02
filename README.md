@@ -69,5 +69,9 @@ python3 scripts/validate.py
 베이스라인(`scripts/policy-baseline.txt`)은 **알려진 위반을 얼려둔 것**이고 줄어들기만 해야 한다.
 새 위반만 실패시킨다. 갱신은 `python3 scripts/validate.py --list`.
 
-GH Actions(`.github/workflows/validate.yml`)가 PR 마다 같은 걸 돌리지만, 로직은 전부 스크립트에
-있다 — 앱 레포의 Actions 가 self-hosted 러너 은퇴로 통째로 죽은 전례가 있어 러너에 의존하지 않는다.
+🔴 **자동 실행은 없다 — 지금은 푸시 전에 손으로 돌리는 것이 관문이다.**
+이 조직의 CI 는 Jenkins(호스트 C), CD 는 ArgoCD 이고 이미 구성돼 있다. 이 레포의 검증을
+그 파이프라인에 얹을지는 별건이며, 얹지 않아도 스크립트는 로컬에서 그대로 돈다.
+
+`kustomize` 는 없으면 `kubectl kustomize` 로 대체되고, `kubeconform` 은 없으면 스키마 검증만
+건너뛴다(경고). 즉 추가 설치 없이도 나머지 검사는 전부 동작한다.
