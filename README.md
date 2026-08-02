@@ -47,3 +47,27 @@ pipelines/               # 🔵 인프라 소관·project=mealplanning — 컨�
 
 현재 child app은 **auto-sync OFF**(배선만). 최초 배포는 수동 sync로 검증하고, git push→자동
 배포 활성화는 **P2**에 인프라 담당과 켠다(플랜 §7.4 "최초의 CD는 P2").
+
+## 검증 — 푸시 전에 돌릴 것
+
+```
+python3 scripts/validate.py
+```
+
+렌더 결과(= 실제로 클러스터에 가는 것)를 검사한다. "문법이 맞나"가 아니라 **"의도대로 렌더되나"**를
+본다 — 이 레포에서 새어나간 사고는 전부 적용이 성공하고 에러도 없던 것들이었다:
+
+| 검사 | 무엇을 막나 |
+|---|---|
+| `kustomize build` 전체 | 렌더 실패 |
+| `kubeconform` | 스키마 위반. 🔴 ArgoCD 의 apply 는 strict 가 아니라 **모르는 필드를 조용히 프루닝**한다 |
+| 4-dot FQDN 금지 | `<svc>.<ns>.svc.cluster.local` 이 파드 search 의 `local` 때문에 ISP 로 새어 공인 IP 로 해석된다(실측 21.7%) |
+| `:latest` 금지 | ArgoCD 가 변경을 감지 못 하고 롤백 대상이 없어진다 |
+| `topologyKey` 중복 금지 | patchMergeKey 충돌로 제약 하나가 조용히 사라진다 |
+| securityContext 베이스라인 | JSON-Patch `op: add` 가 merge 가 아니라 replace 라 하드닝이 렌더에서 증발한다 |
+
+베이스라인(`scripts/policy-baseline.txt`)은 **알려진 위반을 얼려둔 것**이고 줄어들기만 해야 한다.
+새 위반만 실패시킨다. 갱신은 `python3 scripts/validate.py --list`.
+
+GH Actions(`.github/workflows/validate.yml`)가 PR 마다 같은 걸 돌리지만, 로직은 전부 스크립트에
+있다 — 앱 레포의 Actions 가 self-hosted 러너 은퇴로 통째로 죽은 전례가 있어 러너에 의존하지 않는다.

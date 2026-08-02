@@ -1,0 +1,89 @@
+# securityContext 정책 베이스라인 — **알려진 위반을 얼려둔 목록**이다.
+#
+# scripts/validate.py 는 렌더 결과에서 하드닝 위반을 찾아 이 목록과 대조하고,
+# **여기 없는 새 위반만 실패**시킨다. 지금 깨져 있는 것을 다 고치기 전까지 CI 를 못 켜면
+# CI 가 영영 안 들어오기 때문이다.
+#
+# 🔴 이 파일은 줄어들기만 해야 한다. 새 줄을 추가하려는 자신을 발견하면 그건 회귀다.
+#    해소하면 validate.py 가 "베이스라인 N건이 해소됐다"고 경고하니 그때 지운다.
+#
+# 갱신: python3 scripts/validate.py --list
+#
+# ── 왜 이만큼 깨져 있나 (2026-08-02 감사) ─────────────────────────────────────
+# pipeline/* (23개 컨테이너)
+#   pipelines/kustomization.yaml 의 RFC-6902 JSON-Patch `op: add` 가 기존 멤버에 대해
+#   merge 가 아니라 **replace** 로 동작한다. base 에 선언된 securityContext 가 패치 값으로
+#   통째로 갈아치워지면서 runAsNonRoot·readOnlyRootFilesystem 이 렌더 단계에서 증발했다.
+#   (allowPrivilegeEscalation·capabilities.drop 은 패치에 있어서 살아남았다 — 그래서 이 둘만
+#   위반 목록에 없다. 기전이 여기서 드러난다.)
+#   라이브 확인: kubectl exec -n pipeline deploy/mp-price-anomaly-notifier -- id -> uid=0(root)
+#   → 수정은 strategic merge patch 로 전환하는 별건. 🔴 단 readOnlyRootFilesystem 을 실제로
+#     켜면 Playwright 크롤러(mp-poller-kurly)가 tmp 쓰기 때문에 깨진다 — emptyDir 배선이 선행.
+#
+# data/Deployment/mp-redis-pgsync (4개 항목 전부)
+#   plain Deployment 라 오퍼레이터가 securityContext 를 주입해 주지 않는다.
+#   PGSync 의 PG 복제 자격증명을 들고 DB 와 같은 ns 에서 root 로 돈다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── allowPrivilegeEscalation (2건)
+allowPrivilegeEscalation data/Deployment/mp-pgsync:pgsync
+allowPrivilegeEscalation data/Deployment/mp-redis-pgsync:redis
+
+# ── capabilities.drop=ALL (2건)
+capabilities.drop=ALL data/Deployment/mp-pgsync:pgsync
+capabilities.drop=ALL data/Deployment/mp-redis-pgsync:redis
+
+# ── readOnlyRootFilesystem (25건)
+readOnlyRootFilesystem data/Deployment/mp-pgsync:pgsync
+readOnlyRootFilesystem data/Deployment/mp-redis-pgsync:redis
+readOnlyRootFilesystem pipeline/CronJob/mp-chat-insights:chat-insights
+readOnlyRootFilesystem pipeline/CronJob/mp-data-invariants:data-invariants
+readOnlyRootFilesystem pipeline/CronJob/mp-deal-pruner:deal-pruner
+readOnlyRootFilesystem pipeline/CronJob/mp-pantry-expire-recompute:pantry-expire-recompute
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-deal-closesale:poller-deal-closesale
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-deal-timesale:poller-deal-timesale
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-es-recipes:poller-es-recipes
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-kurly:poller-kurly
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-oasis-dawn:poller-oasis-dawn
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-oasis-noon:poller-oasis-noon
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-price-anomaly:poller-price-anomaly
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-price-matview:poller-price-matview
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-recipe-review:poller-recipe-review
+readOnlyRootFilesystem pipeline/CronJob/mp-poller-recipe:poller-recipe
+readOnlyRootFilesystem pipeline/CronJob/mp-score-review-sentiment:score-review-sentiment
+readOnlyRootFilesystem pipeline/CronJob/mp-summarize-reviews:summarize-reviews
+readOnlyRootFilesystem pipeline/CronJob/mp-user-data-pruner:user-data-pruner
+readOnlyRootFilesystem pipeline/Deployment/mp-deal-notifier:deal-notifier
+readOnlyRootFilesystem pipeline/Deployment/mp-price-anomaly-notifier:price-anomaly-notifier
+readOnlyRootFilesystem pipeline/Deployment/mp-recipe-refiner:recipe-refiner
+readOnlyRootFilesystem pipeline/Deployment/mp-retail-refiner:retail-refiner
+readOnlyRootFilesystem pipeline/Deployment/mp-user-event-sink:user-event-sink
+readOnlyRootFilesystem pipeline/Job/mp-reindex-recipes-es:reindex
+
+# ── runAsNonRoot (25건)
+runAsNonRoot data/Deployment/mp-pgsync:pgsync
+runAsNonRoot data/Deployment/mp-redis-pgsync:redis
+runAsNonRoot pipeline/CronJob/mp-chat-insights:chat-insights
+runAsNonRoot pipeline/CronJob/mp-data-invariants:data-invariants
+runAsNonRoot pipeline/CronJob/mp-deal-pruner:deal-pruner
+runAsNonRoot pipeline/CronJob/mp-pantry-expire-recompute:pantry-expire-recompute
+runAsNonRoot pipeline/CronJob/mp-poller-deal-closesale:poller-deal-closesale
+runAsNonRoot pipeline/CronJob/mp-poller-deal-timesale:poller-deal-timesale
+runAsNonRoot pipeline/CronJob/mp-poller-es-recipes:poller-es-recipes
+runAsNonRoot pipeline/CronJob/mp-poller-kurly:poller-kurly
+runAsNonRoot pipeline/CronJob/mp-poller-oasis-dawn:poller-oasis-dawn
+runAsNonRoot pipeline/CronJob/mp-poller-oasis-noon:poller-oasis-noon
+runAsNonRoot pipeline/CronJob/mp-poller-price-anomaly:poller-price-anomaly
+runAsNonRoot pipeline/CronJob/mp-poller-price-matview:poller-price-matview
+runAsNonRoot pipeline/CronJob/mp-poller-recipe-review:poller-recipe-review
+runAsNonRoot pipeline/CronJob/mp-poller-recipe:poller-recipe
+runAsNonRoot pipeline/CronJob/mp-score-review-sentiment:score-review-sentiment
+runAsNonRoot pipeline/CronJob/mp-summarize-reviews:summarize-reviews
+runAsNonRoot pipeline/CronJob/mp-user-data-pruner:user-data-pruner
+runAsNonRoot pipeline/Deployment/mp-deal-notifier:deal-notifier
+runAsNonRoot pipeline/Deployment/mp-price-anomaly-notifier:price-anomaly-notifier
+runAsNonRoot pipeline/Deployment/mp-recipe-refiner:recipe-refiner
+runAsNonRoot pipeline/Deployment/mp-retail-refiner:retail-refiner
+runAsNonRoot pipeline/Deployment/mp-user-event-sink:user-event-sink
+runAsNonRoot pipeline/Job/mp-reindex-recipes-es:reindex
