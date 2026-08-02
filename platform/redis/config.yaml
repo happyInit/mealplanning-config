@@ -1,0 +1,42 @@
+# Redis 외부 설정 — RedisReplication `mp-redis` 의 `redisConfig.additionalRedisConfig` 가 참조한다.
+#
+# 오퍼레이터(OT-Container-Kit v0.26.0)가 이 ConfigMap 을 파드에
+# `/etc/redis/external.conf.d/redis-additional.conf` 로 마운트하고, 이미지 엔트리포인트가
+# 생성한 redis.conf **끝에** `include` 한 줄을 덧붙인다. 그래서 여기 값이 기본값을 덮는다.
+#   /usr/bin/entrypoint.sh:120   echo "include ${EXTERNAL_CONFIG_FILE}" >> /etc/redis/redis.conf
+#
+# 🔴 키 이름 `redis-additional.conf` 는 고정이다(엔트리포인트 기본값 · 업스트림 예제
+#    example/v1beta2/additional_config/configmap.yaml). 바꾸면 파일이 없는 것으로 취급돼
+#    include 자체가 안 붙는다 — **에러 없이 조용히 무시된다.** 이름을 건드리지 말 것.
+#
+# 변경 후 검증은 반드시 라이브에서:
+#   kubectl exec -n data mp-redis-0 -c mp-redis -- redis-cli CONFIG GET maxmemory
+#   kubectl exec -n data mp-redis-0 -c mp-redis -- redis-cli CONFIG GET maxmemory-policy
+#   kubectl exec -n data mp-redis-0 -c mp-redis -- redis-cli CONFIG GET save
+# "적용됨"과 "동작함"은 다르다 — ConfigMap 이 붙었다는 것만으로는 아무것도 증명되지 않는다.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-redis-config
+  namespace: data
+data:
+  redis-additional.conf: |
+    # 컨테이너 한도 256Mi 대비 150MiB 를 상한으로 둔다.
+    # 남는 106MiB = redis 자체 오버헤드(~10MiB) + jemalloc 단편화(데이터셋의 1.1~1.5배가 통상)
+    # + 복제/클라이언트 출력 버퍼. 이 여유가 없으면 maxmemory 를 지켜도 RSS 가 한도를 넘어
+    # 결국 OOMKill 된다 — maxmemory 는 데이터셋 크기지 RSS 가 아니다.
+    # 참고 실측(2026-08-02): used_memory 3.02M · peak 6.81M — 상한은 사고 방지용이지 예약이 아니다.
+    maxmemory 150mb
+
+    # TTL 있는 키만 축출한다. TTL 없는 딜 워킹셋(retail:deals:active/:detail)을 보호하려는 것이고,
+    # 상세 근거는 redis.yaml 의 redisConfig 주석에 있다.
+    # 여기서 축출되지 않아 한도에 닿으면 Redis 는 쓰기에 OOM 에러를 반환한다 — 프로세스가 죽는 것보다
+    # 낫다. 그 상황이 오면 그건 용량 문제이지 정책 문제가 아니다.
+    maxmemory-policy volatile-lru
+
+    # RDB 끔. 이 Redis 는 PVC 가 없어서(설계상 의도 — 파일 헤더 "영속성 금지") RDB 를 써봐야
+    # 재시작 때 사라지는 컨테이너 레이어에 쌓일 뿐이고, BGSAVE fork 의 copy-on-write 가
+    # 256Mi 한도 안에서 OOM 위험만 키운다. 빈 문자열 = save 포인트 전체 해제.
+    # 복제본 재동기는 이 설정과 무관하다(repl-diskless-sync 경로).
+    save ""
