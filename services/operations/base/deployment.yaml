@@ -55,7 +55,13 @@ spec:
           ports:
             - name: http
               containerPort: 8011
-              appProtocol: http
+              # 🔴 여기에 appProtocol 을 두지 말 것 — ContainerPort 에는 그런 필드가 없다
+              #    (name·hostPort·containerPort·protocol·hostIP 뿐). Istio 프로토콜 선택에 쓰는
+              #    appProtocol 은 **Service 포트 전용**이고 service.yaml 에 이미 올바로 들어 있다.
+              #    ArgoCD 의 apply 는 strict 가 아니라 API 서버가 조용히 프루닝했다 —
+              #    라이브 Deployment 의 ports 에는 이 필드가 없었고 아무 에러도 없었다.
+              #    (kubectl apply --validate=strict 는 거부한다: unknown field ...ports[0].appProtocol)
+              #    2026-08-02 scripts/validate.py 의 kubeconform 단계가 첫 실행에서 잡았다.
           envFrom:
             - configMapRef:
                 name: app-common
