@@ -6,4 +6,4 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-operations-service
   newName: 192.168.0.10/mealplanning/mp-operations-service
-  newTag: ef23ee47fb43ac11064dea32f4cf5135d1aca03f
+  newTag: 3402e3e1037607e7e301a2da938a9bcc191f39d2
