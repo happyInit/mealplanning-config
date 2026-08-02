@@ -7,4 +7,4 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-frontend
   newName: 192.168.0.10/mealplanning/mp-frontend
-  newTag: 840065900987dcaf26c39640a1525ead27a8f88d
+  newTag: fe5d5448092e2a8a3f0f4fcc1d2bfbe85549d198
