@@ -33,7 +33,9 @@ spec:
               ruler: loki
               admin: loki
             s3:
-              endpoint: http://minio.observability.svc.cluster.local:9000
+              # 🔴 `.svc` 단축형 고정 — 4-dot FQDN 은 search 확장 중 `.local` 로 새어 ISP 가
+              #    NXDOMAIN 을 공인 IP 로 하이재킹한다(2026-08-02 실측 21.7%). alloy.yaml 주석 참조.
+              endpoint: http://minio.observability.svc:9000
               accessKeyId: ${MINIO_ACCESS_KEY_ID}
               secretAccessKey: ${MINIO_SECRET_ACCESS_KEY}
               s3ForcePathStyle: true

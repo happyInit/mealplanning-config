@@ -22,7 +22,9 @@ spec:
   location: MESH_EXTERNAL
   resolution: DNS
   endpoints:
-    - address: argocd-server.argocd.svc.cluster.local
+    # 🔴 `.svc` 단축형 고정 — 4-dot FQDN 은 search 확장 중 `.local` 로 새어 하이재킹된다
+    #    (2026-08-02 실측 21.7%). Envoy 도 파드 resolv.conf 를 그대로 쓴다. alloy.yaml 주석 참조.
+    - address: argocd-server.argocd.svc
   ports:
     - number: 80
       name: http
