@@ -14,11 +14,42 @@ spec:
   groups:
     - name: mp-tempo
       rules:
+        # 🔴 2026-08-02 추가 — 아래 BlocklistIndexBroken 의 **빠진 짝**이다. 반드시 함께 읽을 것.
+        #
+        #   실측 배경: tempo-0 이 07-28~08-02 닷새간 420회 넘게 재시작했는데 `#alerts-critical`
+        #   에는 아무것도 가지 않았다. 7일치 ALERTS 조회 결과 —
+        #     KubePodCrashLooping(tempo-0) · KubePodNotReady(tempo-0)
+        #     · KubeStatefulSetReplicasMismatch(sts=tempo) · TargetDown(job=tempo)  ← 넷 다 firing
+        #     MpTempoBlocklistIndexBroken                                            ← 0 series
+        #   즉 클러스터는 침묵하지 않았다. 넷 다 **severity=warning** 이라 전부 `#monitoring` 으로
+        #   갔고(`#alerts-critical` 은 severity=critical 만 매칭), repeat_interval 4h 공용 채널에서
+        #   닷새간 묻혔을 뿐이다.
+        #
+        #   아래 규칙의 `and on() up==1` 게이트는 **논리상 틀리지 않았다** — "살아있는데 인덱스만
+        #   깨진" 국면 전용이 맞다. 문제는 그 반대편(= 아예 죽은 국면)이 영원히 warning 에 머문
+        #   것이다. 게이트를 걷어내는 대신 이 규칙으로 반대편을 critical 로 승격한다.
+        #
+        #   absent() 를 or 로 붙인 이유: 타깃이 통째로 사라지면 up 시리즈 자체가 없어져
+        #   `up == 0` 도 빈 벡터가 된다(= 안 울린다). mp-pg 의 MpPGInstancesDegraded 와 같은 패턴.
+        - alert: MpTempoDown
+          expr: |
+            absent(up{job="tempo"}) or up{job="tempo"} == 0
+          for: 10m
+          labels:
+            severity: critical
+            service: observability
+          annotations:
+            summary: "Tempo 다운 10분 — 분산 트레이싱이 통째로 정지한다(메시 100% 샘플링 스팬이 전부 유실)"
+            description: >-
+              kubectl -n observability get pod tempo-0 · logs --previous 확인.
+              전례 ①store init 실패(MinIO 엔드포인트가 .local search 하이재킹으로 공인 IP 로 해석 —
+              2026-08-02, 참조: platform/argocd/tempo.yaml 주석) ②2Gi 한도 OOM(2026-07-21 .11 전례).
+
         # 블록리스트 인덱스가 안 만들어지면 압축기·보존기가 대상 목록을 못 받아 전부 정지한다.
         #   시리즈 '부재'가 신호다 — 폴러가 실패하면 tempodb_blocklist_length 자체가 노출되지
         #   않는다(값이 0으로 떨어지는 게 아니다). 그래서 threshold 가 아니라 absent() 를 쓴다.
         #   `and on() up==1` = Tempo 가 살아있는데도 부재인 경우로 한정 — 파드가 아예 죽은 경우는
-        #   TargetDown 계열이 이미 잡으므로 중복 소음을 막는다.
+        #   위 MpTempoDown(critical) 이 잡으므로 중복 소음을 막는다. 🔴 이 둘은 한 쌍이다.
         #   백테스트(.11, 2026-07-23): 실사고 구간 31시간 연속 발화·손상 블록 제거 직후 소멸.
         - alert: MpTempoBlocklistIndexBroken
           expr: absent(tempodb_blocklist_length) and on() (up{job="tempo"} == 1)

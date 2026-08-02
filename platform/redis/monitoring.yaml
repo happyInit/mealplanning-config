@@ -28,8 +28,17 @@ spec:
       rules:
         # #1779 의 "조용한 실패" 전용 — 복제본이 0인 채로 몇 시간 방치되는 사고(신고 사례 19시간).
         # 🔴 redis_up·redis_master_link_up 으로는 안 잡힌다(이슈 본문 명시) — 복제본 수를 직접 본다.
+        #
+        # 🔴 absent() 가드 추가 (2026-08-02). 없으면 **가장 나쁜 국면에서 정확히 침묵한다** —
+        #   Redis 가 통째로 사라지거나 exporter 가 죽으면 redis_connected_slaves 시리즈 자체가
+        #   없어지고, max() 는 값 0 이 아니라 **빈 벡터**를 낸다. 빈 벡터에 < 1 을 걸면 결과도
+        #   비어 있어 규칙이 영영 안 운다. mp-pg 의 MpPGInstancesDegraded, monitoring/rules.yaml 의
+        #   MpDeschedulerAbsent 가 이미 쓰는 패턴을 여기에도 맞춘다.
+        #   (검증법 = 임계를 뒤집어 `> -1` 로 두고 과거 구간 재생 → 실제로 값이 잡히는지 확인)
         - alert: MpRedisNoReplica
-          expr: max(redis_connected_slaves{namespace="data"}) < 1
+          expr: |
+            absent(redis_connected_slaves{namespace="data"})
+            or max(redis_connected_slaves{namespace="data"}) < 1
           for: 5m
           labels:
             severity: critical
@@ -38,8 +47,16 @@ spec:
             description: "connected_slaves=0 이 5분 지속. redis_up 은 정상으로 보이므로 이 규칙이 유일한 탐지 경로다."
         # 2026-07-29 실측 사고 전용 — 오퍼레이터와 Sentinel 이 서로 다른 master 를 믿는 상태.
         # master 로 보고되는 인스턴스가 1개가 아니면(0 또는 2+) 제어면이 갈라진 것이다.
+        #
+        # 🔴 absent() 가드 추가 (2026-08-02). count() 도 시리즈가 없으면 0 이 아니라 **빈 벡터**다.
+        #   즉 "master 가 0개"인 최악 국면 — Redis 전체 소실 — 에서 `!= 1` 이 아무것도 매치하지
+        #   못해 침묵한다. 가드는 redis_instance_info **전체**(role 필터 없이)의 부재를 본다:
+        #   role 을 필터에 넣으면 "replica 만 남아 master 가 0" 인 진짜 사고에서 가드가 발동해
+        #   원인을 가려버린다. 그 경우는 아래 count(...role="master") != 1 이 정상적으로 잡는다.
         - alert: MpRedisMasterCountAbnormal
-          expr: count(redis_instance_info{namespace="data", role="master"}) != 1
+          expr: |
+            absent(redis_instance_info{namespace="data"})
+            or count(redis_instance_info{namespace="data", role="master"}) != 1
           for: 3m
           labels:
             severity: critical
