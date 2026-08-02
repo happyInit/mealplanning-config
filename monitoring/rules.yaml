@@ -14,11 +14,42 @@ spec:
   groups:
     - name: mp-tempo
       rules:
+        # 🔴 2026-08-02 추가 — 아래 BlocklistIndexBroken 의 **빠진 짝**이다. 반드시 함께 읽을 것.
+        #
+        #   실측 배경: tempo-0 이 07-28~08-02 닷새간 420회 넘게 재시작했는데 `#alerts-critical`
+        #   에는 아무것도 가지 않았다. 7일치 ALERTS 조회 결과 —
+        #     KubePodCrashLooping(tempo-0) · KubePodNotReady(tempo-0)
+        #     · KubeStatefulSetReplicasMismatch(sts=tempo) · TargetDown(job=tempo)  ← 넷 다 firing
+        #     MpTempoBlocklistIndexBroken                                            ← 0 series
+        #   즉 클러스터는 침묵하지 않았다. 넷 다 **severity=warning** 이라 전부 `#monitoring` 으로
+        #   갔고(`#alerts-critical` 은 severity=critical 만 매칭), repeat_interval 4h 공용 채널에서
+        #   닷새간 묻혔을 뿐이다.
+        #
+        #   아래 규칙의 `and on() up==1` 게이트는 **논리상 틀리지 않았다** — "살아있는데 인덱스만
+        #   깨진" 국면 전용이 맞다. 문제는 그 반대편(= 아예 죽은 국면)이 영원히 warning 에 머문
+        #   것이다. 게이트를 걷어내는 대신 이 규칙으로 반대편을 critical 로 승격한다.
+        #
+        #   absent() 를 or 로 붙인 이유: 타깃이 통째로 사라지면 up 시리즈 자체가 없어져
+        #   `up == 0` 도 빈 벡터가 된다(= 안 울린다). mp-pg 의 MpPGInstancesDegraded 와 같은 패턴.
+        - alert: MpTempoDown
+          expr: |
+            absent(up{job="tempo"}) or up{job="tempo"} == 0
+          for: 10m
+          labels:
+            severity: critical
+            service: observability
+          annotations:
+            summary: "Tempo 다운 10분 — 분산 트레이싱이 통째로 정지한다(메시 100% 샘플링 스팬이 전부 유실)"
+            description: >-
+              kubectl -n observability get pod tempo-0 · logs --previous 확인.
+              전례 ①store init 실패(MinIO 엔드포인트가 .local search 하이재킹으로 공인 IP 로 해석 —
+              2026-08-02, 참조: platform/argocd/tempo.yaml 주석) ②2Gi 한도 OOM(2026-07-21 .11 전례).
+
         # 블록리스트 인덱스가 안 만들어지면 압축기·보존기가 대상 목록을 못 받아 전부 정지한다.
         #   시리즈 '부재'가 신호다 — 폴러가 실패하면 tempodb_blocklist_length 자체가 노출되지
         #   않는다(값이 0으로 떨어지는 게 아니다). 그래서 threshold 가 아니라 absent() 를 쓴다.
         #   `and on() up==1` = Tempo 가 살아있는데도 부재인 경우로 한정 — 파드가 아예 죽은 경우는
-        #   TargetDown 계열이 이미 잡으므로 중복 소음을 막는다.
+        #   위 MpTempoDown(critical) 이 잡으므로 중복 소음을 막는다. 🔴 이 둘은 한 쌍이다.
         #   백테스트(.11, 2026-07-23): 실사고 구간 31시간 연속 발화·손상 블록 제거 직후 소멸.
         - alert: MpTempoBlocklistIndexBroken
           expr: absent(tempodb_blocklist_length) and on() (up{job="tempo"} == 1)
@@ -405,3 +436,50 @@ spec:
             description: >-
               ArgoCD Application `descheduler`(platform 프로젝트) 상태를 확인할 것.
               의도적으로 걷어낸 거라면 이 알람 2종도 같이 지워야 한다(고아 알람 방지).
+---
+# CoreDNS `.local` 가드 감시 (2026-08-02 신설).
+#
+# 무엇을 막는 가드인가:
+#   파드 resolv.conf 의 search 마지막에 **DHCP 가 준 `local`** 이 들어 있고 ndots:5 다. 그래서
+#   점 4개짜리 `<svc>.<ns>.svc.cluster.local` 은 절대이름 취급이 안 되고 search 를 먼저 붙인다.
+#   4번째 후보 `...svc.cluster.local.local` 은 CoreDNS 의 kubernetes 존 밖이라
+#   `forward . /etc/resolv.conf` 로 ISP 리졸버까지 나가는데, ISP 가 NXDOMAIN 을 공인 IP 로
+#   하이재킹한다. A 레코드가 오면 리졸버는 성공으로 보고 멈추므로 정답인 5번째 후보(bare name)에
+#   영영 도달하지 못한다. 실측(2026-08-02, 유니크 이름 60회): **13/60 = 21.7%**.
+#     minio.observability.svc.cluster.local  -> 218.38.137.28   (오답 · 공인 IP)
+#     minio.observability.svc                -> 10.105.115.112  (정답)
+#   실피해 = tempo-0 이 닷새간 420회+ 재시작(store init 실패). loki·alloy·cloudflared 도 같은
+#   지뢰 위에 있었다(각 파일 주석 참조).
+#
+# 가드 = Corefile 의 `local:53 { template ANY ANY { rcode NXDOMAIN } }` 블록.
+#   `.local` 은 mDNS 예약 존(RFC 6762)이라 애초에 업스트림으로 나가면 안 된다.
+#
+# 🔴 왜 이 알람이 필요한가: CoreDNS ConfigMap 은 **IaC 밖**이다(kubeadm 생성물, Ansible k8s.yml 에
+#   CoreDNS 처리 0줄, ArgoCD 미관리). kubeadm 업그레이드·노드 재구축이 조용히 되돌린다.
+#   그러면 4-dot FQDN 이 다시 22% 확률로 공인 IP 로 새는데, 증상이 "가끔 안 됨"이라 진단이 어렵다.
+#
+# 지표 선택: coredns_plugin_enabled 는 **설정 로드 시점에 나오는 게이지**라 트래픽과 무관하다.
+#   트래픽 기반 지표(coredns_dns_requests_total{zone="local."})를 쓰면 `.local` 질의가 없을 때
+#   시리즈가 사라져 같이 침묵한다 — 이 레포가 MpDeschedulerAbsent 에서 이미 배운 함정이다.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-dns
+spec:
+  groups:
+    - name: mp-dns
+      rules:
+        - alert: MpCoreDNSLocalGuardMissing
+          expr: absent(coredns_plugin_enabled{zone="local.", name="template"})
+          for: 15m
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "CoreDNS 의 .local 차단 블록이 사라졌다 — 4-dot FQDN 이 공인 IP 로 해석될 수 있다(실측 21.7%)"
+            description: >-
+              확인 = kubectl get cm -n kube-system coredns -o jsonpath='{.data.Corefile}' | grep -A4 'local:53'.
+              복구 = 그 블록을 되돌린다(local:53 에 template ANY ANY / rcode NXDOMAIN).
+              즉시 검증 = 파드에서 유니크한 <임의>.local 이름 60회 해석 → 전부 NXDOMAIN 이어야 한다.
+              A 레코드가 하나라도 돌아오면 가드가 안 먹는 것이다.
+              🔴 CoreDNS 가 통째로 죽어도 이 알람이 뜬다(시리즈 부재) — 그 경우는 CoreDNS 자체를 먼저 볼 것.

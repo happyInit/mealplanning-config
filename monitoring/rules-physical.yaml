@@ -103,17 +103,39 @@ spec:
           annotations:
             summary: "{{ $labels.instance }} 루트 디스크 사용률 85% 초과"
 
-        # 구 DockerDiskUsageHigh 이식 — 호스트 C 전용 docker 디스크(/dev/sdb, group_vars/ci.yml).
-        - alert: MpVMDockerDiskUsageHigh
+        # 🔴 ~~MpVMDockerDiskUsageHigh~~ = **삭제 (2026-08-02)**. 구조적으로 발화 불가능한 규칙이었다.
+        #
+        #   셀렉터가 mountpoint="/var/lib/docker" 인데 **호스트 C 에 그런 마운트포인트가 없다.**
+        #   실측(2026-08-02 Prometheus):
+        #     node_filesystem_avail_bytes{job="vm-node", mountpoint="/var/lib/docker"} -> 시리즈 0
+        #     vm-node 잡의 실제 마운트포인트 = / (/dev/sda2) · /run · /run/lock · /run/snapd/ns · /run/user/120
+        #     max_over_time(ALERTS{alertname="MpVMDockerDiskUsageHigh"}[7d])          -> 시리즈 0
+        #   근인 = group_vars/ci.yml 의 `docker_data_disk: /dev/sdb` 가 사실과 다르다(CLAUDE.md 에
+        #   이미 기록됨 — 호스트 C 는 sda 100G 단일). base 롤이 stat not-exists 로 조용히 스킵해서
+        #   무해했을 뿐이고, 그 결과 /var/lib/docker 는 **루트 파일시스템 위**에 있다.
+        #   → 그러므로 위 MpVMDiskUsageHigh(mountpoint="/") 가 이미 같은 것을 보고 있다. 중복이 아니라
+        #     **이쪽이 유일한 실측 경로**다. "0 발화 = 정상"으로 읽히던 대표적 사례.
+        #
+        #   다만 삭제만 하면 원래 의도(= Harbor 가 디스크를 채워 배포가 전면 실패하기 전에 잡는다)가
+        #   85% warning 한 겹만 남는다. 호스트 C 는 단일 98GB 위에 OS·Harbor 블롭·JENKINS_HOME·
+        #   SonarQube 가 전부 얹혀 있고 Harbor 블롭은 CI 런마다 단조 증가한다(17 이미지 × 3 태그).
+        #   Harbor 가 죽으면 노드가 이미지를 못 당겨 **클러스터 배포가 전면 실패**하므로 critical 을 둔다.
+        #   현재 51.7% (실측 2026-08-02) — 90% = 여유 ~10GB, CI 런 몇 회분의 반응 시간.
+        - alert: MpVMDiskUsageCritical
           expr: |
-            (1 - node_filesystem_avail_bytes{job="vm-node", mountpoint="/var/lib/docker"}
-               / node_filesystem_size_bytes{job="vm-node", mountpoint="/var/lib/docker"}) * 100 > 80
+            (1 - node_filesystem_avail_bytes{job=~"vm-node|hypervisor", mountpoint="/"}
+               / node_filesystem_size_bytes{job=~"vm-node|hypervisor", mountpoint="/"}) * 100 > 90
           for: 10m
           labels:
-            severity: warning
+            severity: critical
             service: ci
           annotations:
-            summary: "{{ $labels.instance }} /var/lib/docker 사용률 80% 초과 (Harbor 이미지·Jenkins 워크스페이스)"
+            summary: "{{ $labels.instance }} 루트 디스크 90% 초과 — 호스트 C 면 Harbor 정지 = 클러스터 배포 전면 실패"
+            description: >-
+              호스트 C(fb-ci-harbor)는 단일 98GB 루트에 OS·Harbor 블롭·JENKINS_HOME·SonarQube 가 함께 있다.
+              즉시 회수 = docker system prune (실측 여유분: 이미지 3.85GB · 볼륨 2.73GB · 빌드캐시 0.88GB) 후
+              Harbor 프로젝트 retention 정책 점검. 🔴 Harbor·Jenkins 는 백업이 없으므로 디스크를 채운 채
+              강제 조치하지 말 것.
 
         # 구 ContainerMemoryNearLimit 의 호스트 C 대응 — K8s 파드용(monitoring/rules.yaml, KSM 조인)과
         # 달리 호스트 C 컨테이너(Jenkins·Harbor)는 cadvisor 의 spec limit 로 직접 본다.
