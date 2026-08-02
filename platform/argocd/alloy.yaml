@@ -76,7 +76,12 @@ spec:
 
               loki.write "default" {
                 endpoint {
-                  url = "http://loki.observability.svc.cluster.local:3100/loki/api/v1/push"
+                  // 🔴 `.svc` 단축형 고정 — 4-dot FQDN 금지. 파드 search 마지막이 DHCP 유래 `local`
+                  //    이고 ndots:5 라, `...svc.cluster.local` 은 절대이름 취급이 안 되고 search 를
+                  //    먼저 붙인다 → `...cluster.local.local` 이 ISP 로 나가 NXDOMAIN 이 공인 IP 로
+                  //    하이재킹된다(실측 21.7%). 단축형은 `local` 차례 전에 `+cluster.local` 로 매치.
+                  //    여기가 특히 위험한 이유 = 평문 HTTP 로 전 클러스터 로그를 push 한다.
+                  url = "http://loki.observability.svc:3100/loki/api/v1/push"
                 }
               }
           mounts:

@@ -40,7 +40,11 @@ spec:
               backend: s3
               s3:
                 bucket: tempo # P0 k8s_minio 가 만들어 둔 버킷
-                endpoint: minio.observability.svc.cluster.local:9000
+                # 🔴 `.svc` 단축형 고정 — 이 한 줄이 tempo-0 421회 재시작의 근인이었다. 4-dot FQDN 이
+                #    search 확장 중 `.local` 로 새고 ISP 가 공인 IP(218.38.137.28)를 물려줘, 기동 때마다
+                #    ListObjects 가 그리로 나가 i/o timeout → init 실패 → exit 1(2026-08-02 실측 21.7%).
+                #    tempo 는 store init 실패 시 fail-fast 라 유독 이 스택에서 먼저 터졌다. alloy.yaml 참조.
+                endpoint: minio.observability.svc:9000
                 access_key: ${MINIO_ACCESS_KEY_ID}
                 secret_key: ${MINIO_SECRET_ACCESS_KEY}
                 insecure: true
