@@ -32,4 +32,36 @@ data:
   RANKING_SERVING_URL: "http://ranking-serving:8009"
   ENVIRONMENT: production
   LOG_LEVEL: INFO
-  # OTEL_EXPORTER_OTLP_ENDPOINT: 관측 콜렉터 확정 후 추가(§9) — 지금은 미주입(앱은 없으면 OTEL 비활성)
+
+  # ── OpenTelemetry (2026-08-02 배선) ──────────────────────────────────────────
+  #
+  # 🔴 종전 주석("지금은 미주입 — 앱은 없으면 OTEL 비활성")은 **사실과 달랐다.**
+  #    앱 7종은 Dockerfile CMD 가 `opentelemetry-instrument uvicorn …` 래퍼다. 엔드포인트가
+  #    없으면 비활성이 되는 게 아니라 **SDK 기본값 localhost:4317 로 붙으려다 실패하고
+  #    무한 재시도**한다. 실측(2026-08-02, 24시간):
+  #      app ns 총 로그          330,827 줄
+  #      OTLP Connection refused 132,633 줄  = 전체의 40.1%
+  #    Loki 7일 보존 예산의 40%를 이 에러 하나가 먹고 있었고, 모든 파드가 재시도 백오프에
+  #    CPU 를 태우고 있었다. 구조화 로그에 trace_id 는 찍히는데 그 trace 는 어디에도 없었다.
+  #
+  # 대상: 래퍼를 쓰는 7종(account·mealplan·notify·pantry·price·recipe·recipebook)이 이 값을 읽는다.
+  #    나머지 5종(chat·ocr·operations·video·ranking-serving)은 CMD 에 래퍼가 없어 이 값만으론
+  #    스팬을 내보내지 않는다 — Dockerfile 변경이 필요한 앱 레포 건이라 별건으로 남긴다.
+  #    (chat 만 자체 tracing.py 를 갖고 있는데 `OTEL_TRACES_ENABLED` 기본 False 라 지금도 조용하다.
+  #     그 기본 엔드포인트가 죽은 `.11` VM 좌표라, 켤 때 반드시 이 값으로 덮여야 한다.)
+  #
+  # 🔴 `.svc` 단축형 고정 — 4-dot FQDN 금지(파드 search 의 `local` 하이재킹, 실측 21.7%).
+  #    근거는 config 레포 platform/argocd/alloy.yaml 주석.
+  # 🔴 스킴이 `http://` 인 것이 곧 insecure 지시다 — Tempo OTLP 수신기에 TLS 가 없다.
+  #    gRPC 익스포터는 스킴으로 채널 보안을 정한다(https:// 로 쓰면 핸드셰이크에서 죽는다).
+  # ⚠️ 이 값만으론 안 된다 — `app` ns 는 egress default-deny 라
+  #    platform/policies/netpol-backend.yaml 에 tempo:4317 허용이 함께 있어야 한다.
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo.observability.svc:4317"
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc # 설치된 패키지 = opentelemetry-exporter-otlp-proto-grpc
+  # 지표·로그는 OTLP 로 내보내지 않는다. Tempo 는 트레이스만 받고,
+  #   지표 = prometheus_fastapi_instrumentator 가 /metrics 로 노출 → Prometheus 가 스크레이프
+  #   로그 = Alloy 가 /var/log/pods 를 테일 → Loki
+  # 🔴 이 둘을 none 으로 안 박으면 트레이스만 고치고 **지표·로그 익스포터가 같은 스팸을 계속 낸다.**
+  OTEL_METRICS_EXPORTER: none
+  OTEL_LOGS_EXPORTER: none
+  OTEL_TRACES_EXPORTER: otlp
