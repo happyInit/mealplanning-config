@@ -52,6 +52,37 @@ spec:
     enabled: true
     image: quay.io/opstree/redis-exporter:v1.44.0
 
+  # 🔴 축출 정책 + RDB 끄기 (2026-08-02) — 아래 ConfigMap `mp-redis-config` 를 붙인다.
+  #
+  # 왜: 실측(2026-08-02) 결과 라이브 설정이 `maxmemory 0`(무제한) + `maxmemory-policy noeviction`
+  #     인데 컨테이너 한도는 256Mi 다. 즉 메모리가 차면 Redis 가 **키를 버리는 대신 OOMKill 당한다**
+  #     → 재시작 → 전량 flush → Sentinel 페일오버 유발. 캐시로 쓰면서 축출을 꺼둔 구성이다.
+  #     한도를 명시하면 커널이 아니라 Redis 가 결정하고, 서비스는 살아 있는 채로 오래된 키만 버린다.
+  #
+  # 🔴 왜 allkeys-lru 가 아니라 volatile-lru 인가 — 이 Redis 는 순수 캐시가 아니다(키 실측):
+  #     retail:deals:active / :detail   ttl=-1 (영구)  = 딜 워킹셋, mp-deal-pruner 가 관리
+  #     video:recipe:<url>              ttl≈28~30일    = 순수 캐시(Gemini 재호출로 복원 가능)
+  #     ocr:job:<id>                    ttl=1h         = OCR 진행상태 (앱 코드)
+  #     video:lock:<url>                SET NX EX      = 단일플라이트 락 (앱 코드)
+  #     allkeys-lru 면 TTL 없는 딜 워킹셋까지 조용히 사라진다. volatile-lru 는 그걸 보호한다.
+  #     그리고 LRU 가 유리하게 작동한다 — OCR 잡은 프론트가 1초마다 폴링해 계속 hot 이라 가장 늦게
+  #     축출되고, 오래 안 쓴 video 캐시가 먼저 나간다.
+  #
+  # 🔴 save "" — 이 파일 헤더의 "영속성 금지"가 실제로는 안 지켜지고 있었다. 실측:
+  #     CONFIG GET save -> "3600 1 300 100 60 10000"  (RDB 켜짐)
+  #     CONFIG GET dir  -> /data                       (PVC 없음 = 컨테이너 레이어)
+  #     즉 재시작하면 어차피 사라질 RDB 를 노드 ephemeral 스토리지에 쓰고 있었고, BGSAVE fork 의
+  #     copy-on-write 가 256Mi 한도 안에서 OOM 위험만 키웠다. 의도대로 끈다.
+  #     (replica 재동기는 save 포인트와 무관하다 — repl-diskless-sync 경로를 쓴다.)
+  #
+  # 적용 경로 검증(실물 이미지 quay.io/opstree/redis:v7.2.3, 2026-08-02):
+  #     /usr/bin/entrypoint.sh:8    EXTERNAL_CONFIG_FILE=...:-"/etc/redis/external.conf.d/redis-additional.conf"
+  #     /usr/bin/entrypoint.sh:120      echo "include ${EXTERNAL_CONFIG_FILE}" >> /etc/redis/redis.conf
+  #     include 가 redis.conf **끝에** 붙으므로 여기 값이 기본값을 덮는다. ConfigMap 키 이름은
+  #     추측이 아니라 업스트림 예제(example/v1beta2/additional_config/configmap.yaml)로 확인했다.
+  redisConfig:
+    additionalRedisConfig: mp-redis-config
+
   # 🔴 인라인 Sentinel (2026-07-29, 3차 실측 후 도입) — 별도 RedisSentinel CR 을 대체한다.
   #
   # 왜: 별도 CR 로 두면 **오퍼레이터와 Sentinel 이 서로를 모른다.** Sentinel 이 복제본을 승격시켜도
