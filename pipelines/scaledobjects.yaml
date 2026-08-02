@@ -68,12 +68,28 @@ metadata:
 spec:
   scaleTargetRef:
     name: mp-recipe-refiner
-  # 🔴 **여기만 1 이다** — recipe-refiner 그룹은 아직 커밋된 오프셋이 없다(lag=-).
-  #    0 으로 내리면 KEDA 가 lag 를 계산 못 해 영영 안 깨어난다.
-  #    이 토픽은 만개레시피 크론(일·수 05:00)이 채우므로, 그 실행으로 오프셋이 커밋되면 0 으로 내린다.
-  #    (테스트 메시지 주입은 하지 않았다 — 이 컨슈머는 레시피를 PG 에 적재하고 PGSync 가 ES 로
-  #     복제해 **사용자 검색에 노출**되므로, 합성 레시피를 넣을 수 없다.)
-  minReplicaCount: 1
+  # ✅ **2026-08-02 — 1 → 0 전환.** 이로써 컨슈머 4종 전부 scale-to-zero 도달.
+  #
+  # 종전 사유(해소됨): recipe-refiner 그룹에 **커밋된 오프셋이 없어서**(lag=-) 0 으로 내리면
+  #   KEDA 가 lag 를 계산 못 해 영영 안 깨어났다. 합성 메시지로 오프셋을 만들 수도 없었다 —
+  #   이 컨슈머는 레시피를 PG 에 적재하고 PGSync 가 ES 로 복제해 **사용자 검색에 노출**되므로
+  #   가짜 레시피를 넣을 수 없다. 그래서 "만개레시피 크론(일·수 05:00)이 실제로 돌아 오프셋이
+  #   커밋되면 그때 내린다" 를 조건으로 걸어 뒀었다.
+  #
+  # 🟢 그 조건이 충족됐다 (2026-08-02 05:00 KST 첫 실행 실측):
+  #    poller Job **11m30s Complete** · 7,280건 검증 → **Kafka produce 407건**
+  #    커밋 오프셋 = part0 137 + part1 129 + part2 141 = **407**(produce 수와 정확히 일치)
+  #    lag = 0/0/0 (전량 소비 완료)
+  #
+  # 🔴 오프셋 만료가 이 설정의 유일한 시한폭탄이다 — 확인했다.
+  #    Kafka 는 그룹이 **비는 순간부터** offsets.retention 을 센다. scale-to-zero 면 매 실행
+  #    직후 그룹이 비므로, 다음 크롤까지의 공백이 retention 을 넘으면 오프셋이 사라지고
+  #    KEDA 가 다시 lag=- 가 된다(= 영영 안 깨어남, 종전 상태로 회귀).
+  #    실측 `offsets.retention.minutes=10080`(**7일**, 브로커 기본) vs 크롤 최대 간격
+  #    **4일**(수→일) → 여유 3일. 안전하다.
+  #    ⚠️ 단 **크롤이 7일 넘게 멈추면**(suspend·장애·연휴) 이 전제가 깨진다. 그걸 잡으라고
+  #       `MpConsumerLagUnobserved` 에 recipe-refiner 를 추가했다(종전엔 3종만 덮고 있었다).
+  minReplicaCount: 0
   maxReplicaCount: 3 # recipe.crawl.raw 파티션 3
   pollingInterval: 30
   cooldownPeriod: 300
