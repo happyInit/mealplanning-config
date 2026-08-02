@@ -123,6 +123,12 @@ spec:
           # 요청량이 작아 Aggregator와 함께 배치한다 — **a2 로 이전 (2026-07-31)**.
           nodeSelector:
             kubernetes.io/hostname: k8s-worker-a2
+          # 사내망 대시보드가 Frontend의 UI/API를 조회한다.
+          service:
+            type: NodePort
+            port: 9090
+            targetPort: 9090
+            nodePort: 30090
 
         telemetry:
           enabled: false
