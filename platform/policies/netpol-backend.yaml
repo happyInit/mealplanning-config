@@ -88,3 +88,22 @@ spec:
               tier: backend
       ports:
         - { protocol: TCP, port: 8001, endPort: 8011 }
+    # 5) 🔴 Tempo(observability) :4317 — OTLP 트레이스 전송 (2026-08-02 신설).
+    #    상단 머리말은 "observability cross-ns 는 netpol-operations.yaml 로 분리한다(최소권한)"
+    #    라고 적고 있는데, 이 규칙은 예외로 여기 둔다. 이유 두 가지:
+    #      · operations 한 서비스가 아니라 **backend 전부**가 트레이스를 보낸다. 서비스별 파일로
+    #        쪼개면 12개 파일에 같은 규칙이 복제되고, 새 서비스가 생길 때마다 빠뜨린다.
+    #      · 그런데도 최소권한은 유지된다 — `observability` **ns 전체가 아니라** tempo 파드 하나,
+    #        포트 하나(4317)만 연다. netpol-operations 의 Prometheus 규칙(ns 스코프 :9090)보다 좁다.
+    #    🔴 이 규칙이 없으면 common/app-common.yaml 의 OTEL_EXPORTER_OTLP_ENDPOINT 는 무의미하다.
+    #       Cilium 이 조용히 떨어뜨리고 앱 로그의 에러 문구만 바뀐다(refused → timeout).
+    #    포트 4317 = OTLP gRPC(Service tempo 의 grpc-tempo-otlp). 4318=HTTP 는 안 쓰므로 안 연다.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+      ports:
+        - { protocol: TCP, port: 4317 }
