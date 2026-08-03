@@ -23,6 +23,13 @@ spec:
         metadata:
           labels:
             app: ocr-config-canary
+            # 🔴 tier: backend 는 **pod 템플릿에** 있어야 한다 — NetworkPolicy 는 CronJob 메타데이터가
+            #    아니라 pod 라벨을 본다. 빠뜨리면 이 pod 는 `mp-backend` netpol 에 안 걸려
+            #    **istiod:15012 egress 허용을 못 받고**, 동시에 CNP `mp-ocr-egress-fqdn`
+            #    (endpointSelector 가 ocr-config-canary 를 포함)이 egress 를 기본거부로 바꾸기 때문에
+            #    사이드카가 인증서를 못 받아 `i/o timeout` → Init 단계에서 무한 재시작한다.
+            #    2026-08-03 실측: 64회 재시작·10시간 정체(운영 mp-ocr 은 tier 라벨이 있어 멀쩡했다).
+            tier: backend
         spec:
           restartPolicy: Never
           automountServiceAccountToken: false
