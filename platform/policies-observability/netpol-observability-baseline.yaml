@@ -43,16 +43,10 @@ spec:
     #       다른 ns 는 이 규칙으로 못 들어온다.
     - from:
         - podSelector: {}
-    # 2) 노드 서브넷 — 포트 무제한. netpol-backend.yaml 규칙 3) 과 같은 관례다.
-    #    한 규칙에 세 가지가 걸려 있어서 쪼개면 오히려 빠뜨린다:
-    #      · kubelet probe (소스 = 노드 IP)
-    #      · 🔴 kube-apiserver → prometheus-operator **admission webhook :443**.
-    #        이게 막히면 ServiceMonitor·PrometheusRule 생성이 전부 거부되고,
-    #        ArgoCD monitoring sync 가 실패한다(원인이 netpol 로 안 보여서 오래 헤맨다).
-    #      · LAN 사용자 → 내부 게이트웨이(:80/:443/:15021) = grafana·loki·minio 콘솔 등
-    #        `https://<이름>.mealbong.cloud` 6종의 유일한 유입 경로.
-    #    ⚠️ 파드 CIDR 은 10.244.0.0/16 이라 **이 규칙으로 타 ns 파드가 들어오지는 않는다.**
-    #       열리는 건 LAN 호스트와 노드 자신뿐이다.
+    # 2) 노드 서브넷 — 소스 IP 가 **보존되는** 경로용(LAN 클라이언트 직결 등).
+    #    🔴 이것만으로는 부족하다는 걸 2026-08-03 장애로 배웠다 — 아래 주석 참조.
+    #       인프라 계열 유입(kubelet probe · apiserver webhook · LB 경유 외부 유입)은
+    #       `netpol-observability-entities.yaml`(CiliumNetworkPolicy)이 담당한다.
     #    🔴 노드 서브넷이 바뀌면 여기와 netpol-backend.yaml 을 같이 고쳐야 한다.
     - from:
         - ipBlock:

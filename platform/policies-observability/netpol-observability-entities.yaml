@@ -1,0 +1,33 @@
+# 인프라 계열 유입 — Cilium **엔티티**로 연다. (2026-08-03 v2, 장애 후 신설)
+#
+# ── 표준 NetworkPolicy 의 ipBlock 으로는 표현이 안 되는 소스들 ────────────────
+# 🔴 Cilium 은 패킷을 IP 가 아니라 **신원(identity)** 으로 판정한다. 그래서
+#    `ipBlock: 192.168.0.0/24` 는 실질적으로 **cluster-external(`world`) 트래픽에만** 걸린다.
+#    노드 자신(`host`)·다른 노드(`remote-node`)·apiserver 는 각자 예약 신원을 갖고 있어
+#    **CIDR 규칙에 매칭되지 않는다.** v1 은 이걸 모르고 ipBlock 하나로 세 가지를 덮으려 했다.
+#
+# 여기서 여는 것 = 인프라가 관측 스택을 향해 정상적으로 거는 연결 셋:
+#   ① `host`        — kubelet probe(자기 노드 파드의 liveness/readiness)
+#   ② `remote-node` — 다른 노드에서 오는 컴포넌트 트래픽
+#   ③ `kube-apiserver` — 🔴 **prometheus-operator admission webhook(:443)**.
+#      이게 막히면 ServiceMonitor·PrometheusRule 생성이 **전부 거부**되고 ArgoCD monitoring
+#      sync 가 실패한다. 게다가 원인이 netpol 로 보이지 않아 한참 헤맨다.
+#
+# ⚠️ 포트를 제한하지 않는다. probe 포트는 워크로드마다 다르고(3000·9090·9093·3100·3200·8080…)
+#    새 컴포넌트가 들어올 때마다 여기를 고치게 되면 그때 증상은 "probe 실패로 파드가 안 뜬다" 다.
+#    소스가 이미 클러스터 인프라로 한정돼 있어 포트까지 좁힐 실익이 작다.
+#
+# 💡 EKS 이식 시: 이 파일은 Cilium 전용이다. 다른 CNI 로 가면 같은 의미를
+#    (보통 훨씬 느슨한) ipBlock 으로 다시 써야 한다 — 그때 이 주석이 근거가 된다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-observability-infra-ingress
+  namespace: observability
+spec:
+  endpointSelector: {} # ns 전체
+  ingress:
+    - fromEntities:
+        - host
+        - remote-node
+        - kube-apiserver

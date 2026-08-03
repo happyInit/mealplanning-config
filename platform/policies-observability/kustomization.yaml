@@ -5,11 +5,24 @@ namespace: observability
 # child app = argocd/applications/policies-observability.yaml (mp-policies-observability, 수동 sync).
 # 🔴 app(platform/policies)·data(platform/policies-data)·pipeline 과 분리 — 여기는 namespace:observability.
 #
+# 🔴 **v1 은 내부 도구 6종을 통째로 끊었다**(2026-08-03). 원인 = Cilium 이 트래픽을 IP 가 아니라
+#    **신원(identity)** 으로 판정하는데, `ipBlock` 은 사실상 cluster-external(`world`) 에만 걸린다는 것을
+#    몰랐다. LoadBalancer 유입은 노드 라우터 IP(파드 CIDR)로 SNAT 되어 `world` 신원으로 오므로
+#    `192.168.0.0/24` 에 매칭되지 않았고, 게이트웨이가 SYN 부터 드롭됐다.
+#    → v2 에서 `gateway`(전면 개방·원복)와 `entities`(host·remote-node·kube-apiserver)를 분리 신설.
+#
 # 적용 순서(한 번에 sync 하지 말 것 — 관측이 죽으면 죽은 걸 알아챌 수단도 같이 죽는다):
-#   ① baseline  → Grafana 접속 · 스크레이프 타깃 수 · alloy→loki 유입 확인
-#   ② crossns   → operations 화면 · 트레이스 · 백업 잡 확인
-#   ③ minio-egress → Loki/Tempo 청크 업로드 지속 확인
+#   🔴 ①·② 를 **먼저·같이** 넣는다. 이 둘이 없으면 default-deny 가 걸리는 순간 문이 닫힌다.
+#   ① gateway  → 내부 도구 7종 HTTP 응답 확인(argo·grafana·minio·loki·harbor·jenkins·sonarqube)
+#   ② entities → 파드 probe 정상·재시작 없음 확인
+#   ③ baseline → 스크레이프 타깃 수 유지(기준선 70 up) · alloy→loki 유입 확인
+#   ④ crossns  → operations 화면 · 트레이스 · 백업 잡 확인
+#   ⑤ minio-egress → Loki/Tempo 청크 업로드 지속 확인
+# 각 단계 후: kubectl -n kube-system exec ds/cilium -c cilium-agent -- \
+#              hubble observe --to-namespace observability --verdict DROPPED --last 100
 resources:
-  - netpol-observability-baseline.yaml # ①  ns default-deny + 내부/노드 허용
-  - netpol-observability-crossns.yaml # ②  타 ns 유입 화이트리스트(실측 기반)
-  - netpol-minio-egress.yaml # ③  MinIO egress = DNS 만
+  - netpol-observability-gateway.yaml # ①  게이트웨이 = 전면 개방(의도적·원복)
+  - netpol-observability-entities.yaml # ②  host·remote-node·apiserver (CiliumNetworkPolicy)
+  - netpol-observability-baseline.yaml # ③  ns default-deny + 내부 허용
+  - netpol-observability-crossns.yaml # ④  타 ns 유입 화이트리스트(실측 기반)
+  - netpol-minio-egress.yaml # ⑤  MinIO egress = DNS 만
