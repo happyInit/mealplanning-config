@@ -21,7 +21,19 @@ spec:
         app: pg-pooler
     spec:
       priorityClassName: data-critical
-      containers: [] # CNPG 가 pgbouncer 컨테이너를 채운다 — 템플릿은 메타·우선순위만
+      # 🔴 pgbouncer 컨테이너를 이름으로 명시해 resources 를 준다 — CNPG 가 같은 이름으로 머지한다.
+      #    빈 배열([])이면 CNPG 가 resources 없이 채워 파드가 **BestEffort** 가 되고, 노드 메모리
+      #    압박 시 커넥션 풀(전 앱이 DB 붙는 급소)이 **가장 먼저 축출**된다(2026-08-03 실측).
+      #    명시로 **Burstable** 승격 — priorityClassName 만으론 QoS 축출 순위를 못 바꾼다.
+      #    PgBouncer 는 경량이라 64~128Mi 로 충분.
+      containers:
+        - name: pgbouncer
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
 ---
 # 노드 드레인·재부팅 때 두 인스턴스가 동시에 내려가지 않게 (status §2.1 "replica 2 + PDB")
 apiVersion: policy/v1
