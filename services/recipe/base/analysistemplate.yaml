@@ -4,6 +4,14 @@
 #
 # 🔴 저트래픽 주의: 카나리에 트래픽이 없으면 분자/분모 0 → 결과 없음(NaN/empty). 그땐 inconclusive 대신
 #    통과로 처리(`len(result)==0`)한다 — 파일럿 검증은 k6 로 트래픽을 흘려 실제 데이터로 판정한다.
+# 🔴 NaN 가드 (2026-08-03 실측 사고) — `len(result)==0` 만으로는 부족하다.
+#    카나리에 트래픽이 없을 때 Prometheus 는 두 가지로 답한다:
+#      · 시리즈 자체가 없음        → 빈 벡터  → `len(result)==0` 이 잡아서 통과
+#      · 시리즈는 있고 관측만 0    → **NaN**  → 길이 1 이라 가드를 통과해 `NaN < 2000` = false → **실패**
+#    실제로 recipe 카나리가 이 NaN 때문에 2번째 게이트에서 오탐 롤백됐다(AnalysisRun ...-3-5).
+#    그래서 쿼리 쪽에서 NaN 을 없앤다: `>= 0` 비교는 필터라 NaN 샘플을 **떨궈** 빈 벡터로 만들고,
+#    `or vector(0)` 이 그 자리에 0 을 채운다 → 무트래픽 = 0 = 통과(no-data=pass 의도 그대로).
+#    successCondition 의 `len(result)==0` 은 이제 도달하지 않지만 방어적으로 남긴다.
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
@@ -19,9 +27,12 @@ spec:
         prometheus:
           address: http://kube-prometheus-stack-prometheus.observability:9090
           query: |
-            sum(rate(istio_requests_total{destination_service_name="recipe-canary",reporter="destination",response_code=~"5.."}[1m]))
-            /
-            sum(rate(istio_requests_total{destination_service_name="recipe-canary",reporter="destination"}[1m]))
+            (
+              sum(rate(istio_requests_total{destination_service_name="recipe-canary",reporter="destination",response_code=~"5.."}[1m]))
+              /
+              sum(rate(istio_requests_total{destination_service_name="recipe-canary",reporter="destination"}[1m]))
+              >= 0
+            ) or vector(0)
     - name: canary-p95-latency-ms
       interval: 30s
       count: 3
@@ -31,5 +42,8 @@ spec:
         prometheus:
           address: http://kube-prometheus-stack-prometheus.observability:9090
           query: |
-            histogram_quantile(0.95,
-              sum(rate(istio_request_duration_milliseconds_bucket{destination_service_name="recipe-canary",reporter="destination"}[1m])) by (le))
+            (
+              histogram_quantile(0.95,
+                sum(rate(istio_request_duration_milliseconds_bucket{destination_service_name="recipe-canary",reporter="destination"}[1m])) by (le))
+              >= 0
+            ) or vector(0)
