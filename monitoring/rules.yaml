@@ -80,9 +80,14 @@ spec:
   groups:
     - name: mp-container-memory
       rules:
+        # 🔴 ES 제외(container!="elasticsearch") — ES 는 설계상 한도 근처에 상주한다
+        #    (JVM heap + Lucene off-heap/page cache). 2026-08-03 실측: 1.5Gi 한도의 ~87% 에서
+        #    11h 내내 플래토(딥 없음), 알림이 36~68h 연속 firing = repeat_interval 재전송이라
+        #    "OOM 임박"이 아니라 정상 상주였다. 0.85 로 두면 ES 가 상시 오발화해 진짜 신호를 가린다.
+        #    → 일반 컨테이너는 0.85 유지, ES 는 아래 전용 규칙(0.90)으로 분리한다.
         - alert: MpContainerMemoryNearLimit
           expr: |
-            container_memory_working_set_bytes{container!="", container!="POD"}
+            container_memory_working_set_bytes{container!="", container!="POD", container!="elasticsearch"}
               / on(namespace, pod, container)
                 kube_pod_container_resource_limits{resource="memory"} > 0.85
           for: 15m
@@ -91,6 +96,20 @@ spec:
             service: infra
           annotations:
             summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} 메모리가 한도의 {{ $value | humanizePercentage }} — OOM 임박. 한도 상향 또는 워크로드 축소 검토"
+        # ES 전용 — 정상 상주(~87%) 위, 진짜 OOM 위험 구간(>90%)만 발화.
+        #   ES 는 원래 hot 하므로 임계를 0.90 으로 올려 상시 소음을 없애되, 90% 를 넘으면
+        #   실제로 한도 상향이 필요한 신호이므로 계속 감시한다.
+        - alert: MpEsMemoryNearLimit
+          expr: |
+            container_memory_working_set_bytes{container="elasticsearch"}
+              / on(namespace, pod, container)
+                kube_pod_container_resource_limits{resource="memory"} > 0.90
+          for: 15m
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} ES 메모리가 한도의 {{ $value | humanizePercentage }} (>90%) — ES 는 상주 ~87% 라 이 알람은 진짜 OOM 임박. 한도 상향 검토"
 ---
 # ══ 워크로드 몰림 감시 (2026-07-31, replicas>=2 + PDB 작업과 한 세트) ═══════════════════
 #
