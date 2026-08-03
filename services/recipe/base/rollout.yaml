@@ -98,8 +98,13 @@ spec:
           env:
             - name: OTEL_SERVICE_NAME
               value: recipe
+            # 🔴 인덱스 이름이 아니라 **alias** 를 본다 (2026-08-03 전환).
+            #    구 값 `recipes_pgsync` 는 nori 형태소 분석기가 없어 한글 검색이 파손돼 있었고
+            #    `category=국&찌개` term 쿼리가 103건 → 0건이었다. 재색인본이 `recipes_v2` 다.
+            #    alias 를 보게 하면 다음 재색인부터는 **앱 재배포 없이** ES 쪽 alias 스왑만으로
+            #    무중단 전환된다(롤백도 alias 한 번). 인덱스명을 직접 박으면 매번 이 파일을 고쳐야 한다.
             - name: ES_INDEX
-              value: "recipes_pgsync"
+              value: "recipes_live"
           startupProbe:
             httpGet: { path: /health, port: 8001 }
             periodSeconds: 5
