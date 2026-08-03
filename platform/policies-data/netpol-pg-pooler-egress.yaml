@@ -1,0 +1,42 @@
+# 보안 ③ CiliumNetworkPolicy — pooler(PgBouncer) → kube-apiserver egress. (2026-08-03 신설)
+#
+# ── 왜 필요한가: 잠복해 있다가 "재시작할 때만" 터지는 결함이었다 ──────────────
+# `netpol-pg.yaml` 의 `mp-pg-pooler` 가 egress default-deny 를 걸면서 **DNS 와
+#   instance:5432 만** 열었다. 그런데 pgbouncer 컨테이너는 순수 PgBouncer 가 아니라
+#   **CNPG PgBouncer Instance Manager** 다 — 기동 시 apiserver 에서 `poolers/pg-pooler` CR 을
+#   읽고 그걸 watch 한다. 그 경로가 막혀 있었다.
+#
+# 🔴 **왜 그동안 멀쩡해 보였나** = 이미 떠 있던 파드는 정책 적용 *전에* 맺어둔 apiserver
+#    연결을 conntrack 이 유지해 준다. 그래서 무증상으로 지내다가, **파드가 새로 뜨는 순간**
+#    (오퍼레이터 롤아웃·노드 드레인·재스케줄) 그때부터 起動 자체가 실패한다.
+#    실제 증상(2026-08-03 09:46, ArgoCD 가 Pooler CR 을 patch → CNPG 가 Deployment 롤아웃):
+#      Error while running manager ... while getting pooler for the first time:
+#      Get "https://10.96.0.1:443/apis/postgresql.cnpg.io/v1/namespaces/data/poolers/pg-pooler":
+#      dial tcp 10.96.0.1:443: i/o timeout          → CrashLoopBackOff
+#    구 파드 2개가 살아 있어 **장애로는 안 보였다.** 하지만 그 상태는
+#    "노드 드레인 한 번이면 앱 9종의 DB 경로가 사라진다" 는 뜻이다.
+#
+# ── 왜 표준 NetworkPolicy 로 못 하나 ────────────────────────────────────────
+# apiserver 는 `10.96.0.1:443`(Service VIP)로 접근하는데 Cilium 은 이를 호스트의 `:6443` 으로
+#   변환한다. 표준 netpol 의 `ipBlock` 은 이 변환과 **노드/호스트 신원(identity)** 을 표현하지
+#   못한다 — CIDR 규칙은 cluster-external(`world`) 에만 걸리기 때문이다.
+#   그래서 Cilium 예약 엔티티 `kube-apiserver` 를 쓴다. `netpol-pg-egress-fqdn.yaml` 의
+#   instance 쪽 규칙 ② 와 **정확히 같은 이유·같은 형태**다.
+#
+# 🔴 `toPorts` 를 생략하지 말 것 — 생략하면 전 포트가 열린다. 변환 전(443)·후(6443)만 명시한다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pg-pooler-egress
+  namespace: data
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/podRole: pooler
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+            - { port: "6443", protocol: TCP }
