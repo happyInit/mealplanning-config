@@ -46,6 +46,14 @@ spec:
             enabled: true
             serviceMonitor:
               enabled: true
+          # Gateway API 트래픽 라우터 플러그인 — 카나리 %를 HTTPRoute 가중치로 조작(ADR-0001 §6.1).
+          #   🔴 전달 = https://(기동 시 GitHub 다운로드). ADR 목표는 vendored file://(Harbor 이미지)지만
+          #      오늘 end-to-end 완주 위해 https:// 브릿지 사용 — argo-rollouts ns 는 egress 잠금이 없어 바로 됨.
+          #      **vendoring 은 하드닝 후속**(§6.2 근거는 유효 — 컨트롤러 재기동이 GitHub 가용성에 의존).
+          #   컨트롤러가 이 값을 argo-rollouts-config ConfigMap 으로 렌더 → 기동 시 로드. 못 받으면 컨트롤러가 안 뜬다.
+          trafficRouterPlugins:
+            - name: "argoproj-labs/gatewayAPI"
+              location: "https://github.com/argoproj-labs/rollouts-plugin-trafficrouter-gatewayapi/releases/download/v0.16.0/gatewayapi-plugin-linux-amd64"
         # 카나리 진행(지금 몇 %·분석 통과 여부) 시각화 — 캡스톤 데모용(ADR-0001 §5 근거1).
         #   메모리 빡빡하면 제일 먼저 끌 대상(enabled:false) — 컨트롤러 동작엔 무관한 편의 UI다.
         dashboard:
@@ -53,6 +61,13 @@ spec:
           resources:
             requests: { cpu: 10m, memory: 64Mi }
             limits: { memory: 128Mi }
+        # 🔴 플러그인이 HTTPRoute 가중치를 편집하려면 컨트롤러 SA 에 httproutes 권한 필요.
+        #   차트 기본 ClusterRole 엔 Gateway API 권한이 없다 → providerRBAC.additionalRules 로 추가(ADR-0001 §6.3).
+        providerRBAC:
+          additionalRules:
+            - apiGroups: ["gateway.networking.k8s.io"]
+              resources: ["httproutes"]
+              verbs: ["get", "list", "watch", "update", "patch"]
   destination:
     server: https://kubernetes.default.svc
     namespace: argo-rollouts
