@@ -64,8 +64,10 @@ spec:
         # WAL 이 무한 축적 → walStorage(10Gi) full → 쓰기 전면중단.
         # 2026-08-03 태현반 정정: 평시 retained 16MiB · 생성률 피크 71.4MiB/h → 1GiB 는
         # 지속 피크에도 4일+ 여유. 5GiB(구임계)는 볼륨 절반이라 늦음 + warning 으로 묻힘.
+        # 스크레이프에 물리 슬롯(_cnpg_pg_2, CNPG 아카이빙용) 도 함께 오므로
+        # slot_type="logical" 로 반드시 좁혀 PGSync 논리 슬롯만 대상으로 함.
         - alert: MpPGReplicationSlotRetainedWALHigh
-          expr: max by(slot_name) (cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="data"}) > 1 * 1024 * 1024 * 1024
+          expr: max by(slot_name) (cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="data", slot_type="logical"}) > 1 * 1024 * 1024 * 1024
           for: 15m
           labels:
             severity: critical
