@@ -64,6 +64,14 @@ class DataTierAlertContractTests(unittest.TestCase):
         self.assertIn("persistentvolumeclaim=\"minio\"", expressions["MpMinIODiskHigh"])
         self.assertIn("absent_over_time", expressions["MpESVolumeMetricsUnavailable"])
         self.assertIn("absent_over_time", expressions["MpMinIOVolumeMetricsUnavailable"])
+        self.assertIn(
+            'job="mp-elasticsearch-exporter"',
+            expressions["MpElasticsearchMetricsUnavailable"],
+        )
+        self.assertNotIn(
+            'job="data/mp-elasticsearch-exporter"',
+            expressions["MpElasticsearchMetricsUnavailable"],
+        )
 
     def test_existing_pipeline_lag_alert_is_not_duplicated(self) -> None:
         self.assertNotIn("MpKafkaConsumerLagHigh", self.alerts)

@@ -50,9 +50,9 @@ spec:
         # exporter 배관이 끊기면 아래 health 알람도 눈멀기 때문에 결측을 독립적으로 잡는다.
         - alert: MpElasticsearchMetricsUnavailable
           expr: |
-            absent(up{job="data/mp-elasticsearch-exporter"})
-            or max(up{job="data/mp-elasticsearch-exporter"}) == 0
-            or absent_over_time(elasticsearch_cluster_health_status{job="data/mp-elasticsearch-exporter"}[10m])
+            absent(up{job="mp-elasticsearch-exporter"})
+            or max(up{job="mp-elasticsearch-exporter"}) == 0
+            or absent_over_time(elasticsearch_cluster_health_status{job="mp-elasticsearch-exporter"}[10m])
           for: 15m
           labels: {severity: warning, service: elasticsearch}
           annotations:
