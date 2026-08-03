@@ -10,4 +10,4 @@ patches:
 images:
 - name: 192.168.0.10/mealplanning/mp-ocr-service
   newName: 192.168.0.10/mealplanning/mp-ocr-service
-  newTag: 04bd7d68855632a78127d7f4beefb79990e4d1eb
+  newTag: fbffab83ebc36f60323ac8c534b8ea47a69567c4
