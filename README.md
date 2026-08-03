@@ -51,6 +51,7 @@ pipelines/               # 🔵 인프라 소관·project=mealplanning — 컨�
 ## 검증 — 푸시 전에 돌릴 것
 
 ```
+python3 -m unittest discover -s tests -p 'test_*.py'
 python3 scripts/validate.py
 ```
 
@@ -64,6 +65,7 @@ python3 scripts/validate.py
 | 4-dot FQDN 금지 | `<svc>.<ns>.svc.cluster.local` 이 파드 search 의 `local` 때문에 ISP 로 새어 공인 IP 로 해석된다(실측 21.7%) |
 | `:latest` 금지 | ArgoCD 가 변경을 감지 못 하고 롤백 대상이 없어진다 |
 | `topologyKey` 중복 금지 | patchMergeKey 충돌로 제약 하나가 조용히 사라진다 |
+| CNPG failsafe 정책 | instance 간 `5432/8000` 비대칭과 K8s/Cilium additive `8000` 우회를 막는다 |
 | securityContext 베이스라인 | JSON-Patch `op: add` 가 merge 가 아니라 replace 라 하드닝이 렌더에서 증발한다 |
 
 베이스라인(`scripts/policy-baseline.txt`)은 **알려진 위반을 얼려둔 것**이고 줄어들기만 해야 한다.

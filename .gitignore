@@ -5,3 +5,5 @@
 secrets.y*ml
 kubeconfig*
 admin.conf
+__pycache__/
+*.py[cod]

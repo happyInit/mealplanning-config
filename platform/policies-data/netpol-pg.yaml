@@ -4,7 +4,9 @@
 #   ① pg 파드 → AWS S3(barman WAL/base 백업) 외부 egress + ② CNPG 인스턴스매니저 → kube-apiserver egress
 #      → 둘 다 표준 netpol 로 불가(FQDN·엔티티) = netpol-pg-egress-fqdn.yaml(CiliumNetworkPolicy)이 담당.
 #   ③ pooler(PgBouncer)와 instance 는 라벨 `cnpg.io/cluster=pg` 를 공유하지만 트래픽이 전혀 다르다
-#      → `cnpg.io/podRole` 로 분리(instance / pooler) = 아래 두 정책.
+#      → `cnpg.io/podRole` 로 분리하고, instance 정책은 `cnpg.io/cluster=pg` 도 함께 고정한다.
+#   ④ primary 는 kube-apiserver 장애 시 replica 인스턴스매니저의 `/failsafe`(:8000)를 liveness fallback 으로 조회한다
+#      → instance 사이 5432(스트리밍 복제)와 8000(failsafe)을 ingress·egress 양쪽에서 대칭 허용해야 한다.
 #
 # 🔴 WAL 아카이빙이 막히면 백업 체인(base+WAL 연속성)이 통째로 단절된다 — 조용히. 적용 후 반드시 확인.
 # 🔴 apiserver egress 가 막히면 인스턴스매니저가 상태보고/페일오버를 못 한다. Cilium 은 kube-apiserver 예약 엔티티.
@@ -22,6 +24,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
+      cnpg.io/cluster: pg
       cnpg.io/podRole: instance
   policyTypes:
     - Ingress
@@ -48,11 +51,13 @@ spec:
         - podSelector: { matchLabels: { app: pgsync } }
       ports:
         - { protocol: TCP, port: 5432 }
-    # 5) intra-PG: 스트리밍 복제(primary↔standby) :5432. 없으면 복제 정지 = standby stale.
+    # 5) intra-PG: 스트리밍 복제 :5432 + 인스턴스매니저 /failsafe :8000.
+    #    /failsafe 는 apiserver 장애 시 liveness fallback 이므로 ingress·egress 둘 다 없으면 동시 장애에 취약하다.
     - from:
-        - podSelector: { matchLabels: { cnpg.io/podRole: instance } }
+        - podSelector: { matchLabels: { cnpg.io/cluster: pg, cnpg.io/podRole: instance } }
       ports:
         - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
     # 6) CNPG operator(cnpg-system) → 인스턴스매니저 상태 :8000 (+ 안전상 :5432). exec 도 씀.
     - from:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } }
@@ -84,11 +89,12 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    # 2) intra-PG 스트리밍 복제 egress :5432 (ingress 5)의 짝)
+    # 2) intra-PG 스트리밍 복제 :5432 + /failsafe liveness fallback :8000 (ingress 5)의 짝)
     - to:
-        - podSelector: { matchLabels: { cnpg.io/podRole: instance } }
+        - podSelector: { matchLabels: { cnpg.io/cluster: pg, cnpg.io/podRole: instance } }
       ports:
         - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
     # 🔴 S3 백업 FQDN + kube-apiserver egress 는 netpol-pg-egress-fqdn.yaml(CiliumNetworkPolicy)에서 additive 로 추가.
 ---
 # ── pooler (pg-pooler, PgBouncer ×2) ──────────────────────────────────────────────────────

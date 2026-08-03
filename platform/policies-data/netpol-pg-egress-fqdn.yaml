@@ -15,6 +15,7 @@ metadata:
 spec:
   endpointSelector:
     matchLabels:
+      cnpg.io/cluster: pg
       cnpg.io/podRole: instance
   egress:
     # DNS L7 (FQDN 학습 전제) — kube-dns 로 질의를 Cilium DNS 프록시가 관측
@@ -35,6 +36,11 @@ spec:
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
-    # ② CNPG 인스턴스매니저 → kube-apiserver (예약 엔티티 — ClusterIP 10.96.0.1:443 ↔ master:6443 변환을 Cilium 이 처리)
+    # ② CNPG 인스턴스매니저 → kube-apiserver. 서비스 VIP :443 과 host backend :6443 만 허용한다.
+    #    toPorts 생략은 모든 포트(8000 포함)를 여므로 금지 — Cilium 이 처리하는 변환 전·후 포트를 둘 다 명시.
     - toEntities:
         - kube-apiserver
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+            - { port: "6443", protocol: TCP }

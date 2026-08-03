@@ -200,6 +200,267 @@ def check_tsc_duplicate_key(res: Result, docs: dict[str, list[dict]]) -> None:
         res.fail("[tsc] topologyKey 중복 — 워크로드당 축 하나씩만 둘 것\n  " + "\n  ".join(hits))
 
 
+def check_cnpg_failsafe_netpol(res: Result, docs: dict[str, list[dict]]) -> None:
+    """CNPG 인스턴스끼리 /failsafe(8000/tcp)를 양방향으로 열었는지 검사한다.
+
+    primary 는 kube-apiserver 를 조회할 수 없을 때 replica 인스턴스매니저의 /failsafe 를
+    fallback 으로 호출한다. intra-instance 5432 만 허용하면 평소에는 정상처럼 보이지만,
+    apiserver 장애가 겹치는 순간 liveness 가 실패한다. 8000 의 peer 범위도 instance,
+    operator, 기존 kubelet 노드 CIDR 예외로 고정해 data namespace 전체로 넓어지는 것을 막는다.
+    """
+    all_policies = [
+        d for ds in docs.values() for d in ds
+        if d.get("kind") == "NetworkPolicy"
+        and d.get("metadata", {}).get("namespace") == "data"
+    ]
+    all_cilium_policies = [
+        d for ds in docs.values() for d in ds
+        if d.get("kind") == "CiliumNetworkPolicy"
+        and d.get("metadata", {}).get("namespace") == "data"
+    ]
+    policies = [d for d in all_policies
+                if d.get("metadata", {}).get("name") == "mp-pg-instance"]
+    if len(policies) != 1:
+        res.fail(f"[cnpg-failsafe] data/NetworkPolicy/mp-pg-instance 가 정확히 하나여야 한다 "
+                 f"(현재 {len(policies)}개)")
+        return
+
+    spec = policies[0].get("spec") or {}
+    instance_labels = {
+        "cnpg.io/cluster": "pg",
+        "cnpg.io/podRole": "instance",
+    }
+    # 2026-08-03 CNPG operator 생성 pg-1/pg-2 라벨 실측. None 은 값이 동적인 필수 라벨이고,
+    # primary/replica 집합은 failover 뒤에도 일부 instance 를 고르는 selector 를 탐지하기 위한 domain 이다.
+    # serviceaccount 는 Cilium endpoint identity 에 합성되므로 Kubernetes Pod labels 에 없어도 포함한다.
+    instance_label_domains: dict[str, set[str] | None] = {
+        "app.kubernetes.io/component": {"database"},
+        "app.kubernetes.io/instance": {"pg"},
+        "app.kubernetes.io/managed-by": {"cloudnative-pg"},
+        "app.kubernetes.io/name": {"postgresql"},
+        "app.kubernetes.io/version": None,
+        "cnpg.io/cluster": {"pg"},
+        "cnpg.io/instanceName": None,
+        "cnpg.io/instanceRole": {"primary", "replica"},
+        "cnpg.io/podRole": {"instance"},
+        "io.cilium.k8s.policy.serviceaccount": {"pg"},
+        "role": {"primary", "replica"},
+    }
+    instance_selector = {"matchLabels": instance_labels}
+    instance_peer = {
+        "podSelector": instance_selector,
+    }
+    operator_peer = {
+        "namespaceSelector": {
+            "matchLabels": {"kubernetes.io/metadata.name": "cnpg-system"},
+        },
+    }
+    kubelet_peer = {
+        "ipBlock": {"cidr": "192.168.0.0/24"},
+    }
+    expected_intra_ports = [
+        {"protocol": "TCP", "port": 5432},
+        {"protocol": "TCP", "port": 8000},
+    ]
+
+    def normalize_cilium_policy(policy: dict) -> list[tuple[str, dict]]:
+        """CNP 의 단일 spec 과 specs 목록을 같은 logical-rule 목록으로 편다."""
+        name = policy.get("metadata", {}).get("name", "<unnamed>")
+        has_spec = policy.get("spec") is not None
+        has_specs = policy.get("specs") is not None
+        if has_spec and has_specs:
+            # Cilium 문서는 단일 rule 또는 rule 목록 중 하나를 사용한다. 둘 다 있으면 해석이 모호하다.
+            res.fail(f"[cnpg-failsafe] CiliumNetworkPolicy/{name} 는 spec 과 specs 를 동시에 쓸 수 없다")
+        if not has_spec and not has_specs:
+            res.fail(f"[cnpg-failsafe] CiliumNetworkPolicy/{name} 에 spec 또는 specs 가 필요하다")
+
+        normalized = []
+        if has_spec:
+            if isinstance(policy["spec"], dict):
+                normalized.append((f"{name}.spec", policy["spec"]))
+            else:
+                res.fail(f"[cnpg-failsafe] CiliumNetworkPolicy/{name} spec 은 object 여야 한다")
+        if has_specs:
+            if not isinstance(policy["specs"], list):
+                res.fail(f"[cnpg-failsafe] CiliumNetworkPolicy/{name} specs 는 list 여야 한다")
+            else:
+                for index, rule in enumerate(policy["specs"]):
+                    if isinstance(rule, dict):
+                        normalized.append((f"{name}.specs[{index}]", rule))
+                    else:
+                        res.fail(f"[cnpg-failsafe] CiliumNetworkPolicy/{name} "
+                                 f"specs[{index}] 는 object 여야 한다")
+        return normalized
+
+    normalized_cilium_rules = [
+        (policy, label, rule)
+        for policy in all_cilium_policies
+        for label, rule in normalize_cilium_policy(policy)
+    ]
+
+    if spec.get("podSelector") != instance_selector:
+        res.fail("[cnpg-failsafe] mp-pg-instance target selector 는 "
+                 "cnpg.io/cluster=pg + cnpg.io/podRole=instance 로 정확히 고정해야 한다")
+    policy_types = spec.get("policyTypes") or []
+    if len(policy_types) != 2 or set(policy_types) != {"Ingress", "Egress"}:
+        res.fail("[cnpg-failsafe] mp-pg-instance policyTypes 는 Ingress·Egress 둘 다 정확히 선언해야 한다")
+    pg_cilium_policies = [d for d in all_cilium_policies
+                          if d.get("metadata", {}).get("name") == "mp-pg-instance-egress"]
+    if len(pg_cilium_policies) != 1:
+        res.fail("[cnpg-failsafe] data/CiliumNetworkPolicy/mp-pg-instance-egress 가 "
+                 f"정확히 하나여야 한다 (현재 {len(pg_cilium_policies)}개)")
+    else:
+        pg_cilium_rules = [rule for policy, _label, rule in normalized_cilium_rules
+                           if policy is pg_cilium_policies[0]]
+        if not pg_cilium_rules or any(rule.get("endpointSelector") != instance_selector
+                                      for rule in pg_cilium_rules):
+            res.fail("[cnpg-failsafe] mp-pg-instance-egress 의 모든 target selector 는 "
+                     "cnpg.io/cluster=pg + cnpg.io/podRole=instance 로 정확히 고정해야 한다")
+
+    def is_exact_intra_rule(rule: dict, peer_key: str) -> bool:
+        if set(rule) != {peer_key, "ports"} or rule.get(peer_key) != [instance_peer]:
+            return False
+        unmatched = list(expected_intra_ports)
+        for port in rule.get("ports") or []:
+            if port not in unmatched:  # endPort·named port·추가 key·중복 port 모두 거부
+                return False
+            unmatched.remove(port)
+        return not unmatched
+
+    def allows_tcp_port(rule: dict, target: int) -> bool:
+        declared = rule.get("ports")
+        if not declared:
+            return True  # NetworkPolicyRule.ports 생략/빈 목록은 모든 포트를 뜻한다.
+        for p in declared:
+            if str(p.get("protocol", "TCP")).upper() != "TCP":
+                continue
+            start = p.get("port")
+            if start is None:
+                return True  # protocol 만 지정하면 그 protocol 의 모든 포트를 허용한다.
+            if isinstance(start, int):
+                end = p.get("endPort")
+                if start <= target <= (end if end is not None else start):
+                    return True
+            elif isinstance(start, str):
+                # named port 의 실제 숫자는 operator 생성 Pod 에 있어 이 레포에서 알 수 없다.
+                # additive 우회를 놓치지 않도록 TCP named port 는 보수적으로 8000 가능성이 있다고 본다.
+                return True
+        return False
+
+    def cilium_rule_allows_tcp_port(rule: dict, target: int) -> bool:
+        port_rules = rule.get("toPorts")
+        if not port_rules:
+            return True  # Cilium ingress/egress rule 의 toPorts 생략은 모든 포트를 뜻한다.
+        for port_rule in port_rules:
+            declared = port_rule.get("ports")
+            if not declared:
+                return True
+            for port in declared:
+                protocol = str(port.get("protocol", "ANY")).upper()
+                if protocol not in {"TCP", "ANY"}:
+                    continue
+                raw_start = port.get("port")
+                if raw_start is None:
+                    return True
+                try:
+                    start = int(raw_start)
+                except (TypeError, ValueError):
+                    return True  # named port 는 operator 생성 Pod 에서 8000 으로 해석될 수 있다.
+                raw_end = port.get("endPort")
+                try:
+                    end = int(raw_end) if raw_end is not None else start
+                except (TypeError, ValueError):
+                    return True
+                if start <= target <= end:
+                    return True
+        return False
+
+    def selector_can_select_instance(selector: dict) -> bool:
+        """LabelSelector 가 현재 또는 failover 뒤 pg instance 일부와 양립 가능한지 계산한다."""
+        domains = {key: (None if values is None else set(values))
+                   for key, values in instance_label_domains.items()}
+        excluded = {key: set() for key, values in domains.items() if values is None}
+        requirements = [
+            (key.removeprefix("k8s:"), "In", [value])
+            for key, value in (selector.get("matchLabels") or {}).items()
+        ]
+        requirements.extend(
+            (str(expr.get("key", "")).removeprefix("k8s:"),
+             expr.get("operator"), expr.get("values") or [])
+            for expr in selector.get("matchExpressions") or []
+        )
+
+        for key, op, raw_values in requirements:
+            values = {str(value) for value in raw_values}
+            if key not in domains:
+                if op in {"NotIn", "DoesNotExist"}:  # canonical instance 에 없는 키
+                    continue
+                return False
+            domain = domains[key]
+            if op == "In":
+                domain = ((values - excluded.get(key, set())) if domain is None
+                          else domain & values)
+            elif op == "NotIn":
+                if domain is None:
+                    excluded[key].update(values)
+                else:
+                    domain -= values
+            elif op == "Exists":
+                pass
+            elif op == "DoesNotExist":
+                return False
+            else:
+                return False
+            if domain is not None and not domain:
+                return False
+            domains[key] = domain
+        return True
+
+    for direction, peer_key in (("ingress", "from"), ("egress", "to")):
+        rules = spec.get(direction) or []
+        intra = [r for r in rules if is_exact_intra_rule(r, peer_key)]
+        if len(intra) != 1:
+            res.fail(f"[cnpg-failsafe] mp-pg-instance {direction} 의 instance 전용 규칙은 "
+                     "추가 key/range 없이 TCP 5432·8000 만 정확히 허용해야 한다")
+
+    # NetworkPolicy 는 additive 다. mp-pg-instance 자체만 검사하면 같은 파드를 선택하는 두 번째
+    # 정책이 TCP 8000 을 다시 넓게 열어도 놓치므로 data namespace 의 모든 선택 정책을 합쳐 본다.
+    targeted = [d for d in all_policies
+                if selector_can_select_instance((d.get("spec") or {}).get("podSelector") or {})]
+    broadened = []
+    for policy in targeted:
+        policy_spec = policy.get("spec") or {}
+        name = policy.get("metadata", {}).get("name", "<unnamed>")
+        for direction, peer_key in (("ingress", "from"), ("egress", "to")):
+            allowed_peers = [instance_peer]
+            if direction == "ingress":
+                # kubelet probe 는 노드 CIDR 에서 모든 파드 포트를 여는 기존의 명시적 예외다.
+                allowed_peers.extend([operator_peer, kubelet_peer])
+            for index, rule in enumerate(policy_spec.get(direction) or []):
+                if not allows_tcp_port(rule, 8000):
+                    continue
+                peers = rule.get(peer_key)
+                if not peers or any(peer not in allowed_peers for peer in peers):
+                    broadened.append(f"{name}.{direction}[{index}] peers={peers}")
+    if broadened:
+        res.fail("[cnpg-failsafe] pg instance 를 선택하는 additive NetworkPolicy 가 TCP 8000 을 "
+                 "instance/operator/kubelet 경계 밖으로 넓혔다:\n  " + "\n  ".join(broadened))
+
+    # CiliumNetworkPolicy 도 표준 NetworkPolicy 와 같은 endpoint 에 additive 로 붙는다. 이 레포에서
+    # failsafe 8000 은 표준 정책의 exact peer 규칙만 소유하므로, CNP 의 8000 grant 는 전부 우회다.
+    cilium_broadened = []
+    for _policy, label, policy_rule in normalized_cilium_rules:
+        if not selector_can_select_instance(policy_rule.get("endpointSelector") or {}):
+            continue
+        for direction in ("ingress", "egress"):
+            for index, rule in enumerate(policy_rule.get(direction) or []):
+                if cilium_rule_allows_tcp_port(rule, 8000):
+                    cilium_broadened.append(f"{label}.{direction}[{index}]")
+    if cilium_broadened:
+        res.fail("[cnpg-failsafe] pg instance 를 선택하는 additive CiliumNetworkPolicy 가 "
+                 "TCP 8000 을 허용한다:\n  " + "\n  ".join(cilium_broadened))
+
+
 SEC_CHECKS = {
     "runAsNonRoot": lambda csc, psc: (csc.get("runAsNonRoot") if "runAsNonRoot" in csc
                                       else psc.get("runAsNonRoot")) is True,
@@ -295,6 +556,7 @@ def main() -> int:
     check_fqdn(res)
     check_image_tags(res, docs)
     check_tsc_duplicate_key(res, docs)
+    check_cnpg_failsafe_netpol(res, docs)
     check_security_context(res, docs, list_only=False)
     run_kubeconform(res)
 
