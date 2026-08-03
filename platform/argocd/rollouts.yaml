@@ -1,0 +1,71 @@
+# Argo Rollouts — 플랫폼 child Application (정본 = 이 파일). 배포전략 카나리 (ADR-0001, 2026-08-03).
+#
+# 무엇: account·recipe 를 카나리(10→50→100% + Prometheus 자동분석·자동롤백)로 배포하기 위한
+#   프로그레시브 딜리버리 컨트롤러. 나머지 7개 서비스는 롤링 유지(§ADR-0001 §5).
+#   ⚠️ ArgoCD 와 다른 툴이다 — ArgoCD 는 git→클러스터 "배달", Rollouts 는 새 버전을 트래픽
+#      비중으로 "점진 진열". 손발 관계: platform-root(ArgoCD)가 이 파일을 집어 Rollouts 를 설치하고,
+#      이후 config 레포에 새 :sha 가 들어오면 ArgoCD 가 배달 → Rollouts 가 카나리 전개.
+#
+# 🔴 이 단계는 **컨트롤러만** 설치한다(1단계). Gateway API 트래픽 플러그인(HTTPRoute 가중치
+#    조작)은 아직 배선하지 않는다 — 플러그인 바이너리를 vendoring 한 뒤(2단계) controller.trafficRouterPlugins
+#    + initContainers 로 붙인다(ADR-0001 §6.2). 여기서 file:// 없는 이유가 그것이다:
+#    존재하지 않는 플러그인 경로를 넣으면 컨트롤러가 아예 기동하지 않는다.
+#
+# 🔴 선행조건(app 레포 k8s_argocd 롤 — 없으면 이 Application sync 가 조용히 거부된다, KEDA 와 동일 함정):
+#   ① argocd_platform_source_repos 에  https://argoproj.github.io/argo-helm  (차트 소스)
+#   ② k8s_operator_namespaces 에  argo-rollouts  (destinations + ns 생성 — 한쪽만 고치면 거부)
+#   ③ clusterResourceWhitelist 는 **추가 불요** — Rollouts 차트의 클러스터 스코프는 CRD 5(Rollout·
+#      AnalysisTemplate·AnalysisRun·ClusterAnalysisTemplate·Experiment)·ClusterRole·ClusterRoleBinding
+#      뿐이고 셋 다 이미 화이트리스트에 있다.
+#   → 적용 순서: ansible(k8s.yml --tags argocd + ns 롤) **먼저** → 그다음 이 파일 머지.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rollouts
+  namespace: argocd
+  # 🔴 없으면 Application 삭제 시 CRD 가 고아로 남는다(status §4.2, KEDA 와 동일).
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    targetRevision: "2.41.1" # appVersion v1.9.1 (Argo Rollouts). 버전핀(:latest 금지, CLAUDE.md).
+    helm:
+      valuesObject:
+        installCRDs: true
+        controller:
+          # 4노드 학생 예산 — 컨트롤러는 경량(KEDA operator 급). limit CPU 는 안 건다(CFS 스로틀 회피, §13.7).
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          # 관측: kps 가 라벨 무관 수집(serviceMonitorSelectorNilUsesHelmValues=false) — ServiceMonitor 만 켜면 잡힌다.
+          metrics:
+            enabled: true
+            serviceMonitor:
+              enabled: true
+        # 카나리 진행(지금 몇 %·분석 통과 여부) 시각화 — 캡스톤 데모용(ADR-0001 §5 근거1).
+        #   메모리 빡빡하면 제일 먼저 끌 대상(enabled:false) — 컨트롤러 동작엔 무관한 편의 UI다.
+        dashboard:
+          enabled: true
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 128Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo-rollouts
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # CRD 가 큰 편이라 client-side apply last-applied 어노테이션 한도(256KB)에 닿을 수 있다(KEDA·대시보드CM 함정 계열).
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
