@@ -1,0 +1,224 @@
+# Elasticsearch cluster health exporter. ECK does not expose Prometheus metrics natively, so
+# the data-tier health alerts must own this scrape path instead of assuming dashboard metrics exist.
+# Keep the 60s scrape interval: the exporter queries Elasticsearch on every scrape.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-elasticsearch-exporter-bootstrap
+  namespace: data
+  annotations: {argocd.argoproj.io/sync-wave: "-2"}
+data:
+  bootstrap.py: |
+    import base64
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+
+    ES = "http://es-es-http.data.svc:9200"
+    USER = "mp_elasticsearch_exporter"
+    ROLE = "mp_elasticsearch_exporter"
+
+    def request(url, method="GET", body=None, headers=None, context=None):
+        request = urllib.request.Request(
+            url,
+            data=None if body is None else json.dumps(body).encode(),
+            method=method,
+            headers=headers or {},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10, context=context) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")
+            raise RuntimeError(f"API {method} {url} failed: {exc.code} {detail}") from exc
+
+    # This one-shot boundary is the only component that reads the ECK superuser Secret.
+    # The long-running exporter receives only the ESO-generated dedicated-user credential.
+    elastic_auth = base64.b64encode(
+        ("elastic:" + os.environ["ELASTICSEARCH_PASSWORD"]).encode()
+    ).decode()
+    elastic_headers = {
+        "Authorization": "Basic " + elastic_auth,
+        "Content-Type": "application/json",
+    }
+    request(ES + "/_security/role/" + ROLE, "PUT", {
+        "cluster": ["monitor"],
+        "indices": [],
+    }, elastic_headers)
+    request(ES + "/_security/user/" + USER, "PUT", {
+        "password": os.environ["EXPORTER_PASSWORD"],
+        "roles": [ROLE],
+    }, elastic_headers)
+
+    limited_auth = base64.b64encode(
+        (USER + ":" + os.environ["EXPORTER_PASSWORD"]).encode()
+    ).decode()
+    request(ES + "/_cluster/health", headers={"Authorization": "Basic " + limited_auth})
+    print("provisioned monitor-only Elasticsearch exporter user")
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: mp-elasticsearch-exporter-password
+  namespace: data
+  annotations: {argocd.argoproj.io/sync-wave: "-2"}
+spec:
+  length: 48
+  digits: 8
+  symbols: 8
+  symbolCharacters: "-_."
+  allowRepeat: true
+  noUpper: false
+  secretKeys: [ES_PASSWORD]
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-elasticsearch-exporter-auth
+  namespace: data
+  annotations: {argocd.argoproj.io/sync-wave: "-2"}
+spec:
+  refreshPolicy: CreatedOnce
+  target:
+    name: mp-elasticsearch-exporter-auth
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: mp-elasticsearch-exporter-password
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mp-elasticsearch-exporter-bootstrap
+  namespace: data
+  labels: {app: elasticsearch-exporter-bootstrap}
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 180
+  template:
+    metadata:
+      labels: {app: elasticsearch-exporter-bootstrap}
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      priorityClassName: app-normal
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: provision-monitor-api-key
+          image: 192.168.0.10/mealplanning/mp-pgsync:5b4e66c723bbee21bf41066d4736b72fa53aa994
+          command: ["python3", "/bootstrap/bootstrap.py"]
+          env:
+            - name: ELASTICSEARCH_PASSWORD
+              valueFrom: {secretKeyRef: {name: es-es-elastic-user, key: elastic}}
+            - name: EXPORTER_PASSWORD
+              valueFrom: {secretKeyRef: {name: mp-elasticsearch-exporter-auth, key: ES_PASSWORD}}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+      volumes:
+        - name: bootstrap
+          configMap: {name: mp-elasticsearch-exporter-bootstrap, defaultMode: 0444}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-elasticsearch-exporter
+  namespace: data
+  labels: &labels
+    app: elasticsearch-exporter
+  annotations: {argocd.argoproj.io/sync-wave: "0"}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: *labels
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      automountServiceAccountToken: false
+      priorityClassName: app-normal
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: exporter
+          image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.11.0@sha256:a056739b095df4baaa076f0b31321394233da9a240eeada2623d1b028b7ee7a6
+          args:
+            - --es.uri=http://es-es-http.data.svc:9200
+            - --es.aliases=false
+            - --es.timeout=10s
+            - --web.listen-address=:9114
+            - --web.telemetry-path=/metrics
+          env:
+            - {name: ES_USERNAME, value: mp_elasticsearch_exporter}
+            - name: ES_PASSWORD
+              valueFrom: {secretKeyRef: {name: mp-elasticsearch-exporter-auth, key: ES_PASSWORD}}
+          ports:
+            - {name: metrics, containerPort: 9114, protocol: TCP}
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mp-elasticsearch-exporter
+  namespace: data
+  labels: {app: elasticsearch-exporter}
+spec:
+  selector: {app: elasticsearch-exporter}
+  ports:
+    - {name: metrics, port: 9114, targetPort: metrics, protocol: TCP}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mp-elasticsearch-exporter
+  namespace: data
+spec:
+  selector:
+    matchLabels: {app: elasticsearch-exporter}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s
+      scrapeTimeout: 15s
