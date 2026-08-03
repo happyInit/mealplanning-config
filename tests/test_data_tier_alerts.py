@@ -110,6 +110,7 @@ class ElasticsearchExporterContractTests(unittest.TestCase):
         self.assertNotIn("envFrom", self.container)
         self.assertNotIn("elastic:", " ".join(self.container["args"]))
         self.assertIn("--es.uri=http://es-es-http.data.svc:9200", self.container["args"])
+        self.assertNotIn("--es.aliases=false", self.container["args"])
         self.assertNotIn("initContainers", self.deployment["spec"]["template"]["spec"])
         job = self.by_kind["Job"]
         bootstrap = job["spec"]["template"]["spec"]["containers"][0]
