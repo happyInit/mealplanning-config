@@ -1,11 +1,12 @@
-# PGSync — PG(recipe) → ES(recipes_pgsync) CDC. ✅ 전환창 §4-10 실행 완료(2026-07-29 밤) — 가동 중.
-# 슬롯(foodbudget_recipes_pgsync)·초기 동기화 8,556건·CDC 왕복 검증·ES_INDEX 플립까지 끝났다.
+# PGSync — PG(recipe) → ES stable write alias `recipes_live` CDC. ✅ T-3 전환 완료(2026-08-03).
+# runtime 슬롯은 `foodbudget_recipes_live`; alias 의 현재 generation backing 은 운영 검증기로 확인한다.
+# generation settings/mapping 정본과 lifecycle gate = ops/pgsync-stable-alias/.
 #
 # env 계약 = .8 pgsync 컨테이너 실물(docker inspect) + Q13 ES 인증 2개.
 # 🔴 구 주석 "SCHEMA·checkpoint 는 이미지 내장"은 오류였다(전환창 실측) — 이미지(deploy/pgsync/Dockerfile)는
 #    pgsync 패키지만 담고, schema.json·plugins/ 는 .8 에서 compose 볼륨이었다. K8s 에선 아래 ConfigMap
-#    2개(schema-configmap.yaml·plugins-configmap.yaml)로 공급한다. 원천 = 앱 레포 deploy/pgsync/ —
-#    스키마·플러그인 수정 시 거기서 고치고 여기 ConfigMap 을 재생성할 것(장기적으론 이미지에 COPY 가 맞다).
+#    2개(schema-configmap.yaml·plugins-configmap.yaml)로 공급한다. 런타임 정본은 이 레포의 두
+#    ConfigMap 이다. 앱 레포 deploy/pgsync/ 사본은 이미지 개발용 mirror 이므로 같은 변경에서 맞춘다.
 # 🔴 plugins 는 ConfigMap 직마운트 금지 — 마운트 디렉토리의 ..data 심링크를 pgsync 플러그인 로더가
 #    모듈로 오인해 ModuleNotFoundError("plugins.") 로 죽는다(전환창 실측). initContainer 복사 경유가 해법이다.
 #
@@ -78,7 +79,7 @@ spec:
       labels:
         app: pgsync
     spec:
-      priorityClassName: app-normal # 서빙 인덱스(recipes_pgsync) 생산자라 pipeline 급이 아니다 (§9-10)
+      priorityClassName: app-normal # 서빙 alias(recipes_live) 생산자라 pipeline 급이 아니다 (§9-10)
       initContainers:
         - name: copy-plugins # 🔴 ..data 심링크 함정 회피 — ConfigMap 을 emptyDir 로 복사(파일 상단 주석)
           image: 192.168.0.10/mealplanning/mp-pgsync:5b4e66c723bbee21bf41066d4736b72fa53aa994
@@ -146,7 +147,7 @@ spec:
           emptyDir: {} # 재시작 시 재동기화 — 현행 .8 도 컨테이너 FS 라 동일 특성. 문서 8.4k 규모라 수 분
         - name: schema
           configMap:
-            name: mp-pgsync-schema # → schema-configmap.yaml (원천 = 앱 레포 deploy/pgsync/schema.json)
+            name: mp-pgsync-schema # → schema-configmap.yaml (런타임 정본; 앱 레포 deploy/pgsync/ 는 mirror)
         - name: plugins-src
           configMap:
             name: mp-pgsync-plugins # → plugins-configmap.yaml — 직마운트 금지, initContainer 로 복사

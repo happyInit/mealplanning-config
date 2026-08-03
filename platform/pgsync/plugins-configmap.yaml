@@ -56,7 +56,7 @@ data:
             #   STOP 목록을 여기 복제하지 않는 이유: 이 플러그인은 pgsync 컨테이너에서 돌아
             #   pipelines/ingest/gazetteer.py 를 import 할 수 없다 → 적재시 판정 결과를 컬럼으로 받는다.
             #   ⚠️ 같은 게이트가 pipelines/ingest/index_recipes_es.py 에도 있다(배치·DR 폴백용).
-            #      한쪽만 고치면 recipes 와 recipes_pgsync 가 어긋난다 — 반드시 같이 수정.
+            #      한쪽만 고치면 DR index(recipes)와 CDC alias(recipes_live)가 어긋난다 — 반드시 같이 수정.
             real = [i for i in ingredients if not i.get("is_non_ingredient")]
             doc["servable"] = (
                 doc.get("source") == "10K"

@@ -2,8 +2,9 @@
 
 **mealplanning 앱의 K8s 배포 매니페스트 (ArgoCD GitOps config 레포).**
 
-이 레포는 *desired state* 하나만 담는다 — 무엇이 클러스터에 떠 있어야 하는가. ArgoCD가
-이 레포를 watch해서 클러스터를 여기 맞춘다. **앱 소스는 여기 없다**(그건 `food-budget-app`).
+이 레포의 ArgoCD 대상 경로는 *desired state*만 담는다 — 무엇이 클러스터에 떠 있어야 하는가.
+ArgoCD가 그 경로를 watch해서 클러스터를 여기 맞춘다. **앱 소스는 여기 없다**(그건
+`food-budget-app`). `ops/`만 예외로, Argo가 참조하지 않는 수동 migration bundle이다.
 
 > 정본: [`food-budget-app/docs/mp_k8s_infra_migration_plan.md §7.3`](https://github.com/happyInit/food-budget-app/blob/main/docs/mp_k8s_infra_migration_plan.md) ·
 > 오브젝트 설계 [`mp_k8s_infra_object_spec.md`](https://github.com/happyInit/food-budget-app/blob/main/docs/mp_k8s_infra_object_spec.md)
@@ -27,6 +28,7 @@ platform/                # 🔵 인프라 담당 소관 (2026-07-29 신설) — 
   policies/              #    🔴 NetworkPolicy 연기 메모 — default-deny 베이스라인과 함께 별건
 
 pipelines/               # 🔵 인프라 소관·project=mealplanning — 컨슈머 4 + CronJob 11 (dark-deploy)
+ops/                     # 🔴 Argo 비대상 수동 migration/runbook — suspended template + gated runner
 ```
 
 - **뿌리가 둘이다** — `mealplanning-root`(앱, `argocd/applications/`) · `platform-root`(플랫폼,
@@ -34,6 +36,8 @@ pipelines/               # 🔵 인프라 소관·project=mealplanning — 컨�
   프로젝트도 분리(`mealplanning` / `platform`)라 배포 가능한 ns 도 다르다.
 - **AppProject·root Application·repo 자격증명은 여기 없다** — `food-budget-app`의 `k8s_argocd`
   Ansible 롤이 부트스트랩한다(master 전용). 여기는 root가 읽는 child app + 매니페스트만.
+- **`ops/`를 Application source로 연결하지 않는다** — 파괴 가능한 일회성 절차는 permanent desired
+  state가 아니다. 각 bundle의 runner가 confirmation/preflight/cleanup을 소유한다.
 
 ## 규칙 🔴
 

@@ -33,7 +33,7 @@ spec:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: pipeline } }
       ports:
         - { protocol: TCP, port: 9200 }
-    # 3) PGSync (data ns, app=pgsync — PG WAL → ES bulk 색인. 현재 replicas 0 dark 지만 0→1 대비) → :9200
+    # 3) PGSync (data ns, app=pgsync — PG WAL → recipes_live bulk 색인, 상시 replicas=1) → :9200
     - from:
         - podSelector: { matchLabels: { app: pgsync } }
       ports:

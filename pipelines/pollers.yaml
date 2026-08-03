@@ -283,7 +283,8 @@ spec:
                 limits:
                   memory: 512Mi
 ---
-# PG → ES(recipes) 재색인. servable 게이트 스크립트 내장. DR 폴백 인덱스 유지용(서빙은 recipes_pgsync)
+# PG → ES(recipes) 재색인. servable 게이트 스크립트 내장. DR 폴백 인덱스 유지용
+# (정상 서빙은 stable alias recipes_live; 폴백 전에는 freshness/RPO gate 필요).
 apiVersion: batch/v1
 kind: CronJob
 metadata:

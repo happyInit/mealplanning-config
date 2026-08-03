@@ -21,7 +21,7 @@ spec:
             service: data-tier
           annotations:
             summary: "{{ $labels.deployment }} 가용 레플리카 0 — PG→ES CDC 중단"
-            description: "PGSync 가 죽으면 recipes_pgsync 인덱스가 정체되고 논리 슬롯이 WAL 을 붙잡는다(슬롯 알람 동반 예상)."
+            description: "PGSync 가 죽으면 recipes_live write alias의 backing index가 정체되고 foodbudget_recipes_live 슬롯이 WAL을 붙잡는다(슬롯 알람 동반 예상)."
 
         # PG 재시작·유지보수 중에는 PGSync 가 연결 상실로 수 회 재시작하는 게 정상이다
         # (2026-07-30 PG 리소스 반영 롤링에서 3회 실측) — 그 케이스는 원인(PG 쪽 이벤트)과

@@ -11,3 +11,4 @@ resources:
   - netpol-pg.yaml                  # PG(CNPG instance + pooler) default-deny — 3-3
   - netpol-pg-egress-fqdn.yaml      # PG instance egress: S3 백업 FQDN + kube-apiserver (CiliumNetworkPolicy) — 3-3
   - netpol-pg-onsite.yaml           # 온사이트 백업 CronJob egress 잠금(DNS·PG·MinIO 만) — 2026-08-03
+  - netpol-pgsync.yaml              # PGSync daemon/manual Job egress: DNS·PG·ES·전용 Redis만
