@@ -32,7 +32,7 @@ spec:
   createdb: false
   createrole: false
   bypassrls: false
-  connectionLimit: 1
+  connectionLimit: 10
 
   inRoles:
     - fbapp
