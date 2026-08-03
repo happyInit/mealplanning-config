@@ -1,0 +1,41 @@
+# 온사이트 백업 CronJob(mp-pg-onsite-dump) 자체의 egress 잠금. (2026-08-03 신설)
+#
+# 🔴 왜 굳이 거나 — 지금 data ns 에는 **네임스페이스 전체 default-deny 가 없다.**
+#    netpol 은 "선택된 파드에만" 적용되므로, 이 정책이 없으면 백업 파드는 egress 무제한이 된다.
+#    이 파드는 **DB 전체를 읽을 수 있는 자격증명**과 **오브젝트 스토어 쓰기 키**를 동시에 들고 있다.
+#    data ns 에서 가장 권한이 센 축에 드는 파드라, 나갈 수 있는 곳을 못 박는 값이 크다.
+#
+# 열어주는 것은 정확히 셋: DNS · PG(:5432) · MinIO(:9000). 그 외 전부 차단 — 인터넷 포함.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-pg-onsite
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app: mp-pg-onsite
+  policyTypes:
+    - Egress          # 🔴 Ingress 는 일부러 뺐다. 이 파드로 들어오는 트래픽은 존재하지 않는다
+                      #    (Job 이라 Service 도 probe 도 없다). policyTypes 에 Ingress 를 넣으면
+                      #    규칙 0개 = 전면 차단인데, 어차피 없는 트래픽이라 의미가 없고
+                      #    나중에 디버그용 exec 를 막는 오해만 만든다.
+  egress:
+    # 1) DNS — 이게 빠지면 pg-rw·minio 이름 해석부터 실패한다
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) PG primary — pg_dump. netpol-pg.yaml ingress 9) 의 짝
+    - to:
+        - podSelector: { matchLabels: { cnpg.io/podRole: instance } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 3) MinIO(observability ns) — 덤프 업로드
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+          podSelector: { matchLabels: { app: minio } }
+      ports:
+        - { protocol: TCP, port: 9000 }
