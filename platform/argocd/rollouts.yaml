@@ -37,6 +37,12 @@ spec:
     helm:
       valuesObject:
         installCRDs: true
+        # 🔴 vendoring(§6.2) 이후 컨트롤러는 **Harbor 이미지**를 당긴다(아래 initContainer).
+        #    플랫폼 ns 는 원래 공개 레지스트리만 썼어서 풀 시크릿이 없었고, 이게 빠지면
+        #    새 pod 가 `Init:ErrImagePull`(no basic auth credentials)로 멈춘다 — 2026-08-03 실측.
+        #    시크릿 `harbor` 공급 = `rollouts-pullsecret` Application(platform/rollouts/).
+        imagePullSecrets:
+          - name: harbor
         controller:
           # 4노드 학생 예산 — 컨트롤러는 경량(KEDA operator 급). limit CPU 는 안 건다(CFS 스로틀 회피, §13.7).
           resources:
