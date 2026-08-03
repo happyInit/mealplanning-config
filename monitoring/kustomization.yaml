@@ -5,6 +5,12 @@ resources:
   - servicemonitor.yaml
   - rules.yaml
   - rules-physical.yaml
+  # 🔴 2026-08-03 신설 — 파일을 가른 이유는 내용이 아니라 **소유권**이다.
+  #    rules.yaml 하나를 여러 명이 동시에 고치면 머지 충돌이 난다.
+  #    두 항목을 **여기에 미리 등록**해 두는 것이 핵심 — 안 그러면 각자 작업하다가
+  #    결국 둘 다 이 kustomization.yaml 을 고쳐서 같은 자리에서 충돌한다.
+  - rules-app-symptom.yaml # 유저경로 SYMPTOM (봉수)
+  - rules-data-tier.yaml # PGSync·ES·Kafka·MinIO (태현)
 
 # ── Grafana 대시보드 이식 (모니터링 컷오버 ⑤, 2026-07-30) — 구 .11 provisioning JSON 13장 ──
 # 인클러스터 Grafana 의 sidecar 가 grafana_dashboard 라벨을 단 CM 을 자동 로드한다.

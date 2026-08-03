@@ -1,0 +1,71 @@
+# 유저경로 SYMPTOM 알람 (2026-08-03 신설) — **봉수 소유 파일**.
+#
+# 🔴 이 파일이 왜 따로 있나 (분리 근거):
+#   ① 병렬 작업 충돌 회피 — `rules.yaml` 하나를 둘이 동시에 고치면 머지 충돌이 난다.
+#      SYMPTOM(여기) / 데이터 티어(rules-data-tier.yaml) 로 소유자를 갈랐다.
+#   ② 성격이 다르다 — 아래 §왜 필요한가.
+#
+# ── 왜 필요한가 ─────────────────────────────────────────────────────────────
+# 우리 알람 35개는 대부분 **CAUSE**(리소스·컴포넌트 상태) 계열이고 SYMPTOM 은
+# MpAppHighP95Latency · MpAppHighErrorRate 둘뿐이다.
+#
+# 실증(2026-08-03): recipes_pgsync 인덱스에 nori 형태소 분석기가 안 붙어 **한글 검색이
+#   파손**돼 있었고 `category=국&찌개` term 쿼리가 103건 → **0건**이었다.
+#   그동안 알람 35개 중 **아무것도 울리지 않았다.** 파드는 Ready, CPU·메모리 정상,
+#   HTTP 200 이었기 때문이다 — CAUSE 알람으로는 원리적으로 못 잡는 국면이다.
+#
+# 즉 여기서 잡으려는 것은 **"컴포넌트는 전부 정상인데 유저는 못 쓰는"** 상태다.
+#
+# ── 🔴 임계값 수칙: 둔감하게 ────────────────────────────────────────────────
+# 이 알람들은 **놓치는 것보다 오탐이 더 해롭다**:
+#   · 놓치면 → 지금과 같은 상태(이미 못 잡고 있었다). 손해가 늘지 않는다.
+#   · 오탐이면 → 아무도 안 볼 때 Slack 에 쌓이고, 다음에 볼 때 알람 신뢰를 깎는다.
+#     한 번 "저건 원래 울려" 가 되면 진짜 장애도 같이 묻힌다(tempo-0 420회 재시작 전례
+#     — rules.yaml mp-tempo 그룹 주석 참조).
+# → `for:` 는 15~30분, 임계값은 명백히 비정상인 수준으로. **정밀도 > 재현율.**
+#
+# ── 채우는 방법 ─────────────────────────────────────────────────────────────
+# 아래 3종의 뼈대만 있다. expr·threshold 는 실측을 보고 채운다:
+#   kubectl -n observability port-forward svc/kube-prometheus-stack-prometheus 9090:9090
+#   → 평상시 값을 먼저 보고, 그 값이 **명백히 벗어나는** 선을 임계값으로 잡는다.
+#
+# 라벨 규약(기존 규칙과 동일): severity=critical → #alerts-critical
+#                              severity=warning  → #monitoring (repeat 4h)
+# 🔴 severity=warning 은 공용 채널에 묻힌다. 유저 영향이 확실한 것만 critical 로.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-app-symptom
+spec:
+  groups:
+    - name: mp-app-symptom
+      rules: []
+        # ── ① 검색 0건률 급증 ────────────────────────────────────────────────
+        # 잡으려는 것: nori 파손·인덱스 유실·매핑 사고처럼 **200 을 주면서 빈 결과**를
+        #   내는 국면. 2026-08-03 사고가 정확히 이것이었다.
+        # 후보 지표: recipe 서비스가 결과 건수를 메트릭으로 내보내는지 먼저 확인.
+        #   없으면 (a) 앱에 카운터 추가(별건) 또는 (b) ES 쿼리 결과를 보는 blackbox 방식.
+        # - alert: MpSearchEmptyResultRateHigh
+        #   expr: <채울 것>
+        #   for: 15m
+        #   labels: { severity: critical }
+        #   annotations:
+        #     summary: "레시피 검색이 빈 결과를 반환하는 비율이 비정상"
+        #     description: "컴포넌트는 정상인데 유저가 결과를 못 받는 상태. 인덱스·매핑 확인."
+
+        # ── ② 로그인 실패율 ──────────────────────────────────────────────────
+        # 잡으려는 것: account 인증 경로 파손(JWT 시크릿 불일치·PG 커넥션 고갈·bcrypt 포화).
+        # ⚠️ 유저의 정상 오타도 실패로 잡히므로 **평상시 실패율을 먼저 재고** 그 위로 잡는다.
+        # - alert: MpLoginFailureRateHigh
+        #   expr: <채울 것>
+        #   for: 15m
+        #   labels: { severity: critical }
+
+        # ── ③ 식단 생성 실패율 ───────────────────────────────────────────────
+        # 잡으려는 것: 핵심 여정 파손. mealplan 은 thin proxy 라 자기 CPU 는 바닥이고
+        #   (부하테스트 실측 133~145m) **다운스트림 대기로 죽는다** → CAUSE 알람이 특히 무력하다.
+        # - alert: MpMealplanFailureRateHigh
+        #   expr: <채울 것>
+        #   for: 15m
+        #   labels: { severity: warning }
