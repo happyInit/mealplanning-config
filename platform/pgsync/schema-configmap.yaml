@@ -4,7 +4,7 @@ data:
     [
       {
         "database": "foodbudget",
-        "index": "recipes_v2",
+        "index": "recipes_pgsync",
         "plugins": ["RecipeServable"],
         "nodes": {
           "table": "recipe",
