@@ -2,11 +2,13 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # account base — 배포 가능한 코어(Deployment + Service).
 resources:
-  - deployment.yaml
+  - rollout.yaml           # 🔴 Deployment→Rollout 카나리 전환(ADR-0001, 2026-08-03, recipe 파일럿 검증 후)
   - service.yaml
+  - service-canary.yaml    # 카나리 트래픽 대상 Service (Rollouts 가 hash 주입)
   - externalsecret.yaml    # JWT_SECRET·PGPASSWORD (fb-secrets/app-secrets → account-secrets)
   - pdb.yaml               # 가용성 — drain 중 최소 1 유지(§9.5). 전제 replica>=2 는 아래 HPA minReplicas 가 보장
-  - hpa.yaml               # P3 — CPU 70%(ContainerResource) · min 2 · max 4. Pooler 전환이 전제(§4.5)
+  - hpa.yaml               # P3 — CPU 70%(ContainerResource) · min 2 · max 4 · scaleTargetRef→Rollout
+  - analysistemplate.yaml  # 카나리 자동분석(5xx·p95) — Rollout analysis 스텝이 참조
 # TODO(Gateway 소유·이름 확정되면 추가):
 #   - httproute.yaml       # /api/auth · /api/users → account:8004 (Gateway parentRef 필요)
 #   - networkpolicy.yaml   # Ready 확인 후 붙임(§10.2 변수격리) — ingress GW / egress .8·DNS·istiod
