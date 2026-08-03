@@ -1,19 +1,13 @@
-# Stable-alias PGSync 전환(T-5)용 일회성 bootstrap identity — mp-pgsync-bootstrap.
-# mp-pgsync-bootstrap single role 로 stock PGSync bootstrap 을 정확히 한 번 실행한다.
+# Stable-alias PGSync 전환(T-5) 전용 일회성 bootstrap identity — mp-pgsync-bootstrap.
+# mp-pgsync-bootstrap single role 로 stock PGSync bootstrap 을 정확히 한 번 실행했다.
+# bootstrap 완료 후 PARK 상태: 로그인·복제 차단, membership 없음, password 비활성.
+# 이후 실제 schema bootstrap 시에만 이 파일에서 login/replication/inRoles/passwordSecret 을
+# 다시 활성화(위 주석에 기록된 구조 대로) 하고 사용 후 재차 park 한다.
 #
-# 역할 구조 (inherited owner 권한 — PostgreSQL 16 role membership):
-#   fbapp  ──┐ recipe·recipe_ingredient 테이블 owner
-#            ├─ INHERIT ─► mp-pgsync-bootstrap   (DROP/CREATE TRIGGER = owner 검사 통과)
-#   pgsync ─┘  _view·table_notify() 소유 · public schema 권한 상속
-#   직접 보유: LOGIN + REPLICATION → logical slot 생성·삭제
-#
-# 테이블 owner 는 계속 fbapp (ALTER TABLE OWNER 금지),
-# runtime pgsync 에 membership 상시 부여 금지,
-# superuser 활성화 금지 (enableSuperuserAccess: false 유지).
-#
-# bootstrap 성공 후 park: login:false, replication:false, disablePassword:true,
-# inRoles:[] 로 정리하고 passwordSecret 도 제거. role 자체는 보존(reclaimPolicy: retain) —
-# 이후 실제 schema bootstrap 시에만 재활성화한다.
+# bootstrap 활성화 재현 절차:
+#   login: true, replication: true, connectionLimit: 10,
+#   inRoles: [fbapp, pgsync],
+#   passwordSecret: { name: mp-pgsync-bootstrap-db } (+ 인클러스터 Secret 재생성)
 apiVersion: postgresql.cnpg.io/v1
 kind: DatabaseRole
 metadata:
@@ -24,21 +18,18 @@ spec:
     name: pg
   name: mp-pgsync-bootstrap
 
-  login: true
-  replication: true
+  login: false
+  replication: false
   inherit: true
+
+  disablePassword: true
 
   superuser: false
   createdb: false
   createrole: false
   bypassrls: false
-  connectionLimit: 10
+  connectionLimit: 1
 
-  inRoles:
-    - fbapp
-    - pgsync
-
-  passwordSecret:
-    name: mp-pgsync-bootstrap-db
+  inRoles: []
 
   databaseRoleReclaimPolicy: retain
