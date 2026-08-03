@@ -1,0 +1,134 @@
+# PG 온사이트 백업 — pg_dump → 인클러스터 MinIO. (2026-08-03 신설)
+#
+# ── 🔴 이건 DR 백업이 아니다. 위계를 먼저 못박는다 ────────────────────────────────
+#   정본 DR = barman-cloud 연속 WAL + ScheduledBackup → **S3**(오프사이트). 그건 그대로 둔다.
+#   여기(온사이트)가 더하는 것은 딱 하나 — **"논리 오류를 빠르게 되돌리는 수단"**.
+#     · 누가 실수로 DELETE/DROP → S3 PITR 은 새 Cluster 를 bootstrap 해야 해서 분 단위가 든다.
+#     · 온사이트 덤프는 `pg_restore -t <테이블>` 로 **테이블 하나만** 즉시 되살릴 수 있다.
+#   🔴 **DR 로는 못 쓴다** — 이유는 저장소 쪽이다. MinIO 는 단일 replica·`worker-b2` 고정·
+#      OpenEBS LocalPV(노드 로컬 디스크) 라 **사본이 0개**다. b2 디스크가 나가면 7일치가 한 번에 사라진다.
+#      게다가 PG 와 같은 클러스터·같은 사이트라 정전·하이퍼바이저 사건에는 함께 나간다.
+#      (PG 자체는 pg-1@worker-a1[호스트 A] · pg-2@worker-b1[호스트 B] 로 갈라져 있어 호스트 1대 상실엔 산다.
+#       즉 "PG 와 같이 죽어서" 가 아니라 "백업 저장소에 사본이 없어서" DR 이 아니다.)
+#      → 이 파일을 근거로 "백업이 2벌이니 안전하다" 고 읽으면 틀린다. **복구 속도 계층이 하나 는 것**이다.
+#
+# ── 실측 근거 (2026-08-03, pg-1) ──────────────────────────────────────────────────
+#   foodbudget 238MB → `pg_dump -Fc -Z6` = **24MB · 3초**. 7일 보존 = 약 170MB.
+#   MinIO 여유 49GB 중 0.4% → 용량은 제약이 아니다.
+#
+# 🔴 superuser 를 안 쓴다. `fbapp` 이 foodbudget 의 소유자이자 앱 스키마 8개 전부의 소유자라
+#    전체 덤프가 된다(실측 exit=0). CNPG 는 `enableSuperuserAccess: false` 라 superuser 시크릿이
+#    아예 없고, 그 상태를 유지하는 게 맞다.
+# 🔴 **그래서 전역 오브젝트(롤·테이블스페이스)는 이 덤프에 없다.** `pg_dumpall --globals-only` 는
+#    superuser 가 필요하다. 복원 시 롤이 먼저 존재해야 하는데, 그건 CNPG Cluster 스펙이 만든다
+#    (`cluster.yaml`). 즉 **복원 절차 = CNPG 로 빈 클러스터 → 이 덤프 restore** 순서다.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-pg-onsite-dump
+  namespace: data
+spec:
+  # 03:00 KST 의 ScheduledBackup(base) 이 끝난 뒤로 잡는다. 겹치면 둘 다 primary 를 읽는다.
+  schedule: "0 4 * * *"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app: mp-pg-onsite   # netpol-pg.yaml 의 ingress 9) · netpol-onsite-backup 이 이 라벨을 본다
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 26          # CNPG 이미지의 postgres uid
+            runAsGroup: 26
+            fsGroup: 26
+            seccompProfile: { type: RuntimeDefault }
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 4Gi     # 덤프 24MB · 10배 여유. 노드 디스크를 잠식하지 않도록 상한을 건다
+          # ── ① 덤프 + 검증. 여기서 실패하면 업로드 자체를 안 한다 ──────────────────
+          initContainers:
+            - name: dump
+              image: ghcr.io/cloudnative-pg/postgresql:16.14   # 🔴 서버와 major 일치(16). 낮으면 pg_dump 가 거부한다
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              env:
+                - name: TZ
+                  value: Asia/Seoul
+                - name: PGHOST
+                  value: pg-rw     # 🔴 pooler(pg-pooler) 경유 금지 — PgBouncer transaction 모드에서 pg_dump 는 깨진다
+                - name: PGUSER
+                  valueFrom: { secretKeyRef: { name: pg-app, key: username } }
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: pg-app, key: password } }
+                - name: PGDATABASE
+                  valueFrom: { secretKeyRef: { name: pg-app, key: dbname } }
+              volumeMounts:
+                - { name: work, mountPath: /work }
+              command: ["bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  TS=$(date +%Y%m%dT%H%M%S)
+                  OUT="/work/${PGDATABASE}-${TS}.dump"
+                  echo "[dump] ${PGDATABASE} @ ${PGHOST} → ${OUT}"
+                  pg_dump -Fc -Z6 -f "$OUT"
+
+                  # 🔴 "파일이 생겼다" 로 끝내지 않는다. 아카이브 목차가 실제로 읽히는지 확인한다.
+                  #    깨진 덤프는 복원 시점에야 드러나는데, 그때는 이미 필요한 순간이다.
+                  N=$(pg_restore --list "$OUT" | grep -c '^[0-9]' || true)
+                  echo "[verify] 복원 가능 오브젝트 ${N}개"
+                  if [ "$N" -lt 50 ]; then
+                    echo "[verify] 실패 — 오브젝트가 비정상적으로 적다. 업로드하지 않는다." >&2
+                    exit 1
+                  fi
+                  echo -n "$OUT" > /work/latest-path
+                  ls -la "$OUT"
+          # ── ② 업로드 + 보존 정리 ────────────────────────────────────────────────
+          containers:
+            - name: upload
+              image: docker.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              env:
+                - name: TZ
+                  value: Asia/Seoul
+                - name: MC_CONFIG_DIR
+                  value: /work/.mc          # 루트 파일시스템이 읽기전용이라 설정 위치를 옮긴다
+                - name: MINIO_ENDPOINT
+                  value: http://minio.observability.svc:9000
+                - name: MINIO_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: mp-pg-onsite-minio, key: ACCESS_KEY } }
+                - name: MINIO_SECRET_KEY
+                  valueFrom: { secretKeyRef: { name: mp-pg-onsite-minio, key: SECRET_KEY } }
+              volumeMounts:
+                - { name: work, mountPath: /work }
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  OUT=$(cat /work/latest-path)
+                  mc alias set m "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+                  mc cp "$OUT" "m/mp-pg-onsite/foodbudget/"
+                  echo "[upload] 완료 — 원격 확인:"
+                  mc stat "m/mp-pg-onsite/foodbudget/$(basename "$OUT")"
+
+                  # 보존 7일. 🔴 --older-than 은 남길 기준이므로 이 값이 곧 RPO 창이다.
+                  echo "[prune] 7일 초과분 삭제"
+                  mc rm --recursive --force --older-than 7d "m/mp-pg-onsite/foodbudget/" || true
+                  echo "[state] 현재 보관분:"
+                  mc ls "m/mp-pg-onsite/foodbudget/"

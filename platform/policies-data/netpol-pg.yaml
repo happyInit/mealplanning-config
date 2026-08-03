@@ -68,6 +68,14 @@ spec:
     # 8) kubelet probe — data ns=메시 밖, 파드 포트로 직접. 🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
     - from:
         - ipBlock: { cidr: 192.168.0.0/24 }
+    # 9) 온사이트 백업 CronJob(mp-pg-onsite-dump) → pg-rw :5432 로 pg_dump. (2026-08-03 추가)
+    #    🔴 이 규칙이 없으면 CronJob 이 **조용히 타임아웃**한다. 위 1)~8) 중 어디에도 안 걸리기 때문이다
+    #       (data ns 파드지만 pooler·instance·pgsync 라벨이 아니고, app/pipeline ns 도 아니다).
+    #       netpol 거부는 RST 가 아니라 드롭이라 로그도 안 남는다 — 진단이 오래 걸리는 종류의 실패다.
+    - from:
+        - podSelector: { matchLabels: { app: mp-pg-onsite } }
+      ports:
+        - { protocol: TCP, port: 5432 }
   egress:
     # 1) DNS
     - to:
