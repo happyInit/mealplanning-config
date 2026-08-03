@@ -1,0 +1,59 @@
+# 보안 ③ NetworkPolicy — 티어 4: observability ns default-deny(Ingress). (2026-08-03 신설)
+#
+# ── 왜 이제야, 그리고 왜 중요한가 ────────────────────────────────────────────
+# 이 ns 는 netpol 이 **0개**였다(2026-08-03 실측). 즉 클러스터의 어느 파드든
+#   Grafana·Prometheus·Alertmanager·Loki·**MinIO** 에 직접 붙을 수 있었다.
+# 🔴 MinIO 가 특히 급해진 이유 = 2026-08-03 부터 여기에 **PG 온사이트 덤프**가 쌓인다.
+#    크롤러 파드 하나가 털리면 DB 전체 사본을 통째로 가져갈 수 있는 상태였다.
+#
+# ── 설계: "관측 스택 내부는 한 신뢰 도메인" ─────────────────────────────────
+# data ns 처럼 스토어별로 쪼개지 않고 **ns 내부는 전면 허용**한다. 근거:
+#   · Prometheus 는 설계상 ns 안의 모든 컴포넌트를 긁는다(grafana:3000·alertmanager:9093·
+#     ksm:8080/8081·loki:3100·tempo:3200·operator). Grafana 는 세 데이터소스를 모두 질의하고,
+#     Loki·Tempo 는 MinIO 에 쓴다. 실측 흐름이 이미 그물망이라 내부를 쪼개면 규칙만 늘고
+#     최소권한은 사실상 안 는다.
+#   · 반면 **바깥에서 들어오는 경로는 몇 개 안 된다**(crossns 파일 참조). 경계는 거기다.
+#
+# ⚠️ Egress 는 **일부러 뺐다**(policyTypes 에 Ingress 만). Prometheus 는 전 ns·전 노드를
+#    스크레이프하고 Alertmanager 는 app ns 로 webhook 을 쏜다 — egress 잠금은 별건으로 간다.
+#    유일한 예외가 netpol-minio-egress.yaml(백업 저장소라 먼저 잠근다).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-observability-default-deny
+  namespace: observability
+spec:
+  podSelector: {} # ns 전체
+  policyTypes:
+    - Ingress
+  # 규칙 0개 = 전면 차단. 아래 allow 정책들이 합집합으로 구멍을 낸다.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-observability-baseline-allow
+  namespace: observability
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    # 1) ns 내부 전면 허용 — 위 머리말의 "한 신뢰 도메인" 근거.
+    #    🔴 podSelector: {} 는 **같은 ns 안의 모든 파드**를 뜻한다(namespaceSelector 가 없으므로).
+    #       다른 ns 는 이 규칙으로 못 들어온다.
+    - from:
+        - podSelector: {}
+    # 2) 노드 서브넷 — 포트 무제한. netpol-backend.yaml 규칙 3) 과 같은 관례다.
+    #    한 규칙에 세 가지가 걸려 있어서 쪼개면 오히려 빠뜨린다:
+    #      · kubelet probe (소스 = 노드 IP)
+    #      · 🔴 kube-apiserver → prometheus-operator **admission webhook :443**.
+    #        이게 막히면 ServiceMonitor·PrometheusRule 생성이 전부 거부되고,
+    #        ArgoCD monitoring sync 가 실패한다(원인이 netpol 로 안 보여서 오래 헤맨다).
+    #      · LAN 사용자 → 내부 게이트웨이(:80/:443/:15021) = grafana·loki·minio 콘솔 등
+    #        `https://<이름>.mealbong.cloud` 6종의 유일한 유입 경로.
+    #    ⚠️ 파드 CIDR 은 10.244.0.0/16 이라 **이 규칙으로 타 ns 파드가 들어오지는 않는다.**
+    #       열리는 건 LAN 호스트와 노드 자신뿐이다.
+    #    🔴 노드 서브넷이 바뀌면 여기와 netpol-backend.yaml 을 같이 고쳐야 한다.
+    - from:
+        - ipBlock:
+            cidr: 192.168.0.0/24
