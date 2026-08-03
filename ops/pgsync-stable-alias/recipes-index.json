@@ -1,0 +1,43 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1,
+    "analysis": {
+      "tokenizer": {
+        "nori_mixed": {
+          "type": "nori_tokenizer",
+          "decompound_mode": "mixed"
+        }
+      },
+      "analyzer": {
+        "korean": {
+          "type": "custom",
+          "tokenizer": "nori_mixed",
+          "filter": ["nori_readingform", "lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "_meta": {"type": "object", "enabled": false},
+      "id": {"type": "long"},
+      "recipe_id": {"type": "long"},
+      "name": {"type": "text", "analyzer": "korean"},
+      "category": {"type": "keyword"},
+      "cook_method": {"type": "keyword"},
+      "cooking_time": {"type": "keyword"},
+      "level_nm": {"type": "keyword"},
+      "serving": {"type": "keyword"},
+      "kcal": {"type": "float"},
+      "carb_g": {"type": "float"},
+      "protein_g": {"type": "float"},
+      "fat_g": {"type": "float"},
+      "ingredient_names": {"type": "text", "analyzer": "korean"},
+      "ingredient_item_ids": {"type": "keyword"},
+      "servable": {"type": "boolean"},
+      "source": {"type": "keyword"},
+      "image_url": {"type": "keyword", "index": false}
+    }
+  }
+}

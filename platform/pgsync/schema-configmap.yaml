@@ -45,5 +45,9 @@ data:
     ]
 kind: ConfigMap
 metadata:
+  annotations:
+    # T-3 live daemon was stable on recipes_live from 2026-08-03T07:09:55Z.
+    # The old slot may be retired only after this reviewed, recorded rollback window.
+    operations.mealplanning.io/legacy-slot-retire-after: "2026-08-03T09:15:00Z"
   name: mp-pgsync-schema
   namespace: data

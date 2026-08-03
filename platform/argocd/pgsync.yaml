@@ -1,4 +1,5 @@
-# PGSync + redis-pgsync — 🔴 PGSync 는 replicas 0 dark (Q11). 슬롯 생성·0→1 은 전환창 §4-10.
+# PGSync + redis-pgsync — T-3 stable alias 전환 완료, PGSync replicas=1 상시 CDC.
+# stock bootstrap 같은 lifecycle 작업은 ops/pgsync-stable-alias/ 수동 런북으로만 실행한다.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

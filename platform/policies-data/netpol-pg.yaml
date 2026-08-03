@@ -46,7 +46,7 @@ spec:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: pipeline } }
       ports:
         - { protocol: TCP, port: 5432 }
-    # 4) PGSync(app=pgsync) → 논리복제 슬롯 :5432 (현재 dark 지만 0→1 대비)
+    # 4) PGSync(app=pgsync) → foodbudget_recipes_live 논리복제 슬롯 :5432 (상시 replicas=1)
     - from:
         - podSelector: { matchLabels: { app: pgsync } }
       ports:

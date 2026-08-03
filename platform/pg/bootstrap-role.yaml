@@ -1,13 +1,15 @@
-# Stable-alias PGSync 전환(T-5) 전용 일회성 bootstrap identity — mp-pgsync-bootstrap.
-# mp-pgsync-bootstrap single role 로 stock PGSync bootstrap 을 정확히 한 번 실행했다.
-# bootstrap 완료 후 PARK 상태: 로그인·복제 차단, membership 없음, password 비활성.
-# 이후 실제 schema bootstrap 시에만 이 파일에서 login/replication/inRoles/passwordSecret 을
-# 다시 활성화(위 주석에 기록된 구조 대로) 하고 사용 후 재차 park 한다.
+# T-3 stable-alias 전환 전용 bootstrap identity — mp-pgsync-bootstrap.
+# stock PGSync bootstrap 이 요구하는 두 권한을 한시적으로 합친다:
+#   · fbapp/pgsync membership(INHERIT) = table owner + PGSync object 권한
+#   · REPLICATION                    = logical slot 생성/삭제
+# table owner 변경과 superuser 사용은 금지한다.
 #
-# bootstrap 활성화 재현 절차:
-#   login: true, replication: true, connectionLimit: 10,
-#   inRoles: [fbapp, pgsync],
-#   passwordSecret: { name: mp-pgsync-bootstrap-db } (+ 인클러스터 Secret 재생성)
+# 평상시는 아래 PARK 상태가 정본이다(NOLOGIN/NOREPLICATION/NO membership/password NULL).
+# 재활성화와 사후 봉인은 ops/pgsync-stable-alias/README.md 절차만 따른다. 특히 CNPG CRD에서
+# disablePassword:true 와 passwordSecret 은 상호 배타다. 활성화할 때 disablePassword 필드를
+# **삭제**하고, kubernetes.io/basic-auth Secret(username+password)을 먼저 만든 뒤 아래를 설정한다:
+#   login:true, replication:true, connectionLimit:10, inRoles:[fbapp, pgsync],
+#   passwordSecret:{name: mp-pgsync-bootstrap-db}
 apiVersion: postgresql.cnpg.io/v1
 kind: DatabaseRole
 metadata:
@@ -17,6 +19,7 @@ spec:
   cluster:
     name: pg
   name: mp-pgsync-bootstrap
+  comment: "T-3 PGSync stable-alias bootstrap; keep parked outside a maintenance window"
 
   login: false
   replication: false

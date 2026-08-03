@@ -28,12 +28,14 @@ kubeconform 은 있으면 쓰고 없으면 건너뛴다(경고).
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import re
 import shutil
 import subprocess
 import sys
 from collections import defaultdict
+from datetime import datetime
 
 import yaml
 
@@ -65,6 +67,196 @@ class Result:
 
     def warn(self, msg: str) -> None:
         self.warnings.append(msg)
+
+
+RFC3339_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
+
+def is_rfc3339_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or not RFC3339_TIMESTAMP.fullmatch(value):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
+def check_manual_job_security(res: Result, name: str, job: dict) -> None:
+    """Argo 밖에서 create하는 수동 Job에도 restricted baseline을 강제한다."""
+    pod = (((job.get("spec") or {}).get("template") or {}).get("spec") or {})
+    pod_security = pod.get("securityContext") or {}
+    expected_pod_security = {
+        "runAsNonRoot": True,
+        "runAsUser": 10001,
+        "runAsGroup": 10001,
+        "fsGroup": 10001,
+        "fsGroupChangePolicy": "OnRootMismatch",
+    }
+    pod_bad = {
+        key: (pod_security.get(key), value)
+        for key, value in expected_pod_security.items()
+        if pod_security.get(key) != value
+    }
+    if (pod_security.get("seccompProfile") or {}).get("type") != "RuntimeDefault":
+        pod_bad["seccompProfile.type"] = (
+            (pod_security.get("seccompProfile") or {}).get("type"),
+            "RuntimeDefault",
+        )
+    if pod_bad:
+        res.fail(f"[pgsync-lifecycle] manual {name} Job pod securityContext 불일치: {pod_bad}")
+
+    volumes = pod.get("volumes") or []
+    tmp_volumes = [volume for volume in volumes
+                   if volume.get("name") == "tmp" and "emptyDir" in volume]
+    if len(tmp_volumes) != 1:
+        res.fail(f"[pgsync-lifecycle] manual {name} Job은 writable /tmp emptyDir 하나가 필요하다")
+
+    if (job.get("metadata") or {}).get("name") == "mp-pgsync-bootstrap":
+        empty_dirs = {
+            volume.get("name") for volume in volumes if "emptyDir" in volume
+        }
+        expected_empty_dirs = {"plugins-dir", "checkpoint", "tmp"}
+        if not expected_empty_dirs.issubset(empty_dirs):
+            res.fail(
+                f"[pgsync-lifecycle] bootstrap writable volumes 불일치: "
+                f"actual={sorted(empty_dirs, key=repr)}, "
+                f"expected={sorted(expected_empty_dirs)}"
+            )
+
+        containers_by_name = {
+            container.get("name"): container for container in pod.get("containers") or []
+        }
+        init_by_name = {
+            container.get("name"): container for container in pod.get("initContainers") or []
+        }
+        expected_mounts = (
+            (containers_by_name.get("pgsync") or {}, {
+                ("plugins-dir", "/app/plugins"),
+                ("checkpoint", "/app/checkpoint"),
+                ("tmp", "/tmp"),
+            }),
+            (init_by_name.get("copy-plugins") or {}, {
+                ("plugins-dir", "/app/plugins"),
+                ("tmp", "/tmp"),
+            }),
+        )
+        for container, expected in expected_mounts:
+            actual = {
+                (mount.get("name"), mount.get("mountPath"))
+                for mount in container.get("volumeMounts") or []
+                if mount.get("readOnly") is not True
+            }
+            if not expected.issubset(actual):
+                res.fail(
+                    f"[pgsync-lifecycle] bootstrap writable mounts 불일치: "
+                    f"actual={sorted(actual, key=repr)}, expected={sorted(expected)}"
+                )
+
+    expected_container_security = {
+        "allowPrivilegeEscalation": False,
+        "readOnlyRootFilesystem": True,
+    }
+    allowed_container_overrides = {
+        "runAsNonRoot": True,
+        "runAsUser": 10001,
+        "runAsGroup": 10001,
+    }
+    groups = (("container", pod.get("containers") or []),
+              ("initContainer", pod.get("initContainers") or []))
+    for kind, containers in groups:
+        for container in containers:
+            container_name = container.get("name", "<unnamed>")
+            security = container.get("securityContext") or {}
+            bad = {
+                key: (security.get(key), value)
+                for key, value in expected_container_security.items()
+                if security.get(key) != value
+            }
+            for key, value in allowed_container_overrides.items():
+                if key in security and security.get(key) != value:
+                    bad[key] = (security.get(key), value)
+            seccomp = security.get("seccompProfile")
+            if seccomp is not None and (seccomp or {}).get("type") != "RuntimeDefault":
+                bad["seccompProfile.type"] = (
+                    (seccomp or {}).get("type"), "RuntimeDefault"
+                )
+            capabilities = security.get("capabilities") or {}
+            if "ALL" not in (capabilities.get("drop") or []):
+                bad["capabilities.drop"] = (
+                    capabilities.get("drop"), ["ALL"]
+                )
+            if capabilities.get("add"):
+                bad["capabilities.add"] = (capabilities.get("add"), [])
+            if bad:
+                res.fail(
+                    f"[pgsync-lifecycle] manual {name} Job {kind} securityContext "
+                    f"불일치({container_name}): {bad}"
+                )
+            mounts = container.get("volumeMounts") or []
+            if not any(mount.get("name") == "tmp" and mount.get("mountPath") == "/tmp"
+                       and mount.get("readOnly") is not True
+                       for mount in mounts):
+                res.fail(
+                    f"[pgsync-lifecycle] manual {name} Job {kind}에 writable /tmp mount 누락: "
+                    f"{container_name}"
+                )
+            image = container.get("image", "")
+            if image.endswith(":latest") or ":" not in image.rsplit("/", 1)[-1]:
+                res.fail(
+                    f"[pgsync-lifecycle] manual {name} Job image는 :sha pin이어야 한다: {image}"
+                )
+
+
+def check_pgsync_egress_policy(res: Result, policy: dict) -> None:
+    """Manual identities and the daemon may reach only their four data dependencies."""
+    spec = policy.get("spec") or {}
+    if policy.get("kind") != "NetworkPolicy":
+        res.fail("[pgsync-lifecycle] PGSync egress boundary는 NetworkPolicy여야 한다")
+    if spec.get("podSelector") != {"matchLabels": {"app": "pgsync"}}:
+        res.fail("[pgsync-lifecycle] PGSync egress selector는 exact app=pgsync여야 한다")
+    if spec.get("policyTypes") != ["Egress"]:
+        res.fail("[pgsync-lifecycle] PGSync policyTypes는 Egress-only여야 한다")
+
+    def canonical(rule: dict):
+        destinations = rule.get("to")
+        ports = rule.get("ports")
+        if not isinstance(destinations, list) or len(destinations) != 1:
+            return None
+        if not isinstance(ports, list) or not ports:
+            return None
+        normalized_ports = []
+        for port in ports:
+            if set(port) != {"protocol", "port"}:
+                return None
+            normalized_ports.append((port["protocol"], port["port"]))
+        return (
+            json.dumps(destinations[0], sort_keys=True, separators=(",", ":")),
+            tuple(sorted(normalized_ports, key=repr)),
+        )
+
+    expected = {
+        (json.dumps({
+            "namespaceSelector": {"matchLabels": {
+                "kubernetes.io/metadata.name": "kube-system",
+            }},
+            "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+        }, sort_keys=True, separators=(",", ":")), (("TCP", 53), ("UDP", 53))),
+        (json.dumps({"podSelector": {"matchLabels": {
+            "cnpg.io/cluster": "pg", "cnpg.io/podRole": "instance",
+        }}}, sort_keys=True, separators=(",", ":")), (("TCP", 5432),)),
+        (json.dumps({"podSelector": {"matchLabels": {
+            "elasticsearch.k8s.elastic.co/cluster-name": "es",
+        }}}, sort_keys=True, separators=(",", ":")), (("TCP", 9200),)),
+        (json.dumps({"podSelector": {"matchLabels": {
+            "app": "redis-pgsync",
+        }}}, sort_keys=True, separators=(",", ":")), (("TCP", 6379),)),
+    }
+    actual_list = [canonical(rule) for rule in (spec.get("egress") or [])]
+    if None in actual_list or len(actual_list) != len(set(actual_list)) or set(actual_list) != expected:
+        res.fail("[pgsync-lifecycle] PGSync egress는 exact DNS/PG/ES/Redis 규칙만 허용해야 한다")
 
 
 def renderer() -> list[str]:
@@ -459,6 +651,210 @@ def check_cnpg_failsafe_netpol(res: Result, docs: dict[str, list[dict]]) -> None
     if cilium_broadened:
         res.fail("[cnpg-failsafe] pg instance 를 선택하는 additive CiliumNetworkPolicy 가 "
                  "TCP 8000 을 허용한다:\n  " + "\n  ".join(cilium_broadened))
+def check_es_maintenance_job(res: Result, job: dict) -> None:
+    """Alias 보정 Job에 Elasticsearch 외 credential/실행 경로가 없음을 강제한다."""
+    pod = (((job.get("spec") or {}).get("template") or {}).get("spec") or {})
+    containers = pod.get("containers") or []
+    init_containers = pod.get("initContainers") or []
+    if len(containers) != 1:
+        res.fail("[pgsync-lifecycle] ES maintenance Job은 단일 main container여야 한다")
+    if init_containers:
+        res.fail("[pgsync-lifecycle] ES maintenance Job에 initContainer를 둘 수 없다")
+    container = containers[0] if len(containers) == 1 else {}
+    if container.get("command") != ["python3", "/ops/maintenance.py", "alias-write"]:
+        res.fail("[pgsync-lifecycle] ES maintenance Job은 DB 없는 alias-write action만 실행해야 한다")
+
+    expected_env_names = {
+        "ELASTICSEARCH_HOST",
+        "ELASTICSEARCH_PORT",
+        "ELASTICSEARCH_SCHEME",
+        "ELASTICSEARCH_USER",
+        "ELASTICSEARCH_PASSWORD",
+    }
+    env = container.get("env") or []
+    env_names = [item.get("name") for item in env]
+    if len(env_names) != len(expected_env_names) or set(env_names) != expected_env_names:
+        res.fail(f"[pgsync-lifecycle] ES maintenance Job 환경변수 계약 불일치: {env_names}")
+
+    secret_refs = []
+    all_containers = containers + init_containers
+    for item in all_containers:
+        if item.get("envFrom"):
+            res.fail(
+                f"[pgsync-lifecycle] ES maintenance Job envFrom 금지: "
+                f"{item.get('name', '<unnamed>')}"
+            )
+        for variable in item.get("env") or []:
+            env_name = str(variable.get("name", ""))
+            if env_name.startswith("PG") or env_name == "DATABASE_URL":
+                res.fail("[pgsync-lifecycle] ES maintenance Job에 DB 환경변수가 들어가면 안 된다")
+            secret_ref = (((variable.get("valueFrom") or {}).get("secretKeyRef")) or {})
+            if secret_ref:
+                secret_refs.append(
+                    (env_name, secret_ref.get("name"), secret_ref.get("key"))
+                )
+    if secret_refs != [("ELASTICSEARCH_PASSWORD", "es-es-elastic-user", "elastic")]:
+        res.fail(f"[pgsync-lifecycle] ES maintenance Job Secret 계약 불일치: {secret_refs}")
+
+    secret_volumes = []
+    for volume in pod.get("volumes") or []:
+        if volume.get("secret"):
+            secret_volumes.append(volume.get("name"))
+        for source in ((volume.get("projected") or {}).get("sources") or []):
+            if source.get("secret"):
+                secret_volumes.append(volume.get("name"))
+    if secret_volumes:
+        res.fail(
+            f"[pgsync-lifecycle] ES maintenance Job Secret volume 금지: {secret_volumes}"
+        )
+
+
+def check_pgsync_stable_alias(res: Result, docs: dict[str, list[dict]]) -> None:
+    """T-3 lifecycle 불변조건: Git은 PARK, 수동 Job은 inert, runtime은 stable alias."""
+    role_path = REPO / "platform/pg/bootstrap-role.yaml"
+    schema_path = REPO / "platform/pgsync/schema-configmap.yaml"
+    rollout_path = REPO / "services/recipe/base/rollout.yaml"
+    pgsync_netpol_path = REPO / "platform/policies-data/netpol-pgsync.yaml"
+    policies_kustomization_path = REPO / "platform/policies-data/kustomization.yaml"
+    ops_dir = REPO / "ops/pgsync-stable-alias"
+    required = [
+        ops_dir / "README.md", ops_dir / "ops.sh", ops_dir / "maintenance.py",
+        ops_dir / "bootstrap-job.yaml", ops_dir / "maintenance-job.yaml",
+        ops_dir / "crud-verify-job.yaml", ops_dir / "es-maintenance-job.yaml",
+        ops_dir / "recipes-index.json",
+    ]
+    missing = [str(p.relative_to(REPO)) for p in required if not p.is_file()]
+    if missing:
+        res.fail("[pgsync-lifecycle] 운영 번들 파일 누락\n  " + "\n  ".join(missing))
+        return
+
+    try:
+        role = yaml.safe_load(role_path.read_text())["spec"]
+        schema = yaml.safe_load(schema_path.read_text())
+        rollout = yaml.safe_load(rollout_path.read_text())
+        bootstrap_job = yaml.safe_load((ops_dir / "bootstrap-job.yaml").read_text())
+        maintenance_job = yaml.safe_load((ops_dir / "maintenance-job.yaml").read_text())
+        crud_job = yaml.safe_load((ops_dir / "crud-verify-job.yaml").read_text())
+        es_job = yaml.safe_load((ops_dir / "es-maintenance-job.yaml").read_text())
+        pgsync_netpol = yaml.safe_load(pgsync_netpol_path.read_text())
+        policies_kustomization = yaml.safe_load(policies_kustomization_path.read_text())
+        contract = json.loads((ops_dir / "recipes-index.json").read_text())
+    except (KeyError, TypeError, yaml.YAMLError, json.JSONDecodeError) as e:
+        res.fail(f"[pgsync-lifecycle] 운영 번들 파싱 실패: {e}")
+        return
+
+    parked = {
+        "login": False,
+        "replication": False,
+        "inherit": True,
+        "disablePassword": True,
+        "superuser": False,
+        "createdb": False,
+        "createrole": False,
+        "bypassrls": False,
+        "connectionLimit": 1,
+        "inRoles": [],
+    }
+    bad = [f"{key}={role.get(key)!r} (expected {value!r})"
+           for key, value in parked.items() if role.get(key) != value]
+    if "passwordSecret" in role or "validUntil" in role:
+        bad.append("passwordSecret/validUntil must not exist in tracked PARK state")
+    if bad:
+        res.fail("[pgsync-lifecycle] bootstrap DatabaseRole은 Git에서 항상 PARK여야 한다\n  "
+                 + "\n  ".join(bad))
+
+    retire_annotation = "operations.mealplanning.io/legacy-slot-retire-after"
+    retire_after = (((schema.get("metadata") or {}).get("annotations") or {}).get(
+        retire_annotation
+    ))
+    if not is_rfc3339_timestamp(retire_after):
+        res.fail(
+            f"[pgsync-lifecycle] schema ConfigMap {retire_annotation}는 timezone이 있는 "
+            f"RFC3339 timestamp여야 한다: {retire_after!r}"
+        )
+
+    try:
+        schema_doc = json.loads(schema["data"]["schema.json"])
+        schema_index = schema_doc[0]["index"]
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
+        res.fail(f"[pgsync-lifecycle] schema ConfigMap을 읽을 수 없다: {e}")
+        schema_index = None
+    if schema_index != "recipes_live":
+        res.fail(f"[pgsync-lifecycle] PGSync index는 recipes_live여야 한다: {schema_index!r}")
+
+    try:
+        containers = rollout["spec"]["template"]["spec"]["containers"]
+        recipe = next(c for c in containers if c["name"] == "recipe")
+        es_index = next(e["value"] for e in recipe["env"] if e["name"] == "ES_INDEX")
+    except (KeyError, StopIteration, TypeError) as e:
+        res.fail(f"[pgsync-lifecycle] recipe ES_INDEX를 읽을 수 없다: {e}")
+        es_index = None
+    if es_index != "recipes_live":
+        res.fail(f"[pgsync-lifecycle] recipe ES_INDEX는 recipes_live여야 한다: {es_index!r}")
+
+    check_pgsync_egress_policy(res, pgsync_netpol)
+    if "netpol-pgsync.yaml" not in (policies_kustomization.get("resources") or []):
+        res.fail("[pgsync-lifecycle] PGSync egress NetworkPolicy가 policies-data 렌더에 포함되지 않았다")
+
+    jobs = (
+        ("bootstrap", "mp-pgsync-bootstrap", bootstrap_job),
+        ("maintenance", "mp-pgsync-maintenance", maintenance_job),
+        ("crud", "mp-pgsync-crud-verify", crud_job),
+        ("es-maintenance", "mp-pgsync-es-maintenance", es_job),
+    )
+    for name, expected_name, job in jobs:
+        spec = job.get("spec") or {}
+        labels = (((spec.get("template") or {}).get("metadata") or {}).get("labels") or {})
+        if (job.get("metadata") or {}).get("name") != expected_name:
+            res.fail(f"[pgsync-lifecycle] manual {name} Job 고정 이름은 {expected_name}이어야 한다")
+        if job.get("kind") != "Job" or spec.get("suspend") is not True:
+            res.fail(f"[pgsync-lifecycle] manual {name} Job은 suspend:true여야 한다")
+        if spec.get("backoffLimit") != 0:
+            res.fail(f"[pgsync-lifecycle] manual {name} Job은 backoffLimit:0이어야 한다")
+        if labels.get("app") != "pgsync":
+            res.fail(f"[pgsync-lifecycle] manual {name} Job label app=pgsync 누락(NetworkPolicy 계약)")
+        check_manual_job_security(res, name, job)
+
+    check_es_maintenance_job(res, es_job)
+
+    settings = contract.get("settings") or {}
+    props = ((contract.get("mappings") or {}).get("properties") or {})
+    expected_fields = {
+        "name": ("text", "korean"),
+        "ingredient_names": ("text", "korean"),
+        "category": ("keyword", None),
+        "source": ("keyword", None),
+        "servable": ("boolean", None),
+    }
+    if settings.get("number_of_replicas") != 1:
+        res.fail("[pgsync-lifecycle] canonical recipe index는 replica=1이어야 한다")
+    for field, (field_type, analyzer) in expected_fields.items():
+        actual = props.get(field) or {}
+        if actual.get("type") != field_type or (analyzer and actual.get("analyzer") != analyzer):
+            res.fail(f"[pgsync-lifecycle] canonical mapping 불일치: {field} -> {actual}")
+
+    # Argo desired-state roots에 destructive bootstrap Job/credential이 들어오면 안 된다.
+    for src, ds in docs.items():
+        if not (src.startswith("platform/") or src.startswith("argocd/")):
+            continue
+        for doc in ds:
+            meta = doc.get("metadata") or {}
+            if doc.get("kind") == "Application":
+                source_path = (((doc.get("spec") or {}).get("source") or {}).get("path") or "")
+                if source_path == "ops" or source_path.startswith("ops/"):
+                    res.fail(f"[pgsync-lifecycle] ops/는 Argo Application source가 될 수 없다: {src}")
+            if doc.get("kind") == "Job" and meta.get("name") in {
+                "mp-pgsync-bootstrap", "mp-pgsync-maintenance", "mp-pgsync-crud-verify",
+                "mp-pgsync-es-maintenance",
+            }:
+                res.fail(f"[pgsync-lifecycle] manual Job이 Argo desired state에 포함됨: {src}")
+            if doc.get("kind") == "Secret" and meta.get("name") == "mp-pgsync-bootstrap-db":
+                res.fail(f"[pgsync-lifecycle] bootstrap credential을 Git에 넣으면 안 된다: {src}")
+
+    ops_text = (ops_dir / "ops.sh").read_text()
+    for marker in ("validUntil", "kubernetes.io/basic-auth", "is_write_index", "recover_parked"):
+        if marker not in ops_text:
+            res.fail(f"[pgsync-lifecycle] ops.sh fail-safe 누락: {marker}")
 
 
 SEC_CHECKS = {
@@ -557,6 +953,7 @@ def main() -> int:
     check_image_tags(res, docs)
     check_tsc_duplicate_key(res, docs)
     check_cnpg_failsafe_netpol(res, docs)
+    check_pgsync_stable_alias(res, docs)
     check_security_context(res, docs, list_only=False)
     run_kubeconform(res)
 

@@ -103,11 +103,12 @@ spec:
           env:
             - name: OTEL_SERVICE_NAME
               value: recipe
-            # 🔴 인덱스 이름이 아니라 **alias** 를 본다 (2026-08-03 전환).
-            #    구 값 `recipes_pgsync` 는 nori 형태소 분석기가 없어 한글 검색이 파손돼 있었고
-            #    `category=국&찌개` term 쿼리가 103건 → 0건이었다. 재색인본이 `recipes_v2` 다.
-            #    alias 를 보게 하면 다음 재색인부터는 **앱 재배포 없이** ES 쪽 alias 스왑만으로
-            #    무중단 전환된다(롤백도 alias 한 번). 인덱스명을 직접 박으면 매번 이 파일을 고쳐야 한다.
+            # 🔴 인덱스 이름이 아니라 **alias** 를 본다 (2026-08-03 T-3 전환).
+            #    구 값 `recipes_pgsync` 는 nori 형태소 분석기가 없어 한글 검색 리콜이 낮았다.
+            #    category 0건은 10K 원천 category NULL 문제로 별건이며 nori 전환 효과가 아니다.
+            #    alias 를 보게 하면 다음 재색인부터 앱 재배포 없이 원자적으로 generation 을 바꿀 수 있다.
+            #    단 롤백 전에는 구 backing 을 CDC catch-up/reindex 하고 허용 RPO 를 확인해야 한다.
+            #    alias 스왑 자체는 전환 이후 변경분을 구 backing 에 재생하지 않는다.
             - name: ES_INDEX
               value: "recipes_live"
           startupProbe:

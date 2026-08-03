@@ -1,0 +1,60 @@
+# MANUAL-ONLY executable CDC E2E. No credential is decoded; all values come from Secret refs.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mp-pgsync-crud-verify
+  namespace: data
+  labels:
+    app: pgsync
+    app.kubernetes.io/component: manual-crud-verification
+spec:
+  suspend: true
+  backoffLimit: 0
+  completions: 1
+  parallelism: 1
+  activeDeadlineSeconds: 180
+  template:
+    metadata:
+      labels:
+        app: pgsync
+        app.kubernetes.io/component: manual-crud-verification
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      priorityClassName: app-normal
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: crud-verification
+          image: 192.168.0.10/mealplanning/mp-pgsync:5b4e66c723bbee21bf41066d4736b72fa53aa994
+          command: ["python3", "/ops/maintenance.py", "crud-e2e"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          env:
+            - {name: PG_HOST, value: pg-rw}
+            - {name: PG_PORT, value: "5432"}
+            - {name: PG_DATABASE, value: foodbudget}
+            - name: PG_USER
+              valueFrom: {secretKeyRef: {name: pg-app, key: username}}
+            - name: PG_PASSWORD
+              valueFrom: {secretKeyRef: {name: pg-app, key: password}}
+            - {name: ELASTICSEARCH_USER, value: elastic}
+            - name: ELASTICSEARCH_PASSWORD
+              valueFrom: {secretKeyRef: {name: es-es-elastic-user, key: elastic}}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: maintenance-script, mountPath: /ops, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: maintenance-script
+          configMap: {name: mp-pgsync-maintenance-script, defaultMode: 0444}
+        - {name: tmp, emptyDir: {}}
