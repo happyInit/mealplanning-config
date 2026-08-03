@@ -7,4 +7,4 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-pantry-service
   newName: 192.168.0.10/mealplanning/mp-pantry-service
-  newTag: 397f2524070c29a29ad32d50a2a53e1ded9c63aa
+  newTag: 4edb8bd4468d488c4aaef0ea47a063470d9d4b84
