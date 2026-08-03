@@ -1,0 +1,123 @@
+# 보안 ③ 티어 4 부록 — observability 로 들어오는 **타 ns 유입** 화이트리스트. (2026-08-03)
+#
+# baseline 이 ns 내부와 노드 서브넷만 열어 두었으므로, 다른 ns 파드의 유입은 여기서만 열린다.
+# 목록은 추측이 아니라 **Hubble 실측**(`hubble observe --to-namespace observability`, 5개
+#   cilium 에이전트 합산 · 2026-08-03)에서 뽑았다. 단 하나, argo-rollouts 만 예외적으로
+#   실측이 아니라 **설정 근거**로 넣는다 — 아래 규칙 2) 주석 참조.
+#
+# 🔴 빠뜨리면 조용히 죽는 것들이라 각 규칙에 "없으면 무슨 일이 나는지"를 같이 적는다.
+#    관측 경로의 고장은 알람이 안 울리는 형태로 나타나서, 정상과 구분이 안 된다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-observability-prometheus-query
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    # 1) operations(app) → Prometheus :9090 — 운영 대시보드가 지표를 질의한다.
+    #    netpol-operations.yaml 의 egress(:9090) 와 짝. 없으면 operations 화면이 빈다.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: app
+          podSelector:
+            matchLabels:
+              app: operations
+      ports:
+        - { protocol: TCP, port: 9090 }
+    # 2) 🔴 Argo Rollouts 컨트롤러 → Prometheus :9090 — **카나리 분석의 생명줄**.
+    #    account/recipe 의 AnalysisTemplate 이 provider.prometheus.address =
+    #      http://kube-prometheus-stack-prometheus.observability:9090 으로 5xx·p95 를 조회한다.
+    #    ⚠️ Hubble 실측에는 안 잡힌다 — 롤아웃이 도는 중에만 흐르기 때문이다.
+    #       "실측에 없으니 불필요"로 지웠다가는 **다음 배포에서 분석이 실패해 자동 롤백**된다.
+    #       (그때 증상은 "카나리가 이유 없이 abort" 라서 netpol 을 의심하기까지 오래 걸린다.)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: argo-rollouts
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argo-rollouts
+      ports:
+        - { protocol: TCP, port: 9090 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-observability-loki-push
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  policyTypes:
+    - Ingress
+  ingress:
+    # Alloy(kube-system DaemonSet 5개) → Loki :3100 push.
+    #   전 클러스터 파드 로그가 이 한 경로로 들어온다 — 막히면 **로그 수집이 통째로 멈춘다.**
+    #   (Alloy 는 조용히 재시도하므로 Grafana 에서 "최근 로그 없음"으로만 보인다.)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+      ports:
+        - { protocol: TCP, port: 3100 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-observability-tempo-otlp
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+  policyTypes:
+    - Ingress
+  ingress:
+    # app ns 전체 → Tempo :4317(OTLP gRPC). 백엔드 9종 + 공개 게이트웨이 사이드카가 보낸다.
+    #   netpol-backend.yaml egress 5) 의 짝. 포트는 4317 만 — 4318(HTTP)은 안 쓴다.
+    #   ⚠️ ns 스코프인 이유 = 보내는 주체가 tier=backend 전부 + GW 사이드카라 파드 셀렉터로
+    #      좁히면 새 서비스가 생길 때마다 빠뜨린다(그리고 그 증상은 "그 서비스만 트레이스 없음").
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: app
+      ports:
+        - { protocol: TCP, port: 4317 }
+    # pipeline ns 는 **일부러 넣지 않았다** — 현재 OTLP 를 보내지 않는다
+    #   (platform/policies-pipeline 의 egress 에 observability 규칙이 없다 = 애초에 못 나간다).
+    #   파이프라인에 트레이싱을 붙이는 날 여기와 그쪽 egress 를 **같이** 열어야 한다.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-observability-minio-backup
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app: minio
+  policyTypes:
+    - Ingress
+  ingress:
+    # PG 온사이트 백업 CronJob(data) → MinIO :9000 업로드.
+    #   netpol-pg-onsite.yaml egress 3) 의 짝 — 한쪽만 있으면 백업이 조용히 실패한다.
+    #   🔴 data ns 전체가 아니라 **그 잡 하나**만 연다. MinIO 는 이제 DB 전체 사본을 담는다.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: data
+          podSelector:
+            matchLabels:
+              app: mp-pg-onsite
+      ports:
+        - { protocol: TCP, port: 9000 }
