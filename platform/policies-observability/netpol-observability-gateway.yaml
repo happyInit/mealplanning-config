@@ -1,0 +1,37 @@
+# 내부 게이트웨이 유입 — **의도적으로 전면 개방**. (2026-08-03 v2, 장애 후 신설)
+#
+# ── 왜 이 파일이 생겼나: v1 이 내부 도구 6종을 통째로 끊었다 ─────────────────
+# v1 은 baseline 에서 `ipBlock: 192.168.0.0/24` 만 열고 default-deny 를 걸었다.
+# 그러면 LAN 사용자 유입이 커버된다고 봤는데 **틀렸다.** 실측 드롭:
+#
+#   10.244.3.143:48956 (world) <> observability/mp-gw-internal-istio:443 Policy denied DROPPED
+#
+# 🔴 소스가 LAN IP 가 아니라 **파드 CIDR 주소이고 신원이 `world`** 다. MetalLB L2 로 들어온
+#    LoadBalancer 트래픽을 Cilium 이 노드의 라우터 IP(cilium_host, 파드 CIDR 대역)로 SNAT 해서
+#    백엔드 파드에 넘기기 때문이다. 즉 `192.168.0.0/24` 에 **절대 걸리지 않는다.**
+#    결과 = argo·grafana·minio·loki·harbor·jenkins·sonarqube 전부 SYN 부터 드롭(응답 000).
+#
+# ── 그래서 어떻게 하나: 게이트웨이는 원래 "누구나 닿는 문" 이다 ──────────────
+# 소스 신원을 신뢰할 수 없는 지점이므로 **L3/L4 로 거르지 않는다.** 대신:
+#   · 이 파드가 하는 일은 호스트 기반 라우팅 + TLS 종료뿐이고,
+#   · 실제 보호는 **뒤쪽 백엔드의 default-deny**(baseline·crossns)가 담당한다.
+#     게이트웨이에 닿아도 HTTPRoute 에 없는 서비스로는 못 간다.
+#   · 그리고 이건 v1 이전의 원상태다 — 이 파일은 **새 개방이 아니라 원복**이다.
+#
+# ⚠️ 진짜 접근통제가 필요하면 층이 다르다 — Cloudflare Access(인증)나 Istio
+#    AuthorizationPolicy(L7). netpol 로 흉내내려다 서비스만 끊긴 것이 v1 의 교훈이다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-observability-gateway-ingress
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: mp-gw-internal
+  policyTypes:
+    - Ingress
+  ingress:
+    # 🔴 빈 규칙 `- {}` = 모든 소스·모든 포트 허용. 의도적이다(위 근거).
+    #    `ingress: []`(빈 배열)과 혼동 금지 — 그건 전면 차단이다.
+    - {}
