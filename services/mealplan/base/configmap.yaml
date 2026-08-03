@@ -6,5 +6,13 @@ metadata:
   name: mealplan-config
 data:
   IMPRESSION_LOG_ENABLED: "false"        # 추천 노출 → activity.recipe_impression(학습데이터)
-  EVENT_PRODUCE_ENABLED: "false"         # ADD_CART → Kafka events.user.activity(라벨)
+  # ADD_CART → Kafka events.user.activity → mp-user-event-sink → activity.user_event.
+  # 🔴 false 로 두는 동안 user_event 가 37행에서 멈춰 있었다(2026-08-03 실측). 이 표는 랭킹
+  #    학습 라벨의 원천이라 **시간이 지나야 값이 쌓이는** 종류다 — 늦게 켤수록 데이터가 없다.
+  # 배선 확인(2026-08-03): 토픽 events.user.activity(3파티션)+DLQ 존재 ·
+  #    컨슈머 mp-user-event-sink 가 KEDA scale-to-zero(min 0/max 3)로 대기 중.
+  #    즉 켜는 순간 lag 이 생기고 KEDA 가 컨슈머를 깨운다.
+  # ⚠️ envFrom/ConfigMap 은 **파드 기동 시점 주입**이라 이 값만 바꾸고 sync 해도 안 먹는다.
+  #    반드시 `kubectl rollout restart deploy/mp-mealplan -n app` 를 같이 해야 한다.
+  EVENT_PRODUCE_ENABLED: "true"
   RANKING_ML_ENABLED: "false"            # ML 재랭킹 호출(OFF/장애/콜드스타트 → 규칙순)
