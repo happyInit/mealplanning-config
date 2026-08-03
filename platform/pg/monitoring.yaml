@@ -61,12 +61,16 @@ spec:
             summary: "PG WAL 아카이빙 실패 지속 — S3 백업 연속성 단절 진행 중"
 
         # `.11` PGReplicationSlotRetainedWALHigh 직이식 — 동기 동일: PGSync 논리 슬롯이 멈추면
-        # WAL 이 무한 축적 → walStorage(10Gi) full → 쓰기 전면중단. 5GiB = walStorage 의 절반.
+        # WAL 이 무한 축적 → walStorage(10Gi) full → 쓰기 전면중단.
+        # 2026-08-03 태현반 정정: 평시 retained 16MiB · 생성률 피크 71.4MiB/h → 1GiB 는
+        # 지속 피크에도 4일+ 여유. 5GiB(구임계)는 볼륨 절반이라 늦음 + warning 으로 묻힘.
+        # 스크레이프에 물리 슬롯(_cnpg_pg_2, CNPG 아카이빙용) 도 함께 오므로
+        # slot_type="logical" 로 반드시 좁혀 PGSync 논리 슬롯만 대상으로 함.
         - alert: MpPGReplicationSlotRetainedWALHigh
-          expr: max by(slot_name) (cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="data"}) > 5 * 1024 * 1024 * 1024
+          expr: max by(slot_name) (cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="data", slot_type="logical"}) > 1 * 1024 * 1024 * 1024
           for: 15m
           labels:
-            severity: warning
+            severity: critical
             service: data-tier
           annotations:
             summary: "복제 슬롯 {{ $labels.slot_name }} 이 WAL {{ $value | humanize1024 }}B 보유 — 소비자(PGSync 등) 정체 의심"
