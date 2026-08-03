@@ -18,3 +18,11 @@ spec:
     server: https://kubernetes.default.svc
     namespace: app
   # 수동 sync — 유입 전환 전까지 사람이 판단해서 반영한다(플랜 §7.4).
+  # 🔴 카나리(ADR-0001) — Rollouts 플러그인이 mp-recipe-route 의 backendRef weight 를 롤아웃 중 재작성.
+  #    그 드리프트를 OutOfSync 로 안 보게 무시(git 정본 = recipe 100 / recipe-canary 0).
+  ignoreDifferences:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: mp-recipe-route
+      jsonPointers:
+        - /spec/rules
