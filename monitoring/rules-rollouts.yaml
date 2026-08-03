@@ -1,0 +1,107 @@
+# 카나리 배포(Argo Rollouts) 알림 — 배포전략 ADR-0001 의 **운영 진입점**.
+#
+# 🔴 왜 신설하나(2026-08-03): 카나리는 라이브인데 **알림이 0건이었다.** 즉 카나리가 중단돼도
+#   아무도 모르고, "어? 내 배포가 안 나갔네" 하고 한참 뒤에 발견한다. 런북을 아무리 잘 써도
+#   **펼 계기가 없으면 무용지물**이라, 런북보다 이 규칙이 먼저다.
+#   (기존 KubeDeploymentRolloutStuck 은 Deployment 용이라 Rollout CR 을 보지 않는다 — 이름만 비슷하다.)
+#
+# 🔴 라벨 함정 — `namespace` 로 필터하지 말 것.
+#   Rollout 오브젝트는 app ns 에 있지만 이 지표의 `namespace` 라벨은 **`argo-rollouts`** 다.
+#   ServiceMonitor 스크레이프의 타깃 ns 가 지표 자체의 라벨을 덮어쓴다(honor_labels 미사용).
+#   `namespace="app"` 으로 조건을 걸면 **영원히 안 운다.** 식별은 `name` 라벨로 한다.
+#   (원래 값은 `exported_namespace="app"` 로 밀려나 살아는 있다 — 굳이 쓸 일은 없지만
+#    "왜 app 이 안 잡히지" 로 헤맬 때의 답이다.)
+#
+# 지표 실측(2026-08-03) — `rollout_phase{name,namespace,phase,strategy}` 는 phase 6종
+#   (Abort·Completed·Error·Paused·Progressing·Timeout)마다 시리즈가 있고 **현재 phase 만 1**이다.
+#   그래서 `== 1` 로 상태를 직접 고른다(변화율·증가량이 아니다).
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-rollouts
+spec:
+  groups:
+    - name: mp-rollouts
+      rules:
+        # ── 진입점 ①: 카나리가 거부됐다 ─────────────────────────────────────────
+        # 🔴 severity=critical 로 둔 이유(고민한 흔적을 남긴다):
+        #   유저 영향은 **없다**(트래픽은 이미 stable 100% 로 돌아가 있다). 교과서적으론 warning 이다.
+        #   그런데 우리 라우팅은 2단이다 — critical→#alerts-critical(repeat 1h) / 그 외→공용(4h).
+        #   공용 채널은 tempo 규칙 주석에 적힌 대로 **닷새간 묻힌 전례**가 있다.
+        #   이 알림은 "런북을 펴라"는 유일한 신호라 묻히면 존재 이유가 없다 → critical.
+        #   야간 호출 걱정은 작다: 배포는 근무시간에 일어나므로 새벽 발화 가능성이 낮다.
+        - alert: MpRolloutAborted
+          expr: |
+            rollout_phase{phase="Abort"} == 1
+          for: 2m
+          labels:
+            severity: critical
+            service: deploy
+          annotations:
+            summary: "카나리 중단 — {{ $labels.name }} 배포가 자동 롤백됐다(유저 영향 없음, 배포만 정지)"
+            description: >-
+              둘 중 하나다 — ①새 버전이 진짜 나쁘다(분석이 회귀를 잡았다) ②분석 오탐이다.
+              retry 부터 누르지 말 것: 진짜 회귀면 나쁜 버전을 다시 밀어넣는다.
+              먼저 AnalysisRun 의 **측정값**을 읽어 갈림길을 정한다 —
+              kubectl -n app get analysisrun --sort-by=.metadata.creationTimestamp | tail -3
+              값이 [NaN]·[] 면 무트래픽 오탐 쪽, 실제 숫자가 임계를 넘었으면 회귀 쪽이다.
+              절차 = docs/mp_k8s_canary_runbook.md
+
+        # ── 진입점 ②: 컨트롤러가 죽었다 ─────────────────────────────────────────
+        # 카나리 대상(account·recipe)의 배포가 통째로 멈춘다. ADR-0001 §6.2 가 vendoring 을
+        #   택한 이유가 정확히 이 상태다(플러그인을 못 받으면 컨트롤러가 기동조차 안 한다).
+        # HA 2 replica 라 **전부 죽었을 때만** 운다(max==0). absent() 는 타깃이 통째로 사라져
+        #   `up == 0` 조차 빈 벡터가 되는 국면용 — mp-tempo·mp-pg 와 같은 패턴.
+        - alert: MpRolloutsControllerDown
+          expr: |
+            absent(up{job="rollouts-argo-rollouts-metrics"})
+            or max(up{job="rollouts-argo-rollouts-metrics"}) == 0
+          for: 10m
+          labels:
+            severity: critical
+            service: deploy
+          annotations:
+            summary: "Argo Rollouts 컨트롤러 전멸 10분 — account·recipe 배포가 통째로 정지"
+            description: >-
+              kubectl -n argo-rollouts get pod · logs 확인. 전례 = 플러그인 바이너리를 못 얻으면
+              컨트롤러가 **기동하지 않는다**(2026-08-03 Init:ErrImagePull — argo-rollouts ns 에
+              Harbor 풀 시크릿이 없어 발생). 이미 도는 Rollout 의 트래픽 가중치는 유지되므로
+              유저 영향은 없고, 막히는 것은 **새 배포**다.
+
+        # ── 진입점 ③: 컨트롤러 레벨 오류 ────────────────────────────────────────
+        - alert: MpRolloutError
+          expr: |
+            rollout_phase{phase=~"Error|Timeout"} == 1
+          for: 5m
+          labels:
+            severity: critical
+            service: deploy
+          annotations:
+            summary: "카나리 오류 상태 — {{ $labels.name }} ({{ $labels.phase }})"
+            description: >-
+              분석 실패(Abort)와 다르다 — 컨트롤러가 Rollout 을 진행시키지 못하는 상태다.
+              kubectl -n app describe rollout {{ $labels.name }} 의 Conditions ·
+              kubectl -n argo-rollouts logs deploy/rollouts-argo-rollouts 를 본다.
+              전례 = HTTPRoute 에 canary backendRef 가 없어 "backendRef was not found" 무한재시도
+              (gateway 앱이 수동 sync 라 반영이 늦으면 발생).
+
+        # ── 진입점 ④: 진행이 안 끝난다 ─────────────────────────────────────────
+        # 실측(2026-08-03): 정상 카나리 1회 = 20→50→100 자동분석 포함 **약 4~7분**.
+        #   30분은 그 4배 이상이라 오발화 여지가 거의 없고, 카나리 파드가 안 뜨는 국면
+        #   (ImagePullBackOff·스케줄 실패·쿼터)을 잡는다.
+        # warning 인 이유: Abort 와 달리 "판정이 안 났다"는 정체 상태라 즉시성이 한 단계 낮다.
+        - alert: MpRolloutStuck
+          expr: |
+            rollout_phase{phase=~"Paused|Progressing"} == 1
+          for: 30m
+          labels:
+            severity: warning
+            service: deploy
+          annotations:
+            summary: "카나리 30분 정체 — {{ $labels.name }} ({{ $labels.phase }})"
+            description: >-
+              정상 카나리는 4~7분에 끝난다(2026-08-03 실측). 30분이면 진행이 막힌 것이다.
+              kubectl -n app get rollout {{ $labels.name }} · kubectl -n app get pods -l app=…
+              으로 카나리 파드가 뜨는지 먼저 본다(ImagePullBackOff·스케줄 실패가 흔하다).
+              절차 = docs/mp_k8s_canary_runbook.md
