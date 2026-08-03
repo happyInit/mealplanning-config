@@ -12,6 +12,7 @@ resources:
   - rules-app-symptom.yaml # 유저경로 SYMPTOM (봉수)
   - rules-data-tier.yaml # PGSync·ES·Kafka·MinIO (태현)
   - rules-rollouts.yaml # 카나리 배포(Argo Rollouts) — ADR-0001 운영 진입점
+  - rules-backup.yaml # 백업 신선도(S3 실물 관측) — 조용한 실패 감지
 
 # ── Grafana 대시보드 이식 (모니터링 컷오버 ⑤, 2026-07-30) — 구 .11 provisioning JSON 13장 ──
 # 인클러스터 Grafana 의 sidecar 가 grafana_dashboard 라벨을 단 CM 을 자동 로드한다.
