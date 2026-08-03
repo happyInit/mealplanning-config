@@ -16,10 +16,14 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: pipeline
-  # 🔴 automated 없음 = manual sync (런북 Q8) — P2 기간 데이터 CR 은 사람이 sync 를 누른다.
-  #    selfHeal 이 있으면 전환창의 promote(수동 CR 조작·T-1 장전 커밋)가 몇 초 만에 리버트된다(§9-3).
-  #    automated 승격은 P3.
+  # automated(auto-sync) 승격 — P2·P3 완료(2026-07-30)로 전환창 promote 리스크 해소. 계획대로 P3 승격.
+  #    selfHeal 은 계속 끈다: (1) KEDA scale-to-zero(컨슈머 min 0)와 replicas 를 두고 싸우고,
+  #    (2) 수동 CR 조작을 리버트하지 않도록. prune 도 끈다: kustomize 실수로 리소스 자동 삭제 방지.
+  #    → 앱 서비스(tier ③)와 동일 정책: 새 커밋은 자동 배포, 라이브 드리프트는 강제하지 않음.
   syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
     retry:
       limit: 5
       backoff:
