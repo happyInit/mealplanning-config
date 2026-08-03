@@ -1,0 +1,96 @@
+# 데이터 티어 알람 (2026-08-03 신설) — **태현 소유 파일**.
+#
+# 🔴 이 파일이 왜 따로 있나: `rules.yaml` 하나를 둘이 동시에 고치면 머지 충돌이 난다.
+#    SYMPTOM(rules-app-symptom.yaml, 봉수) / 데이터 티어(여기, 태현) 로 소유자를 갈랐다.
+#
+# ── 담는 것 ─────────────────────────────────────────────────────────────────
+#   § PGSync (#4)  ← 🔴 오늘 최우선. 아래 참조
+#   § ES     (#3)  — cluster yellow/red · 디스크
+#   § Kafka  (#3)  — 브로커 상실 · ISR 축소 · 컨슈머 lag
+#   § MinIO  (#3)  — 디스크 포화
+#
+# ── 🔴 § PGSync — 왜 최우선인가 ─────────────────────────────────────────────
+# 우리 결함 목록에서 **혼자 OLTP 를 세울 수 있는 유일한 경로**다:
+#
+#     PGSync 정지 → 복제 슬롯 active=f
+#                 → max_slot_wal_keep_size = -1 (무제한)
+#                 → PG 가 WAL 을 무한 보존 (여유 8.7G)
+#                 → 디스크 고갈 → **PG 쓰기 전면 중단**
+#
+# 그리고 지금 알람이 이걸 **구조적으로 못 잡는다** — 기존 `MpPGSyncDown` 은
+# `replicas_available < 1` 기준이라 "파드는 Ready 인데 CDC 만 멈춘" 상태가 정상으로 보인다.
+# 프로세스 생존이 아니라 **슬롯 자체**를 봐야 하는 이유가 이것이다.
+#
+# 🔴 함께 가야 하는 것: platform/pgsync/pgsync.yaml 의 프로브 추가.
+#    프로브만 있고 알람이 없으면 재시작만 반복하고,
+#    알람만 있고 프로브가 없으면 자가복구를 못 한다.
+# ⚠️ 프로브 `failureThreshold` 는 넉넉히 — **프로브가 CDC 를 재시작 루프에 빠뜨리는 게 최악**이다.
+#    (초기 동기화·대량 배치 중에는 응답이 느려질 수 있다.)
+#
+# ── § ES 알람의 선행조건 ────────────────────────────────────────────────────
+# 🔴 `recipes` 인덱스가 `number_of_replicas: 0` 인 동안에는 **cluster yellow 가 상시**다.
+#    그 상태로 yellow 알람을 넣으면 즉시 오탐이 되어 무의미해진다.
+#    → **#9(rep 1) 을 먼저 적용한 뒤** ES 알람을 넣는다. 순서를 지킬 것.
+#
+# ── 임계값 수칙 ─────────────────────────────────────────────────────────────
+# 내일부터 당분간 아무도 안 본다는 전제다. 오탐이 나면 그대로 방치되고
+# 다음에 볼 때 알람 신뢰를 깎는다(tempo-0 전례 — rules.yaml mp-tempo 그룹 주석).
+# → 보수적으로. severity=warning 은 #monitoring 에 묻히므로,
+#   **유저 영향이 확실하거나 데이터 유실 위험이 있는 것만 critical.**
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-data-tier
+spec:
+  groups:
+    - name: mp-pgsync
+      rules: []
+        # ── 슬롯이 죽었다 (파드 생존과 무관) ─────────────────────────────────
+        # 지표 후보: CNPG 가 내보내는 pg_replication_slots_* 계열.
+        #   확인:  kubectl -n data exec pg-1 -- psql -c \
+        #          "select slot_name, active, wal_status from pg_replication_slots;"
+        # - alert: MpPGSyncSlotInactive
+        #   expr: <채울 것>              # 슬롯 active == 0
+        #   for: 10m
+        #   labels: { severity: critical }
+        #   annotations:
+        #     summary: "PGSync 복제 슬롯이 비활성 — WAL 이 쌓이기 시작한다"
+        #     description: "max_slot_wal_keep_size=-1 이라 방치 시 PG 디스크가 고갈된다. 즉시 확인."
+
+        # ── WAL 이 실제로 쌓이고 있다 (위의 결과 확인용) ─────────────────────
+        # 🔴 이게 진짜 위험 신호다. 여유 8.7G 기준으로 임계를 잡는다.
+        # - alert: MpPGSyncSlotLagHigh
+        #   expr: <채울 것>              # slot lag bytes > 임계
+        #   for: 15m
+        #   labels: { severity: critical }
+
+    - name: mp-es
+      # 🔴 #9(recipes rep 0 → 1) 적용 후에 활성화할 것. 그 전엔 yellow 가 상시라 오탐.
+      rules: []
+        # - alert: MpESClusterYellow     # 사본 미할당 — 노드 상실 시 데이터 위험
+        #   for: 30m                     # 재할당에 시간이 걸리므로 길게
+        #   labels: { severity: warning }
+        # - alert: MpESClusterRed        # primary 미할당 — 검색 전멸
+        #   for: 5m
+        #   labels: { severity: critical }
+        # - alert: MpESDiskHigh
+        #   labels: { severity: warning }
+
+    - name: mp-kafka
+      rules: []
+        # - alert: MpKafkaBrokerDown     # RF=3 이라 1대는 견딘다 → warning
+        #   labels: { severity: warning }
+        # - alert: MpKafkaISRShrink      # ISR < RF — 다음 상실에서 데이터 위험
+        #   labels: { severity: critical }
+        # - alert: MpKafkaConsumerLagHigh
+        #   # ⚠️ 컨슈머가 KEDA scale-to-zero(min 0) 라 **평시 lag 이 정상적으로 존재**한다.
+        #   #    스케일업이 안 따라오는 국면만 잡아야 한다 — 임계를 넉넉히.
+        #   labels: { severity: warning }
+
+    - name: mp-minio
+      rules: []
+        # - alert: MpMinIODiskHigh
+        #   # MinIO 는 문서화된 단일 replica 예외(호스트 B 고정)라 여유가 없다.
+        #   #   Loki·Tempo 블록이 여기 쌓이므로 포화하면 관측이 통째로 죽는다.
+        #   labels: { severity: warning }
