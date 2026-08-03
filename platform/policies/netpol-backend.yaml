@@ -75,12 +75,40 @@ spec:
               app: istiod
       ports:
         - { protocol: TCP, port: 15012 }
-    # 3) data ns — PG(CNPG)·ES·Redis·Kafka. 포트 다양(5432/9200/6379/26379/9092/9093)이라 ns 스코프가 경계.
-    #    §10.3 도 "data ns"로 포트 무제한. 모든 backend 의 DB/검색/캐시/큐 접근이 여기로.
+    # 3) data ns — PG(CNPG)·ES·Redis·Kafka. 모든 backend 의 DB/검색/캐시/큐 접근이 여기로.
+    #
+    # 🔴 **2026-08-03: 포트 무제한 → 5개로 좁힘.** 종전 근거는 "포트가 다양(5432/9200/6379/
+    #    26379/9092/9093)해서 ns 스코프가 경계" 였는데, 세어 보니 앱이 쓰는 건 **정확히 5개**다
+    #    (9093 은 애초에 존재하지도 않는 포트였다). 열거가 가능하므로 근거가 성립하지 않는다.
+    #
+    # 포트는 트래픽 관측이 아니라 **설정에서 뽑았다** — common/app-common.yaml + 서비스 오버레이:
+    #    PGHOST=pg-pooler.data.svc · PGPORT=5432  (+ ocr/ranking 은 pg-rw.data.svc 직결, 같은 5432)
+    #    ESHOST=es-es-http.data.svc               → 9200
+    #    REDIS_SENTINELS=...mp-redis-s-hl.data.svc:26379  → 26379
+    #    REDISHOST=mp-redis-master.data.svc · REDISPORT=6379 → 6379
+    #    KAFKA_BOOTSTRAP=kafka-kafka-bootstrap.data.svc:9092 → 9092
+    #    ⚠️ Hubble 로 뽑으면 안 된다 — PG·ES 연결은 풀링돼 상주하므로 짧은 관측창에는
+    #       6379 만 잡힌다(실측). 그걸 근거로 쓰면 5432·9200 을 빠뜨려 전면 장애가 난다.
+    #    🔴 Redis 는 26379(Sentinel 로 master 발견) + 6379(발견한 master 로 실제 접속) **둘 다** 필요하다.
+    #       Sentinel-aware 클라이언트(분기 C)의 동작이라 하나만 열면 조용히 실패한다.
+    #
+    # 이걸로 닫히는 것 = data ns 에 열려 있던 나머지 포트들. 앱이 쓸 일이 없다:
+    #    9300 ES transport  ← 🔴 노드로 **ES 클러스터에 합류**하는 경로
+    #    9091 Kafka 브로커 간 복제 · 9090 컨트롤플레인 · 8443 Strimzi 에이전트
+    #    9114 ES exporter · 9121 Redis exporter (메트릭) · 8000 CNPG 인스턴스매니저 failsafe
+    #
+    # ⚠️ 이건 **"어느 포트"만 좁힌 것이고 "어느 서비스가"는 그대로다.** 침해된 recipe 파드는
+    #    여전히 PG:5432 에 닿는다(감사 §7.2-3 의 지적). 그건 서비스별 정책이 필요한 별건이다.
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: data
+      ports:
+        - { protocol: TCP, port: 5432 } # PG — pooler 경유 + ocr/ranking 직결
+        - { protocol: TCP, port: 6379 } # Redis master(Sentinel 이 알려준 곳)
+        - { protocol: TCP, port: 26379 } # Redis Sentinel — master 발견
+        - { protocol: TCP, port: 9200 } # Elasticsearch HTTP
+        - { protocol: TCP, port: 9092 } # Kafka clients(PLAINTEXT)
     # 4) 같은 ns backend ↔ backend (서비스 간 호출 egress 쪽 — ingress 2)의 짝)
     - to:
         - podSelector:
