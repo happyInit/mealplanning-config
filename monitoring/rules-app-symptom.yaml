@@ -40,32 +40,86 @@ metadata:
 spec:
   groups:
     - name: mp-app-symptom
-      rules: []
-        # ── ① 검색 0건률 급증 ────────────────────────────────────────────────
-        # 잡으려는 것: nori 파손·인덱스 유실·매핑 사고처럼 **200 을 주면서 빈 결과**를
-        #   내는 국면. 2026-08-03 사고가 정확히 이것이었다.
-        # 후보 지표: recipe 서비스가 결과 건수를 메트릭으로 내보내는지 먼저 확인.
-        #   없으면 (a) 앱에 카운터 추가(별건) 또는 (b) ES 쿼리 결과를 보는 blackbox 방식.
-        # - alert: MpSearchEmptyResultRateHigh
-        #   expr: <채울 것>
-        #   for: 15m
-        #   labels: { severity: critical }
-        #   annotations:
-        #     summary: "레시피 검색이 빈 결과를 반환하는 비율이 비정상"
-        #     description: "컴포넌트는 정상인데 유저가 결과를 못 받는 상태. 인덱스·매핑 확인."
+      rules:
+        # ══ 설계 근거 (2026-08-03 실측) ═════════════════════════════════════
+        # 🔴 **비율(ratio) 알람을 쓰지 않았다.** 트래픽이 그걸 감당할 양이 아니다:
+        #      account  3,452 요청/24h  ·  mealplan  **58 요청/24h**
+        #    mealplan 에서 에러 1건이면 곧바로 1.7% 다. 임계 5% 짜리 비율 알람은
+        #    "에러 3건" 에서 터지고, 반대로 조용한 시간대엔 분모가 0 이라 아예 평가가 안 된다.
+        #    → 저트래픽에서는 **절대 건수 + 긴 창**이 훨씬 안정적이다.
+        #
+        # 🔴 4xx 를 발화 조건에서 뺐다. account 의 401 은 평상시 비율이 **42.8%** 다
+        #    (24h 3,452건 중 1,478건 — 만료 토큰·비로그인 접근이 정상적으로 섞인다).
+        #    4xx 로 알람을 만들면 첫날부터 상시 울리고, 그러면 아무도 안 본다.
+        #    반면 **5xx 는 24h 기준 0건** 이라 신호 대 잡음이 깨끗하다.
+        #
+        # 🔴 service!~".*-canary" — 카나리 중에는 같은 파드가 두 Service 에 동시에 속해
+        #    시리즈가 **중복 수집**된다(실측: recipe/recipe-canary 가 같은 값). 합산 시 2배가 된다.
+        #
+        # 라벨 규약: severity=critical → #alerts-critical / warning → #monitoring(repeat 4h)
+        # ═══════════════════════════════════════════════════════════════════
 
-        # ── ② 로그인 실패율 ──────────────────────────────────────────────────
-        # 잡으려는 것: account 인증 경로 파손(JWT 시크릿 불일치·PG 커넥션 고갈·bcrypt 포화).
-        # ⚠️ 유저의 정상 오타도 실패로 잡히므로 **평상시 실패율을 먼저 재고** 그 위로 잡는다.
-        # - alert: MpLoginFailureRateHigh
-        #   expr: <채울 것>
-        #   for: 15m
-        #   labels: { severity: critical }
+        # ── ① 인증 경로 파손 ─────────────────────────────────────────────────
+        # 잡으려는 것: JWT 시크릿 불일치·PG 커넥션 고갈·bcrypt 포화처럼 **로그인 자체가
+        #   서버 오류로 실패**하는 국면. 비밀번호 오타(4xx)는 의도적으로 제외한다.
+        - alert: MpAuthPathFailing
+          expr: |
+            sum(increase(http_requests_total{namespace="app",service!~".*-canary",
+                handler=~"/api/auth/(login|signup|refresh|google|kakao)",status=~"5.."}[30m])) >= 5
+          for: 15m
+          labels: { severity: critical, environment: production, owner: app-platform }
+          annotations:
+            summary: "인증 경로 5xx 가 30분간 5건 이상 — 로그인이 서버 오류로 실패 중"
+            description: >-
+              account 의 로그인·가입·토큰갱신·소셜 콜백에서 서버 오류가 반복된다.
+              평상시 5xx 는 0건이라 이 알람이 뜨면 실제 파손이다.
+              확인: JWT 시크릿(ESO) · PG 커넥션 수 · account 파드 로그.
 
-        # ── ③ 식단 생성 실패율 ───────────────────────────────────────────────
-        # 잡으려는 것: 핵심 여정 파손. mealplan 은 thin proxy 라 자기 CPU 는 바닥이고
-        #   (부하테스트 실측 133~145m) **다운스트림 대기로 죽는다** → CAUSE 알람이 특히 무력하다.
-        # - alert: MpMealplanFailureRateHigh
-        #   expr: <채울 것>
-        #   for: 15m
-        #   labels: { severity: warning }
+        # ── ② 핵심 여정(식단 추천) 파손 ──────────────────────────────────────
+        # mealplan 은 thin proxy 라 자기 CPU 는 바닥이고(부하실측 133~145m)
+        #   **다운스트림 대기로 죽는다** → CPU·메모리 기반 CAUSE 알람이 특히 무력한 구간이다.
+        - alert: MpMealplanRecommendFailing
+          expr: |
+            sum(increase(http_requests_total{namespace="app",service!~".*-canary",
+                handler="/api/mealplan/recommend",status=~"5.."}[30m])) >= 3
+          for: 15m
+          labels: { severity: critical, environment: production, owner: app-platform }
+          annotations:
+            summary: "식단 추천이 30분간 3건 이상 서버 오류 — 핵심 여정 파손"
+            description: >-
+              mealplan 자체보다 다운스트림(recipe·ranking-serving·price·PG) 을 먼저 본다.
+              mealplan 파드의 CPU·메모리는 정상으로 보이는 것이 이 장애의 특징이다.
+
+        # ── ③ 앱 전반의 5xx 누적 ────────────────────────────────────────────
+        # 기존 MpAppHighErrorRate(비율 5%, for 2m)의 **저트래픽 보완**이다.
+        #   비율 알람은 분모가 작으면 과민하고 분모가 0 이면 침묵한다 — 그 사각을 메운다.
+        - alert: MpAppErrorsAccumulating
+          expr: |
+            sum by (service) (increase(http_requests_total{namespace="app",
+                service!~".*-canary",status=~"5.."}[30m])) >= 10
+          for: 30m
+          labels: { severity: warning, environment: production, owner: app-platform }
+          annotations:
+            summary: "{{ $labels.service }} 에서 30분간 5xx 10건 이상 누적"
+            description: >-
+              비율로는 안 걸리지만 꾸준히 실패하는 상태. 파드 재시작·다운스트림 타임아웃을 본다.
+
+        # ── ④ 검색 0건률 — 🔴 **구현 못 했다. 지표가 없다.** ────────────────
+        # 잡으려던 것: nori 파손·매핑 사고처럼 **HTTP 200 을 주면서 빈 결과**를 내는 국면.
+        #   2026-08-03 사고가 정확히 이것이었다(category=국&찌개 103건 → 0건, 알람 35개 전부 침묵).
+        #
+        # 왜 못 하나: 우리가 가진 앱 지표는 http_requests_total(handler·status) 뿐이다.
+        #   "결과가 몇 건이었나" 는 **어디에도 없다.** 검색이 0건을 반환해도 status=2xx 다.
+        #   Istio 메트릭도 마찬가지 — HTTP 계층은 빈 결과와 정상 결과를 구분하지 못한다.
+        #
+        # 필요한 것(별건, 앱 코드):
+        #   recipe 에 `recipe_search_results_total{empty="true"|"false"}` 카운터 추가.
+        #   그러면 이 규칙이 성립한다:
+        #     sum(increase(recipe_search_results_total{empty="true"}[30m]))
+        #       / sum(increase(recipe_search_results_total[30m])) > 0.8
+        #   (0건률이 평상시 대비 압도적으로 높아진 상태 = 인덱스/매핑 사고)
+        #
+        # 대안으로 blackbox 방식(검색 API 를 주기적으로 호출해 결과 수를 재는 프로브)도 있으나
+        #   blackbox-exporter 가 미배포다(실측 확인).
+        # 🔴 그때까지 이 국면은 **알람으로 못 잡는다** — 사람이 검색해 보는 수밖에 없다.
+        #    이 한계를 모르고 "알람 있으니 괜찮다" 로 읽지 말 것.
