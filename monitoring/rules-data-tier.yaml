@@ -4,9 +4,9 @@
 #    SYMPTOM(rules-app-symptom.yaml, 봉수) / 데이터 티어(여기, 태현) 로 소유자를 갈랐다.
 #
 # ── 담는 것 ─────────────────────────────────────────────────────────────────
-#   § PGSync (#4)  ← 🔴 오늘 최우선. 아래 참조
+#   § PGSync (#4)  — 정본은 platform/pg/monitoring.yaml (T-2). 여기서 중복 발화하지 않는다.
 #   § ES     (#3)  — cluster yellow/red · 디스크
-#   § Kafka  (#3)  — 브로커 상실 · ISR 축소 · 컨슈머 lag
+#   § Kafka  (#3)  — 브로커 상실 · ISR 축소 (consumer lag 은 pipeline 정본 사용)
 #   § MinIO  (#3)  — 디스크 포화
 #
 # ── 🔴 § PGSync — 왜 최우선인가 ─────────────────────────────────────────────
@@ -44,53 +44,122 @@ metadata:
   name: mp-data-tier
 spec:
   groups:
-    - name: mp-pgsync
-      rules: []
-        # ── 슬롯이 죽었다 (파드 생존과 무관) ─────────────────────────────────
-        # 지표 후보: CNPG 가 내보내는 pg_replication_slots_* 계열.
-        #   확인:  kubectl -n data exec pg-1 -- psql -c \
-        #          "select slot_name, active, wal_status from pg_replication_slots;"
-        # - alert: MpPGSyncSlotInactive
-        #   expr: <채울 것>              # 슬롯 active == 0
-        #   for: 10m
-        #   labels: { severity: critical }
-        #   annotations:
-        #     summary: "PGSync 복제 슬롯이 비활성 — WAL 이 쌓이기 시작한다"
-        #     description: "max_slot_wal_keep_size=-1 이라 방치 시 PG 디스크가 고갈된다. 즉시 확인."
-
-        # ── WAL 이 실제로 쌓이고 있다 (위의 결과 확인용) ─────────────────────
-        # 🔴 이게 진짜 위험 신호다. 여유 8.7G 기준으로 임계를 잡는다.
-        # - alert: MpPGSyncSlotLagHigh
-        #   expr: <채울 것>              # slot lag bytes > 임계
-        #   for: 15m
-        #   labels: { severity: critical }
-
     - name: mp-es
-      # 🔴 #9(recipes rep 0 → 1) 적용 후에 활성화할 것. 그 전엔 yellow 가 상시라 오탐.
-      rules: []
-        # - alert: MpESClusterYellow     # 사본 미할당 — 노드 상실 시 데이터 위험
-        #   for: 30m                     # 재할당에 시간이 걸리므로 길게
-        #   labels: { severity: warning }
-        # - alert: MpESClusterRed        # primary 미할당 — 검색 전멸
-        #   for: 5m
-        #   labels: { severity: critical }
-        # - alert: MpESDiskHigh
-        #   labels: { severity: warning }
+      rules:
+        # ECK 는 Prometheus 지표를 네이티브로 노출하지 않는다. platform/es/monitoring.yaml 의
+        # exporter 배관이 끊기면 아래 health 알람도 눈멀기 때문에 결측을 독립적으로 잡는다.
+        - alert: MpElasticsearchMetricsUnavailable
+          expr: |
+            absent(up{job="data/mp-elasticsearch-exporter"})
+            or max(up{job="data/mp-elasticsearch-exporter"}) == 0
+            or absent_over_time(elasticsearch_cluster_health_status{job="data/mp-elasticsearch-exporter"}[10m])
+          for: 15m
+          labels: {severity: warning, service: elasticsearch}
+          annotations:
+            summary: "Elasticsearch health 지표를 15분째 수집하지 못함"
+            description: "mp-elasticsearch-exporter 파드·ServiceMonitor·data NetworkPolicy와 ES 인증 Secret을 확인한다."
+
+        # replica=1 전환(#9) 완료가 선행조건이다. 30분은 재할당 중의 일시 yellow를 거른다.
+        - alert: MpESClusterYellow
+          expr: max_over_time(elasticsearch_cluster_health_status{color="yellow"}[2m]) == 1
+          for: 30m
+          labels: {severity: warning, service: elasticsearch}
+          annotations:
+            summary: "Elasticsearch cluster yellow가 30분 지속"
+            description: "replica shard가 미할당 상태다. 노드·allocation explain·PVC 여유를 확인한다."
+
+        - alert: MpESClusterRed
+          expr: max_over_time(elasticsearch_cluster_health_status{color="red"}[2m]) == 1
+          for: 5m
+          labels: {severity: critical, service: elasticsearch}
+          annotations:
+            summary: "Elasticsearch cluster red가 5분 지속"
+            description: "primary shard 미할당으로 검색 또는 색인이 중단될 수 있다. 즉시 cluster health와 allocation explain을 확인한다."
+
+        - alert: MpESVolumeMetricsUnavailable
+          expr: |
+            absent_over_time(kubelet_volume_stats_available_bytes{namespace="data", persistentvolumeclaim=~"elasticsearch-data-es-.*"}[10m])
+            or absent_over_time(kubelet_volume_stats_capacity_bytes{namespace="data", persistentvolumeclaim=~"elasticsearch-data-es-.*"}[10m])
+            or count(count_over_time(kubelet_volume_stats_available_bytes{namespace="data", persistentvolumeclaim=~"elasticsearch-data-es-.*"}[10m])) != 3
+            or count(count_over_time(kubelet_volume_stats_capacity_bytes{namespace="data", persistentvolumeclaim=~"elasticsearch-data-es-.*"}[10m])) != 3
+          for: 15m
+          labels: {severity: warning, service: elasticsearch}
+          annotations:
+            summary: "Elasticsearch PVC 용량 지표가 15분째 불완전"
+            description: "3개 ES PVC 중 available/capacity 시계열이 빠졌다. kubelet volume stats와 PVC 상태를 확인한다. disk-high 알람도 현재 눈멀 수 있다."
+
+        - alert: MpESDiskHigh
+          expr: |
+            max by(namespace, persistentvolumeclaim) (
+              1 - kubelet_volume_stats_available_bytes{namespace="data", persistentvolumeclaim=~"elasticsearch-data-es-.*"}
+                / kubelet_volume_stats_capacity_bytes{namespace="data", persistentvolumeclaim=~"elasticsearch-data-es-.*"}
+            ) > 0.85
+          for: 30m
+          labels: {severity: warning, service: elasticsearch}
+          annotations:
+            summary: "Elasticsearch PVC {{ $labels.persistentvolumeclaim }} 사용률 85% 초과"
+            description: "30분 지속. ES disk watermark 진입 전에 인덱스 보존량·샤드와 실제 PVC 사용량을 확인한다."
 
     - name: mp-kafka
-      rules: []
-        # - alert: MpKafkaBrokerDown     # RF=3 이라 1대는 견딘다 → warning
-        #   labels: { severity: warning }
-        # - alert: MpKafkaISRShrink      # ISR < RF — 다음 상실에서 데이터 위험
-        #   labels: { severity: critical }
-        # - alert: MpKafkaConsumerLagHigh
-        #   # ⚠️ 컨슈머가 KEDA scale-to-zero(min 0) 라 **평시 lag 이 정상적으로 존재**한다.
-        #   #    스케일업이 안 따라오는 국면만 잡아야 한다 — 임계를 넉넉히.
-        #   labels: { severity: warning }
+      rules:
+        - alert: MpKafkaMetricsUnavailable
+          expr: |
+            absent(up{job="data/mp-kafka-exporter"})
+            or max(up{job="data/mp-kafka-exporter"}) == 0
+            or absent_over_time(kafka_brokers{job="data/mp-kafka-exporter"}[10m])
+            or absent_over_time(kafka_topic_partition_under_replicated_partition{job="data/mp-kafka-exporter"}[10m])
+          for: 15m
+          labels: {severity: warning, service: kafka}
+          annotations:
+            summary: "Kafka exporter 지표를 15분째 수집하지 못함"
+            description: "mp-kafka-exporter PodMonitor와 Strimzi exporter 파드를 확인한다. broker/ISR 알람도 현재 눈먼 상태다."
+
+        # 3-broker/RF=3 기준. max_over_time은 한두 번의 scrape 결측이 for 시계를 리셋하지 않게 한다.
+        - alert: MpKafkaBrokerDown
+          expr: max_over_time(kafka_brokers{job="data/mp-kafka-exporter"}[2m]) < 3
+          for: 10m
+          labels: {severity: warning, service: kafka}
+          annotations:
+            summary: "Kafka broker 수가 3 미만으로 10분 지속"
+            description: "RF=3 중 한 대 이상이 보이지 않는다. Strimzi Kafka 상태와 broker 파드·PVC를 확인한다."
+
+        # 한 broker 상실 뒤 ISR가 줄어든 상태에서는 다음 상실이 데이터 가용성/내구성에 직접 영향을 준다.
+        # 전체 partition을 한 알람으로 집계해 broker 장애 때 수십 건이 동시에 울리는 것을 막는다.
+        - alert: MpKafkaISRShrink
+          expr: |
+            max(
+              max_over_time(kafka_topic_partition_under_replicated_partition{job="data/mp-kafka-exporter"}[2m])
+            ) > 0
+          for: 10m
+          labels: {severity: critical, service: kafka}
+          annotations:
+            summary: "Kafka under-replicated partition이 10분 지속"
+            description: "ISR가 RF보다 작아 다음 broker 상실 시 데이터 위험이 있다. topic별 ISR와 broker 복구 상태를 즉시 확인한다."
+
+        # consumer lag은 여기서 중복 정의하지 않는다. KEDA scale-to-zero를 고려한 정본은
+        # pipelines/monitoring.yaml 의 MpConsumerIdleWithBacklog·MpConsumerBacklogStuck이다.
 
     - name: mp-minio
-      rules: []
-        # - alert: MpMinIODiskHigh
-        #   # MinIO 는 문서화된 단일 replica 예외(호스트 B 고정)라 여유가 없다.
-        #   #   Loki·Tempo 블록이 여기 쌓이므로 포화하면 관측이 통째로 죽는다.
-        #   labels: { severity: warning }
+      rules:
+        # MinIO native exporter는 미배포다. kubelet PVC 지표는 저장 경로 자체를 재므로 더 직접적이고,
+        # 단일 replica/단일 PVC라는 현재 문서화된 예외에도 정확히 맞는다.
+        - alert: MpMinIOVolumeMetricsUnavailable
+          expr: |
+            absent_over_time(kubelet_volume_stats_available_bytes{namespace="observability", persistentvolumeclaim="minio"}[10m])
+            or absent_over_time(kubelet_volume_stats_capacity_bytes{namespace="observability", persistentvolumeclaim="minio"}[10m])
+          for: 15m
+          labels: {severity: warning, service: minio}
+          annotations:
+            summary: "MinIO PVC 용량 지표를 15분째 수집하지 못함"
+            description: "kubelet volume stats와 minio PVC 상태를 확인한다. disk-high 알람도 현재 눈먼 상태다."
+
+        - alert: MpMinIODiskHigh
+          expr: |
+            1 - kubelet_volume_stats_available_bytes{namespace="observability", persistentvolumeclaim="minio"}
+              / kubelet_volume_stats_capacity_bytes{namespace="observability", persistentvolumeclaim="minio"}
+            > 0.85
+          for: 30m
+          labels: {severity: warning, service: minio}
+          annotations:
+            summary: "MinIO PVC 사용률 85% 초과"
+            description: "30분 지속. 단일 replica 저장소이며 Loki·Tempo·PG onsite dump가 함께 의존한다. 버킷별 증가량과 PVC 여유를 확인한다."

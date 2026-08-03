@@ -33,22 +33,28 @@ spec:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: pipeline } }
       ports:
         - { protocol: TCP, port: 9200 }
-    # 3) PGSync (data ns, app=pgsync — PG WAL → recipes_live bulk 색인, 상시 replicas=1) → :9200
+    # 3) ES exporter (data ns) → cluster health/stats :9200
+    - from:
+        - podSelector: { matchLabels: { app: elasticsearch-exporter } }
+        - podSelector: { matchLabels: { app: elasticsearch-exporter-bootstrap } }
+      ports:
+        - { protocol: TCP, port: 9200 }
+    # 4) PGSync (data ns, app=pgsync — PG WAL → recipes_live bulk 색인, 상시 replicas=1) → :9200
     - from:
         - podSelector: { matchLabels: { app: pgsync } }
       ports:
         - { protocol: TCP, port: 9200 }
-    # 4) intra-ES: 노드간 transport :9300 (디스커버리·샤드 복제·코디네이팅 포워딩). 없으면 클러스터 red.
+    # 5) intra-ES: 노드간 transport :9300 (디스커버리·샤드 복제·코디네이팅 포워딩). 없으면 클러스터 red.
     - from:
         - podSelector: { matchLabels: { elasticsearch.k8s.elastic.co/cluster-name: es } }
       ports:
         - { protocol: TCP, port: 9300 }
-    # 5) ECK operator (elastic-system) → :9200 (헬스·라이선스·샤드 관리 오케스트레이션)
+    # 6) ECK operator (elastic-system) → :9200 (헬스·라이선스·샤드 관리 오케스트레이션)
     - from:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: elastic-system } }
       ports:
         - { protocol: TCP, port: 9200 }
-    # 6) kubelet probe — data ns=메시 밖이라 파드 포트로 직접(소스=노드 IP). 포트 무제한.
+    # 7) kubelet probe — data ns=메시 밖이라 파드 포트로 직접(소스=노드 IP). 포트 무제한.
     #    🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
     - from:
         - ipBlock: { cidr: 192.168.0.0/24 }

@@ -8,6 +8,8 @@ namespace: data
 resources:
   - netpol-redis.yaml               # Redis(mp-redis + sentinel) default-deny — 3-1 ✅ 검증완료
   - netpol-es.yaml                  # ES(ECK, cluster=es) default-deny — 3-2 ✅ 검증완료
+  - netpol-es-exporter.yaml         # ES exporter: Prometheus ingress + DNS/ES-only egress
+  - netpol-es-exporter-bootstrap.yaml # one-shot monitor user bootstrap: DNS + ES only
   - netpol-pg.yaml                  # PG(CNPG instance + pooler) default-deny — 3-3
   - netpol-pg-egress-fqdn.yaml      # PG instance egress: S3 백업 FQDN + kube-apiserver (CiliumNetworkPolicy) — 3-3
   - netpol-pg-onsite.yaml           # 온사이트 백업 CronJob egress 잠금(DNS·PG·MinIO 만) — 2026-08-03
