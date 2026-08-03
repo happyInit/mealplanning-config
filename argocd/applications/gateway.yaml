@@ -26,3 +26,8 @@ spec:
       name: mp-recipe-route
       jsonPointers:
         - /spec/rules
+    - group: gateway.networking.k8s.io       # account 카나리(ADR-0001) — 같은 이유
+      kind: HTTPRoute
+      name: mp-account-route
+      jsonPointers:
+        - /spec/rules

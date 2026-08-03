@@ -151,9 +151,15 @@ spec:
     - matches:
         - path: { type: PathPrefix, value: /api/auth }
         - path: { type: PathPrefix, value: /api/users }
+      # 🔴 카나리(ADR-0001) — backendRefs 2개(stable/canary). weight 는 Argo Rollouts Gateway API
+      #    플러그인이 롤아웃 중 조작한다. git 정본 = account 100 / account-canary 0.
       backendRefs:
         - name: account
           port: 8004
+          weight: 100
+        - name: account-canary
+          port: 8004
+          weight: 0
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

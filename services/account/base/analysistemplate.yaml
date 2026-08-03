@@ -1,0 +1,34 @@
+# account 카나리 자동분석 (ADR-0001 §6.5) — Rollout 의 analysis 스텝이 참조.
+#   Istio 텔레메트리(destination_service_name="account-canary")로 카나리 파드만 격리 측정.
+#   임계값 = 5xx<0.05 · p95<2000ms. 실패 시 Rollout 자동 abort→롤백.
+#   🔴 account = 관문이라 여긴 특히 자동 롤백이 값지다(나쁜 로그인 버전이 20%에서 잡혀 되돌아감).
+#   저트래픽 no-data=pass. 파일럿/검증은 k6 로 트래픽 흘려 실데이터 판정.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: account-canary-analysis
+spec:
+  metrics:
+    - name: canary-5xx-rate
+      interval: 30s
+      count: 3
+      successCondition: "len(result) == 0 || result[0] < 0.05"
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.observability:9090
+          query: |
+            sum(rate(istio_requests_total{destination_service_name="account-canary",reporter="destination",response_code=~"5.."}[1m]))
+            /
+            sum(rate(istio_requests_total{destination_service_name="account-canary",reporter="destination"}[1m]))
+    - name: canary-p95-latency-ms
+      interval: 30s
+      count: 3
+      successCondition: "len(result) == 0 || result[0] < 2000"
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.observability:9090
+          query: |
+            histogram_quantile(0.95,
+              sum(rate(istio_request_duration_milliseconds_bucket{destination_service_name="account-canary",reporter="destination"}[1m])) by (le))
