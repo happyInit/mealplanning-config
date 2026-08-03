@@ -1,8 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - deployment.yaml
+  - rollout.yaml           # 🔴 Deployment→Rollout 카나리 전환(ADR-0001, 2026-08-03)
   - service.yaml
+  - service-canary.yaml    # 카나리 트래픽 대상 Service (Rollouts 가 hash 주입)
   - externalsecret.yaml
   - pdb.yaml               # 가용성 — drain 중 최소 1 유지(§9.5). 전제 replica>=2 는 HPA minReplicas 가 보장
-  - hpa.yaml               # 부하시험 승격(2026-08-01) — CPU 70%(ContainerResource) · min 2 · max 4
+  - hpa.yaml               # 부하시험 승격(2026-08-01) — CPU 70%(ContainerResource) · min 2 · max 4 · scaleTargetRef→Rollout
+  - analysistemplate.yaml  # 카나리 자동분석(5xx·p95) — Rollout analysis 스텝이 참조

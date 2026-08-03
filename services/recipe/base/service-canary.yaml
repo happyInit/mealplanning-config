@@ -1,0 +1,19 @@
+# recipe 카나리 Service (ADR-0001) — Rollouts 가 stable(recipe)/canary(recipe-canary) 사이 트래픽을 나눈다.
+#   🔴 selector 는 base 에서 `app: recipe` 뿐이지만, Rollouts 가 **rollouts-pod-template-hash 를 주입**해
+#      카나리 RS 파드로 좁힌다(라이브 selector 드리프트 → recipe 앱 ignoreDifferences 로 무시).
+#   HTTPRoute(mp-recipe-route)의 backendRef 대상이 되며, weight 는 플러그인이 조작한다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: recipe-canary
+  labels:
+    app: recipe
+spec:
+  type: ClusterIP
+  selector:
+    app: recipe
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+      appProtocol: http

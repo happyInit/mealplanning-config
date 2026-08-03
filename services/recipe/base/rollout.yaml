@@ -1,0 +1,134 @@
+# recipe — Argo Rollouts 카나리 (ADR-0001). 기존 Deployment 를 변환(2026-08-03, 파일럿).
+#
+# 🔴 마이그레이션(무중단): 구 Deployment `mp-recipe` 는 recipe 앱이 prune:false 라 자동 삭제 안 됨.
+#    이 Rollout 이 Healthy 로 뜬 뒤 **수동** `kubectl -n app delete deploy mp-recipe` 로 제거한다.
+#    겹치는 동안 둘 다 `app: recipe` 파드를 서빙하므로 다운타임 없음(각자 자기 RS 만 소유).
+#
+# 🔴 TSC `matchLabelKeys` = **rollouts-pod-template-hash** (Deployment 의 pod-template-hash 아님).
+#    Rollouts 는 파드에 이 라벨을 붙인다 — 이름을 안 바꾸면 롤아웃 중 구/신 RS 를 함께 세어
+#    스프레드 보장이 조용히 깨진다(deployment.yaml 의 그 함정과 동일 메커니즘).
+#
+# 🔴 카나리 트래픽 분할 = Gateway API 플러그인(rollouts.yaml). stable/canary 두 Service 사이
+#    HTTPRoute(mp-recipe-route) 가중치를 플러그인이 조작한다. HTTPRoute 는 backendRefs 2개
+#    (recipe weight100 / recipe-canary weight0)로 미리 선언돼 있어야 한다(gateway/httproutes.yaml).
+#    account·recipe 둘 다 HPA 라 replica-based 카나리는 %가 오염됨 → 트래픽라우터 필수(ADR §6.1).
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: mp-recipe
+  labels:
+    app: recipe
+    tier: backend
+spec:
+  # 🔴 replicas 없음 — HPA(hpa.yaml, scaleTargetRef→Rollout)가 소유. 베이스라인=HPA minReplicas(2).
+  selector:
+    matchLabels:
+      app: recipe
+  strategy:
+    canary:
+      stableService: recipe          # 기존 Service — 내부 DNS·stable 트래픽(Rollouts 가 hash 주입)
+      canaryService: recipe-canary   # 신규 Service — 카나리 트래픽
+      trafficRouting:
+        plugins:
+          argoproj-labs/gatewayAPI:
+            httpRoute: mp-recipe-route
+            namespace: app
+      steps:
+        - setWeight: 20
+        - pause: { duration: 30s }        # 메트릭 축적 대기
+        - analysis:                        # 5xx·p95 자동분석 → 실패 시 자동 abort/롤백
+            templates:
+              - templateName: recipe-canary-analysis
+        - setWeight: 50
+        - pause: { duration: 30s }
+        - analysis:
+            templates:
+              - templateName: recipe-canary-analysis
+        - setWeight: 100
+  template:
+    metadata:
+      annotations:
+        # Istio 병합 — 사이드카가 /metrics 를 15020/stats/prometheus 로 합침(STRICT-safe).
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8001"
+      labels:
+        app: recipe
+        tier: backend
+    spec:
+      # blast radius 축소 — zone·hostname 스프레드(hard). 근거·함정은 구 deployment.yaml 주석 참조.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - rollouts-pod-template-hash   # 🔴 Rollouts 라벨 (pod-template-hash 아님)
+          labelSelector:
+            matchLabels:
+              app: recipe
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - rollouts-pod-template-hash
+          labelSelector:
+            matchLabels:
+              app: recipe
+      automountServiceAccountToken: false
+      securityContext:                       # PSS restricted (app ns enforce)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: recipe                       # 🔴 HPA containerResource 가 이 이름을 참조
+          image: 192.168.0.10/mealplanning/mp-recipe-service:d20d3fdb3a4fe05d852bde354cca7991e11c6d59   # overlay images 트랜스포머가 :sha 재확인
+          ports:
+            - name: http                     # Istio L7 판별 = 포트 이름
+              containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: app-common
+            - secretRef:
+                name: mp-recipe-secrets
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: recipe
+            - name: ES_INDEX
+              value: "recipes_pgsync"
+          startupProbe:
+            httpGet: { path: /health, port: 8001 }
+            periodSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet: { path: /health, port: 8001 }
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 8001 }
+            periodSeconds: 30
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec: { command: ["sleep", "5"] }
+          resources:
+            requests:
+              cpu: 300m                       # HPA util 기준(target 70%=210m). limit CPU 없음(ES 버스트 CFS 스로틀 회피).
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

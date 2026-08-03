@@ -43,9 +43,16 @@ spec:
   rules:
     - matches:
         - path: { type: PathPrefix, value: /api/recipes }
+      # 🔴 카나리(ADR-0001) — backendRefs 2개(stable/canary). weight 는 Argo Rollouts Gateway API
+      #    플러그인이 롤아웃 중 조작한다(100/0 ↔ 80/20 ↔ …). git 은 stable 100 을 정본으로 둔다.
+      #    gateway 앱 ignoreDifferences 로 플러그인의 weight 재작성을 OutOfSync 로 안 보게 한다.
       backendRefs:
         - name: recipe
           port: 8001
+          weight: 100
+        - name: recipe-canary
+          port: 8001
+          weight: 0
 ---
 # 챗봇 — /api/mealplan/assistant 만 chat 으로(아래 mealplan 보다 긴 prefix)
 apiVersion: gateway.networking.k8s.io/v1

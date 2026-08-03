@@ -25,3 +25,13 @@ spec:
       selfHeal: false
     syncOptions:
       - CreateNamespace=false
+  # 🔴 카나리(ADR-0001) — Argo Rollouts 가 라이브에서 바꾸는 필드를 OutOfSync 로 안 보게 무시.
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Rollout
+      jsonPointers:
+        - /spec/replicas          # HPA 소유(scaleTargetRef→Rollout)
+    - group: ""
+      kind: Service
+      jsonPointers:
+        - /spec/selector          # Rollouts 가 rollouts-pod-template-hash 주입(recipe·recipe-canary)
