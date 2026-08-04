@@ -127,6 +127,53 @@ retirement는 의도적으로 두 단계다. replication slot 삭제는 PostgreS
 재개한다. slot 삭제 뒤 죽거나 이미 완료된 상태도 `live-only view + slot absent`로 멱등 성공한다.
 예상 밖 조합(`legacy route + slot absent`, 다른 index/table/owner/trigger)은 자동 수정하지 않고 실패한다.
 
+### 3-1. 구 슬롯(고아 슬롯) 수동 삭제 — alias 컷오버/은퇴 뒤 잔여 정리 (이슈 #516)
+
+> 위 §3 의 retirement 는 legacy `foodbudget_recipes_pgsync` **한 슬롯**을 대상으로 하는 자동 경로다.
+> 여기 항목은 **그 외에 소비자가 사라지고 남은 임의의 논리 슬롯**을 붙잡아 지우는 manual 절차다.
+> 이 절차가 이 문서에 없어서 2026-08-03 alias 컷오버(`recipes_pgsync`→`recipes_v2`, 라이브 `recipes_live`) 때
+> 구 슬롯 `foodbudget_recipes_pgsync` 가 남았다.
+
+**왜 지워야 하는가** — 소비자(가데이터베이스 sender)가 없는 논리 슬롯은 WAL 을 무한 붙잡는다.
+실측 128MB/h · 하루 약 3GB. walStorage 가 10Gi 라 3일이면 가득 차 **PG 의 쓰기가 전면 중단**된다.
+이제는 `max_slot_wal_keep_size=1GB` 상한(cluster.yaml)이 있어 디스크를 채우는 대신 그 슬롯을
+무효화하지만, 어느 쪽이든 방치하면 안 되는 잔여물이다.
+
+**어떻게 확인하는가** — 슬롯 목록과 보류 WAL 을 조회한다(primary 인스턴스에서):
+
+```sql
+SELECT slot_name,
+       slot_type,
+       active,
+       wal_status,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS retained_bytes
+FROM pg_replication_slots;
+```
+
+실측 예(정상 상태, 슬롯 2개):
+
+```
+_cnpg_pg_2               active=t  wal_status=reserved  retained=0 bytes   -- CNPG 아카이빙용 물리 슬롯
+foodbudget_recipes_live  active=f  wal_status=reserved  retained=16 MB    -- PGSync 논리 슬롯(순간 active=f 일 수 있음)
+```
+
+**지우기 전 반드시 대조할 것** 🔴 —
+1. 대상 슬롯이 **`active=false`** 인지 확인한다. **활성 슬롯을 지우면 그 인덱스의 CDC 가 끊긴다.**
+2. 대상이 라이브 PGSync 슬롯(`foodbudget_recipes_live`)이 **아닌지** 슬롯명을 대조한다 — 라이브 슬롯은
+   순간적으로 `active=false` 일 수 있으니 이름으로 확정한다.
+3. `slot_type='logical'` 만 대상이다. `_cnpg_pg_*`(물리, CNPG 아카이빙) 은 지우면 안 된다.
+4. consumer 가 잠깐 멈춘 것(`active=false` 이지만 retained 이 안정적이고 명백히 살아있는 PGSync)과
+   진짜 고아(며칠째 `active=false` + retained 성장)를 구분한다.
+
+**어떻게 지우는가** (소비자를 먼저 멈춘 뒤, primary 에서):
+
+```sql
+SELECT pg_drop_replication_slot('foodbudget_recipes_pgsync');
+```
+
+`active=false` 를 재확인한 뒤 지운다. 삭제 뒤 위 조회를 다시 돌려 슬롯이 사라졌는지 확인한다.
+(PG 의 슬롯 삭제는 transaction rollback 대상이 아니므로, 지우기 전 확인이 곧 유일한 안전장치다.)
+
 ## 4. 최종 read-only gate
 
 ```bash

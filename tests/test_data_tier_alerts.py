@@ -41,6 +41,8 @@ class DataTierAlertContractTests(unittest.TestCase):
                 "MpKafkaISRShrink",
                 "MpMinIOVolumeMetricsUnavailable",
                 "MpMinIODiskHigh",
+                "MpPGReplicationSlotRetainedWALWarning",
+                "MpPGReplicationSlotInactive",
             },
             set(self.alerts),
         )
@@ -91,6 +93,8 @@ class DataTierAlertContractTests(unittest.TestCase):
             "MpKafkaBrokerDown",
             "MpMinIOVolumeMetricsUnavailable",
             "MpMinIODiskHigh",
+            "MpPGReplicationSlotRetainedWALWarning",
+            "MpPGReplicationSlotInactive",
         ):
             self.assertEqual("warning", self.alerts[name]["labels"]["severity"])
 
