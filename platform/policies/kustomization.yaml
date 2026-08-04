@@ -10,5 +10,10 @@ resources:
   - netpol-backend.yaml             # 티어 2: backend 공통 (GW+intra-app+probe / data+DNS+istiod+intra-app)
   - netpol-operations.yaml          # 티어 2 부록: operations cross-ns ↔ observability(Alertmanager/Prometheus)
   - netpol-backend-fqdn.yaml        # 티어 2 부록: account→OAuth · ocr/chat→Gemini FQDN (CiliumNetworkPolicy)
+  # 티어 0 진입점 — 위 셀렉터(tier=backend/frontend·app=operations) 어디에도 안 걸려 무정책이던 3파드.
+  #   둘 다 egress 전용이다: 입구를 ingress 로 잠그면 유입 소스(노드·LAN·cloudflared)를 하나만
+  #   빠뜨려도 공개 서비스가 전면 불가가 된다. ingress 는 default-deny 베이스라인과 함께 별건.
+  - netpol-gateway.yaml             # 티어 0: 공개 GW egress (DNS·istiod·backend·frontend·tempo)
+  - netpol-cloudflared.yaml         # 티어 0: cloudflared egress (DNS·GW:443·CF 엣지 FQDN, CiliumNetworkPolicy)
   # 티어 3 data → 티어 4 pipeline 이 순서대로 추가된다.
   # 🔴 data·pipeline 대상 netpol 은 그 ns 로 가야 하므로(이 kustomization 은 namespace:app 강제) 그때 별도 배치.

@@ -1,0 +1,81 @@
+# 보안 ③ NetworkPolicy — 공개 게이트웨이(mp-gw-public) egress 전용.
+#
+# 🔴 필요성: app 네임스페이스엔 default-deny 베이스라인이 없고 기존 정책 3개(frontend·backend·operations)는
+#    전부 app/tier 라벨 셀렉터로만 걸린다. 그런데 게이트웨이 파드(`mp-gw-public-istio`, Envoy ×2)는 istiod 가
+#    Gateway 리소스를 보고 대신 만드는 파생물이라 **app·tier 라벨이 아예 없다** — 라벨 규칙이 우리 소유가 아니다.
+#    그래서 어느 정책에도 안 걸리고 egress 가 무제한이라, 인터넷에서 온 임의의 HTTP 를 직접 파싱하는 이 파드가
+#    노드 서브넷 192.168.0.0/24(호스트 C 의 Harbor·Jenkins·SonarQube 포함)와 정책 없는 네임스페이스에 그대로 닿았다.
+#
+# 🔴 셀렉터는 Gateway API 표준 라벨 `gateway.networking.k8s.io/gateway-name: mp-gw-public` 로 고른다.
+#    Deployment 이름(`mp-gw-public-istio`)이나 app 라벨로 고르면 istiod 가 바꿀 수 있는 우리 소유가 아닌 값에
+#    의존하게 되고, 이 라벨은 frontend·backend 정책이 이미 같은 이유로 쓰고 있는 안정적인 기준이다.
+#
+# 🔴 policyTypes 에 Egress 만 넣는다. 이 파드는 외부 유입의 유일한 입구다 — MetalLB 가 붙인 .14 로 들어오는
+#    트래픽의 실제 소스는 노드·LAN·cloudflared 로 여러 갈래이고, ingress 를 잠그면 그중 하나를 빠뜨렸을 때
+#    **공개 서비스가 전면 불가**가 된다. 이 정책의 목적은 나가는 경로를 좁히는 것이므로 egress 만 다룬다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-gw-public-egress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: mp-gw-public
+  policyTypes:
+    - Egress
+  egress:
+    # 1) DNS (CoreDNS) — 없으면 이름 해석 전멸(frontend·backend egress 1번과 동일)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) istiod XDS :15012 — 게이트웨이는 라우팅 설정뿐 아니라 **TLS 인증서까지 SDS 로 이 연결을 통해** 받는다.
+    #    빠지면 재시작 시 리스너가 안 뜬다.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+      ports:
+        - { protocol: TCP, port: 15012 }
+    # 3) backend :8001–8011 — 같은 ns. 실측 확인된 라우트 백엔드 포트:
+    #    recipe 8001 · price 8002 · chat 8003 · account 8004 · pantry 8005 · recipebook 8006 ·
+    #    mealplan 8007 · notify 8008 · ocr 8010 · video 8011. netpol-backend 의 ingress 1번(같은 범위)과 대칭.
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: backend
+      ports:
+        - { protocol: TCP, port: 8001, endPort: 8011 }
+    # 4) frontend :8080 — 같은 ns. 🔴 **8080 이다. Service 포트 80 이 아니다.** HTTPRoute 의
+    #    backendRefs.port 는 80 이지만 NetworkPolicy 는 **파드 포트**를 본다. netpol-frontend 의 ingress 1번이
+    #    GW 로부터 8080 을 허용하고 있고 그게 지금 동작하므로, 대칭인 이 규칙도 8080 이어야 한다.
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: frontend
+      ports:
+        - { protocol: TCP, port: 8080 }
+    # 5) 🔴 Tempo(observability) :4317 — OTLP 트레이스 전송. 근거 없이 보면 "게이트웨이가 왜 tempo 에?"로 읽혀
+    #    지워지기 쉽다. istio-system 의 Telemetry/mp-mesh-tracing 이 **selector 없이**(= 메시 전역, 게이트웨이
+    #    프록시 포함) randomSamplingPercentage: 100 으로 걸려 있고 provider 가 mp-tempo-otlp 다(2026-08-04 실측).
+    #    🔴 이걸 빠뜨리면 게이트웨이 트레이스가 조용히 사라진다. 최소권한을 위해 observability ns 전체가 아니라
+    #    tempo 파드 하나, 포트 하나(4317)만 연다(netpol-backend egress 5번과 동일한 형태).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+      ports:
+        - { protocol: TCP, port: 4317 }
