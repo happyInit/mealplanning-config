@@ -32,6 +32,16 @@ spec:
         runAsUser: 10001
         runAsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
+      # 🔴 ndots:1 — 유튜브·Vertex FQDN 이 서치도메인 변조로 조용히 막히는 것을 차단한다.
+      #    이 서비스는 **실제로 걸려 있었다** — 2026-08-04 조사 중 Cilium FQDN 캐시에
+      #    `www.youtube.com.local.` 이 상주 중인 것을 실측했다(= ISP 가 그 이름에 가짜 IP 를
+      #    물려줬고 리졸버가 거기서 확정했다는 뜻). 그 IP 는 toFQDNs 에 안 걸려 RST 없이
+      #    드롭되므로, oembed 검증이 fail-open 이라 치명적이진 않아도 매 추출이 지연된다.
+      #    근거·실측 = config#139 (같은 뿌리의 컬리 크롤 실장애).
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       containers:
         - name: video
           image: 192.168.0.10/mealplanning/mp-video-service:latest   # ← overlay 가 :sha 로 덮음

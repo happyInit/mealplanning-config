@@ -58,6 +58,14 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       terminationGracePeriodSeconds: 30
+      # 🔴 ndots:1 — Vertex/Gemini FQDN 이 서치도메인 변조로 조용히 막히는 것을 차단한다.
+      #    기본 ndots:5 면 `aiplatform.googleapis.com`(점 2개)이 `....local` 로 먼저 질의되고,
+      #    ISP 가 가짜 IP 를 물려주면(간헐) toFQDNs 에 안 걸려 **RST 없이 드롭** = 무한 대기.
+      #    영수증 OCR 이 통째로 타임아웃으로 보인다. 근거·실측 = config#139 (컬리 크롤 실장애).
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       containers:
         - name: ocr
           image: 192.168.0.10/mealplanning/mp-ocr-service:d20d3fdb3a4fe05d852bde354cca7991e11c6d59   # overlay가 :sha로 재확인(CI 커밋 지점)

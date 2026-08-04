@@ -58,6 +58,14 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       terminationGracePeriodSeconds: 30
+      # 🔴 ndots:1 — Gemini FQDN 이 서치도메인 변조로 조용히 막히는 것을 차단한다.
+      #    기본 ndots:5 면 `generativelanguage.googleapis.com`(점 2개)이 `....local` 로 먼저
+      #    질의되고, ISP 가 가짜 IP 를 물려주면(간헐) toFQDNs 에 안 걸려 **RST 없이 드롭**된다.
+      #    빠른 에러가 아니라 무한 대기라 챗 응답이 그냥 안 온다. 근거·실측 = config#139.
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       containers:
         - name: chat
           image: 192.168.0.10/mealplanning/mp-chat-service:d20d3fdb3a4fe05d852bde354cca7991e11c6d59   # overlay가 :sha로 재확인(CI 커밋 지점)
