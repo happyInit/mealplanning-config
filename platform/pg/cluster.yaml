@@ -72,10 +72,21 @@ spec:
     # 스크레이프는 monitoring.yaml 의 수동 PodMonitor `mp-pg` 가 대체(오퍼레이터 생성본과 동일 셀렉터).
     # false 로 바꾸면 오퍼레이터 소유 PodMonitor `pg` 는 자동 삭제된다 — mp-pg 가 즉시 이어받는다.
     enablePodMonitor: false # Q9 — cnpg_* 지표는 mp-pg PodMonitor 로
-    # 이슈 #516: CNPG 기본 exporter 에는 복제 슬롯 지표가 없다(라이브 `cnpg_*` 30종 실측 중
-    # `pg_replication_slots` 계열 0건). 슬롯이 붙잡는 WAL 은 custom-queries.yaml 에서 직접 만든다.
+    # 이슈 #516: 이 필드를 넣기 전에는 복제 슬롯 지표가 하나도 없었다(라이브 `cnpg_*` 30종 실측 중
+    # `pg_replication_slots` 계열 0건) → platform/pg/monitoring.yaml 의 critical 알림
+    # MpPGReplicationSlotRetainedWALHigh 가 빈 결과만 평가하며 죽어 있었다.
     # (없는 지표명으로 알림을 쓰면 영원히 안 울린다 — CNPG 백업 지표 전례, 이슈 #506.)
+    #
+    # 🔴 `cnpg-default-monitoring` 을 반드시 함께 적는다. 이 필드를 지정하면 CNPG 오퍼레이터가
+    #    기본 쿼리 ConfigMap 을 **리스트 맨 앞에 자동으로 넣는데**, 매니페스트에 없으면 라이브와
+    #    선언이 영구히 어긋나 ArgoCD 가 계속 OutOfSync 로 뜬다(2026-08-04 실측). 영구 OutOfSync 는
+    #    "진짜 drift" 를 가려버리므로 눈감고 넘길 문제가 아니다. 순서도 오퍼레이터가 넣는 대로 맞춘다.
+    #    ⚠️ 기본 쿼리에 이미 pg_replication_slots 가 들어 있다 — 죽어 있던 알림을 실제로 살린 건
+    #    아래 mp-pg-custom-queries 가 아니라 이 배선 자체다. 커스텀 쪽이 추가로 주는 것은
+    #    `wal_status` 라벨 하나(슬롯 무효화 lost 감지)뿐이다. 상세는 custom-queries.yaml 헤더.
     customQueriesConfigMap:
+      - name: cnpg-default-monitoring
+        key: queries
       - name: mp-pg-custom-queries
         key: queries # CNPG 는 ConfigMap key 를 명시해야 지표를 로드한다 — 없으면 알림이 조용히 죽는다
 
