@@ -59,6 +59,13 @@ spec:
       remoteRef:
         key: data-secrets # 적재 = platform/pg/README.md (pgsync 롤 비밀번호는 basebackup 으로 승계됨)
         property: PGSYNC_PG_PASSWORD
+    # ES 서비스 계정 mp_pgsync_writer 비밀번호 (이슈 #521 작업 1 — 작업 3 의 mp-es-service-accounts 와
+    # 동일 원격 키 ES_PGSYNC_WRITER_PASSWORD 를 가리킨다).
+    # 🔴 유저명/비밀번호는 한 세트로 배선한다(아래 Deployment env 참조) — 한쪽만 바꾸면 401 로 CDC 가 멈춘다.
+    - secretKey: ES_PGSYNC_WRITER_PASSWORD
+      remoteRef:
+        key: data-secrets
+        property: ES_PGSYNC_WRITER_PASSWORD
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -112,12 +119,12 @@ spec:
             - name: ELASTICSEARCH_SCHEME
               value: http # 플랜 §5.2 — HTTP TLS 끔 확정
             - name: ELASTICSEARCH_USER
-              value: elastic
-            - name: ELASTICSEARCH_PASSWORD # Q13 — ECK 인증 강제분. ECK 가 만드는 Secret 을 같은 ns 라 직참조
+              value: mp_pgsync_writer # 이슈 #521 — elastic 슈퍼유저 → 최소권한 계정 (아래 비번 secretKeyRef 와 한 세트)
+            - name: ELASTICSEARCH_PASSWORD # 이슈 #521 — ECK 슈퍼유저 Secret(es-es-elastic-user) 직마운트 제거, ESO 경유로 이전.
               valueFrom:
                 secretKeyRef:
-                  name: es-es-elastic-user
-                  key: elastic
+                  name: mp-pgsync-secrets
+                  key: ES_PGSYNC_WRITER_PASSWORD
             - name: REDIS_HOST
               value: redis-pgsync
             - name: REDIS_PORT
