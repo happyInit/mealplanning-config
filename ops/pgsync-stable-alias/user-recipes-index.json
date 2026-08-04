@@ -1,0 +1,33 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1,
+    "analysis": {
+      "tokenizer": {
+        "nori_mixed": {
+          "type": "nori_tokenizer",
+          "decompound_mode": "mixed"
+        }
+      },
+      "analyzer": {
+        "korean": {
+          "type": "custom",
+          "tokenizer": "nori_mixed",
+          "filter": ["nori_readingform", "lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "_meta": {"type": "object", "enabled": false},
+      "id": {"type": "long"},
+      "title": {"type": "text", "analyzer": "korean"},
+      "ingredient_names": {"type": "text", "analyzer": "korean"},
+      "origin": {"type": "keyword"},
+      "share_token": {"type": "keyword"},
+      "published_at": {"type": "date"},
+      "image_url": {"type": "keyword", "index": false}
+    }
+  }
+}
