@@ -1,0 +1,166 @@
+# MANUAL-ONLY: platform/argocd 아래에서 참조하지 않는다.
+# suspend:true + backoffLimit:0 이므로 이 파일을 실수로 create/apply 해도 bootstrap은 실행되지 않는다.
+#
+# ── 왜 bootstrap-job.yaml 을 쓰지 않고 이 파일이 따로 있나 (이슈 #515 A단계) ──────────────
+#
+# stock bootstrap(bootstrap-job.yaml)은 `-c /app/schema.json` 으로 **schema.json 전체**를 대상으로
+# 하고, target slot 과 PGSync trigger 를 **drop/create** 한다. schema.json 에 문서가 2개
+# (recipes_live · user_recipes_live)가 된 지금 그걸 그대로 돌리면 살아 있는
+# `foodbudget_recipes_live` 슬롯과 트리거까지 drop 되어 **메인 레시피 검색 8,963건의 CDC 가 끊긴다.**
+# README §2 가 "이미 foodbudget_recipes_live 가 있으면 ops.sh 가 거부한다 / 우회하지 말라"고
+#못박은 것이 이 때문이고, 실제로 ops.sh bootstrap 은 그 가드에 걸려 실행되지 않는다.
+#
+# 그래서 이 번들은 **user_recipes 문서 하나만 담은 별도 schema** 로 bootstrap 을 돌린다.
+# 대상이 recipebook.shared_recipe 뿐이라 recipes 쪽 슬롯·트리거는 접촉하지 않는다.
+#
+# ── 왜 mp-pgsync-bootstrap 롤을 쓰지 않나 ────────────────────────────────────────────
+#
+# stock bootstrap 이 그 전용 롤을 쓰는 이유는 두 가지 권한 때문이다(platform/pg/bootstrap-role.yaml):
+#   · REPLICATION       — logical slot 생성/삭제
+#   · fbapp membership  — table owner (트리거 설치)
+# 그런데 2026-08-04 실측 결과 **평상시 `pgsync` 롤이 이미 `rolreplication = t`** 이고,
+# `recipebook.shared_recipe` 의 TRIGGER 권한은 #515 의 멱등 DDL 로 부여됐다.
+# 즉 이 좁은 bootstrap 에는 전용 롤이 불필요하다 → PARK 해제 → 30분 만료 비번 발급 →
+# DatabaseRole patch → PARK 복귀라는 **가장 위험한 절차를 통째로 건너뛴다.**
+#
+# 🔴 권한이 모자라면 Job 이 명확한 에러로 실패한다(조용히 성공하지 않는다). 그때 필요한 권한을
+#    최소한으로 확인해 추가하고 재실행할 것 — 곧바로 전용 롤 활성화로 넘어가지 말 것.
+#
+# ── 실행 절차 ──────────────────────────────────────────────────────────────────────
+#
+#   1. 사전 확인 — ES 인덱스 user_recipes_v1 + alias user_recipes_live 가 이미 있어야 한다
+#      (PGSync 는 인덱스를 만들 때 nori 매핑을 넣지 않는다. 매핑 정본 = user-recipes-index.json).
+#   2. kubectl -n data apply -f user-recipes-bootstrap-job.yaml
+#   3. kubectl -n data patch job mp-pgsync-user-recipes-bootstrap -p '{"spec":{"suspend":false}}'
+#   4. kubectl -n data logs job/mp-pgsync-user-recipes-bootstrap -f
+#   5. 검증 — 슬롯 foodbudget_user_recipes_live 생성 · shared_recipe 트리거 설치 · ES 문서 유입
+#   6. daemon 이 새 슬롯을 잡도록 재시작: kubectl -n data rollout restart deployment/mp-pgsync
+#   7. 정리: kubectl -n data delete job mp-pgsync-user-recipes-bootstrap
+#      configmap mp-pgsync-schema-user-recipes
+#
+# 🔴 daemon(mp-pgsync)을 미리 0으로 내리지 않는다. stock 절차가 내리는 이유는 그것이 live slot 을
+#    drop 하기 때문이고, 여기는 대상이 겹치지 않는다. 내리면 그 시간만큼 메인 검색이 낡는다.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-pgsync-schema-user-recipes
+  namespace: data
+  labels:
+    app: pgsync
+    app.kubernetes.io/component: manual-bootstrap
+data:
+  # platform/pgsync/schema-configmap.yaml 의 2번째 문서와 **동일해야 한다**.
+  # (원본은 앱 레포 deploy/pgsync/schema.json — 정본이 두 레포에 갈라져 있다, AGENTS.md 참조)
+  schema.json: |
+    [
+      {
+        "database": "foodbudget",
+        "index": "user_recipes_live",
+        "plugins": ["SharedRecipe"],
+        "nodes": {
+          "table": "shared_recipe",
+          "schema": "recipebook",
+          "columns": [
+            "id",
+            "title",
+            "image_url",
+            "ingredients",
+            "origin",
+            "share_token",
+            "published_at"
+          ]
+        }
+      }
+    ]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mp-pgsync-user-recipes-bootstrap
+  namespace: data
+  labels:
+    app: pgsync
+    app.kubernetes.io/component: manual-bootstrap
+spec:
+  suspend: true
+  backoffLimit: 0
+  completions: 1
+  parallelism: 1
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: pgsync
+        app.kubernetes.io/component: manual-bootstrap
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      priorityClassName: app-normal
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # 공식 이미지의 /app/plugins 로 플러그인을 복사한다 — SharedRecipe transform 이 여기 있다.
+        - name: copy-plugins
+          image: 192.168.0.10/mealplanning/mp-pgsync:5b4e66c723bbee21bf41066d4736b72fa53aa994
+          command: ["sh", "-c", "cp /plugins-src/*.py /app/plugins/"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: plugins-src, mountPath: /plugins-src}
+            - {name: plugins-dir, mountPath: /app/plugins}
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: pgsync
+          image: 192.168.0.10/mealplanning/mp-pgsync:5b4e66c723bbee21bf41066d4736b72fa53aa994
+          command: ["bootstrap", "-c", "/app/schema.json"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          env:
+            - {name: PG_HOST, value: pg-rw}
+            - {name: PG_PORT, value: "5432"}
+            # 🔴 stock bootstrap 과 다른 유일한 지점 — 전용 롤이 아니라 평상시 pgsync 롤이다.
+            #    근거는 위 헤더 "왜 mp-pgsync-bootstrap 롤을 쓰지 않나".
+            - {name: PG_USER, value: pgsync}
+            - name: PG_PASSWORD
+              valueFrom: {secretKeyRef: {name: mp-pgsync-secrets, key: PG_PASSWORD}}
+            - {name: ELASTICSEARCH_HOST, value: es-es-http}
+            - {name: ELASTICSEARCH_PORT, value: "9200"}
+            - {name: ELASTICSEARCH_SCHEME, value: http}
+            - {name: ELASTICSEARCH_USER, value: elastic}
+            - name: ELASTICSEARCH_PASSWORD
+              valueFrom: {secretKeyRef: {name: es-es-elastic-user, key: elastic}}
+            - {name: REDIS_HOST, value: redis-pgsync}
+            - {name: REDIS_PORT, value: "6379"}
+            - {name: REDIS_CHECKPOINT, value: "False"}
+            - {name: SCHEMA, value: /app/schema.json}
+            - {name: CHECKPOINT_PATH, value: /app/checkpoint}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: schema, mountPath: /app/schema.json, subPath: schema.json}
+            - {name: plugins-dir, mountPath: /app/plugins}
+            - {name: checkpoint, mountPath: /app/checkpoint}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        # 🔴 stock 은 mp-pgsync-schema(2문서)를 마운트한다. 여기는 user_recipes 1문서짜리다.
+        - name: schema
+          configMap: {name: mp-pgsync-schema-user-recipes}
+        - name: plugins-src
+          configMap: {name: mp-pgsync-plugins}
+        - {name: plugins-dir, emptyDir: {}}
+        - {name: checkpoint, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
