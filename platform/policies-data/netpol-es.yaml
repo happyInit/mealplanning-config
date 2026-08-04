@@ -54,6 +54,15 @@ spec:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: elastic-system } }
       ports:
         - { protocol: TCP, port: 9200 }
+    # 6-1) ES 계정 프로비저닝 Job (data ns, 이슈 #521) → :9200
+    #      최소권한 계정 3종을 native realm 에 PUT 하는 일회성 부트스트랩. 3) exporter-bootstrap 과
+    #      같은 성격이라 같은 자리에 둔다.
+    #      🔴 이게 없으면 Job 이 ES 에 못 닿아 스크립트의 readiness 재시도만 돌다 상한에서 실패한다
+    #      (증상: 파드는 Running 인데 로그가 비어 있고 수분째 끝나지 않는다 — 2026-08-04 실측).
+    - from:
+        - podSelector: { matchLabels: { app: es-users-provision } }
+      ports:
+        - { protocol: TCP, port: 9200 }
     # 7) kubelet probe — data ns=메시 밖이라 파드 포트로 직접(소스=노드 IP). 포트 무제한.
     #    🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
     - from:
