@@ -26,16 +26,46 @@
 # 🔴 권한이 모자라면 Job 이 명확한 에러로 실패한다(조용히 성공하지 않는다). 그때 필요한 권한을
 #    최소한으로 확인해 추가하고 재실행할 것 — 곧바로 전용 롤 활성화로 넘어가지 말 것.
 #
+# ── 🔴 PGSync 7.1 버그 회피 — search_path 를 반드시 먼저 바꾼다 ──────────────────────
+#
+# pgsync/view.py 의 DDL 컴파일러가 일관되지 않다(2026-08-04 소스 확인):
+#
+#   CreateView / DropView / CreateIndex → '"{schema}"."{name}"' 로 **스키마를 명시**한다
+#   DropIndex                           → `DROP INDEX IF EXISTS {name}` — **스키마가 없다.**
+#                                         DropIndex.__init__ 이 schema 인자를 받지도 않는다.
+#
+# 그래서 recipebook 을 부트스트랩해도 `DROP INDEX IF EXISTS _idx` 가 search_path 첫 스키마인
+# **public 의 _idx 를 가리킨다.** public._idx 는 `public._view` 의 인덱스이고, 그 _view 는
+# recipes_live·recipes_pgsync 의 primary/foreign key 메타데이터를 담는 **메인 검색의 자산**이다.
+# 실제로 2026-08-04 첫 시도가 여기서 멈췄다:
+#
+#   InsufficientPrivilege: must be owner of index _idx   [SQL: DROP INDEX IF EXISTS _idx]
+#
+# 🔴 이 실패는 사고가 아니라 **방어가 작동한 것**이다. pgsync 롤이 public._idx 의 owner
+#    (mp-pgsync-bootstrap)가 아니라 거부됐다. 전용 롤로 돌렸다면 실제로 drop 됐을 것이다.
+#    → 권한을 열어 통과시키려 하지 말 것. search_path 를 고쳐야 한다.
+#
+# PGSync 는 연결 옵션으로 search_path 를 받지 못한다(_pg_connect_config 는 sslmode·sslrootcert 만
+# connect_args 에 넣는다). 그래서 롤 기본값을 임시로 바꾼다. `ALTER ROLE ... SET` 은 **이후 새
+# 연결에만** 적용되므로 이미 붙어 있는 daemon 세션은 영향받지 않는다.
+#
 # ── 실행 절차 ──────────────────────────────────────────────────────────────────────
 #
 #   1. 사전 확인 — ES 인덱스 user_recipes_v1 + alias user_recipes_live 가 이미 있어야 한다
 #      (PGSync 는 인덱스를 만들 때 nori 매핑을 넣지 않는다. 매핑 정본 = user-recipes-index.json).
-#   2. kubectl -n data apply -f user-recipes-bootstrap-job.yaml
-#   3. kubectl -n data patch job mp-pgsync-user-recipes-bootstrap -p '{"spec":{"suspend":false}}'
-#   4. kubectl -n data logs job/mp-pgsync-user-recipes-bootstrap -f
-#   5. 검증 — 슬롯 foodbudget_user_recipes_live 생성 · shared_recipe 트리거 설치 · ES 문서 유입
-#   6. daemon 이 새 슬롯을 잡도록 재시작: kubectl -n data rollout restart deployment/mp-pgsync
-#   7. 정리: kubectl -n data delete job mp-pgsync-user-recipes-bootstrap
+#      그리고 pgsync 롤에 recipebook USAGE·CREATE·SELECT·TRIGGER 가 있어야 한다
+#      (정본 DDL = app 레포 docs/prd/schema-production.sql, PR #524·#526).
+#   2. 🔴 search_path 전환:
+#      ALTER ROLE pgsync IN DATABASE foodbudget SET search_path = recipebook, public;
+#   3. kubectl -n data apply -f user-recipes-bootstrap-job.yaml
+#   4. kubectl -n data patch job mp-pgsync-user-recipes-bootstrap -p '{"spec":{"suspend":false}}'
+#   5. kubectl -n data logs job/mp-pgsync-user-recipes-bootstrap -f
+#   6. 🔴 성공·실패와 무관하게 **즉시 되돌린다**(노출 시간을 짧게):
+#      ALTER ROLE pgsync IN DATABASE foodbudget RESET search_path;
+#   7. 검증 — recipebook._idx 생성 · public._idx **무사** · 슬롯 foodbudget_user_recipes_live
+#      생성 · shared_recipe 트리거 설치
+#   8. daemon 이 새 슬롯을 잡도록 재시작: kubectl -n data rollout restart deployment/mp-pgsync
+#   9. 정리: kubectl -n data delete job mp-pgsync-user-recipes-bootstrap
 #      configmap mp-pgsync-schema-user-recipes
 #
 # 🔴 daemon(mp-pgsync)을 미리 0으로 내리지 않는다. stock 절차가 내리는 이유는 그것이 live slot 을
