@@ -22,6 +22,14 @@ metadata:
 spec:
   version: 8.19.19
   image: 192.168.0.10/mealplanning/mp-elasticsearch-nori:f078bbe9ecad4b09e11683aa5cbf1094a40d0ccd # ES 8.19.19 (Q5 — :sha 핀. 버전 자리는 spec.version 이 담당)
+  # 최소권한 롤 (이슈 #521 — 소비자 4곳이 elastic 슈퍼유저를 쓰던 탈출구).
+  # ECK `spec.auth.roles` 는 RoleSource 배열이고 필드가 secretName 하나뿐 — Secret 은 ES CR 과
+  # 같은 `data` ns 에 두고 그 `roles.yml` 키 값을 롤 맵으로 읽는다. 비밀 값이 없어 선언형 적합.
+  # 롤만 선언한다 — 계정 생성은 es-users-job.yaml 이 elastic 로 부트스트랩한다(아래 작업 2).
+  # 🔴 소비자(chats·recipe·pipeline·mp-pgsync)는 아직 전환 전이라 이 롤은 아무도 안 쓴다.
+  auth:
+    roles:
+      - secretName: mp-es-roles
   http:
     tls:
       selfSignedCertificate:
@@ -82,3 +90,32 @@ spec:
             resources:
               requests:
                 storage: 10Gi
+---
+# least-privilege 롤 맵 — ECK 가 위 `auth.roles[0].secretName` 으로 읽는다 (이슈 #521).
+# 🔴 비밀 값은 없다 — 롤 정의만 담은 선언형 IaC. 계정 비밀번호는 ESO(externalsecrets.yaml)가 소유.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mp-es-roles
+  namespace: data
+  annotations: {argocd.argoproj.io/sync-wave: "-2"}
+stringData:
+  roles.yml: |
+    # chat·recipe 는 .search() 만 쓴다 → 읽기만. (절대규칙: 최소권한)
+    mp_recipe_reader:
+      cluster: []
+      indices:
+        - names: ["recipes*"]
+          privileges: ["read", "view_index_metadata"]
+    # 파이프라인 잡은 인덱스를 만들고 쓴다 → 쓰기 + 인덱스 관리.
+    mp_pipeline_writer:
+      cluster: []
+      indices:
+        - names: ["recipes*"]
+          privileges: ["read", "write", "create_index", "manage"]
+    # mp-pgsync 는 자체 물리 인덱스(recipes_pgsync*)를 만들고 쓴다.
+    mp_pgsync_writer:
+      cluster: []
+      indices:
+        - names: ["recipes_pgsync*"]
+          privileges: ["read", "write", "create_index", "manage"]
