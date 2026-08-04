@@ -26,7 +26,12 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-kurly
-              image: 192.168.0.10/mealplanning/mp-crawler-kurly:710b056de8174c5026ab3c5273d4dee973da4ff7
+              # 🔴 이 태그는 **손으로** 올린다 — Jenkins 의 'config 레포 태그 커밋' 스테이지는
+              #    앱 워크로드만 대상이고 crawler-kurly 는 스킵한다(Jenkinsfile 296). 앱 레포에
+              #    크롤러를 고쳐 머지해도 여기 안 바꾸면 **옛 이미지가 계속 돈다.**
+              # 2026-08-04: app#525(조용한 절단 가드 4종) 반영. 이미지에 새 코드가 들어있는지는
+              #    실제로 당겨서 확인했다(MIN_TOTAL_RECORDS=500 · GOTO_ATTEMPTS=3 · CrawlTruncatedError).
+              image: 192.168.0.10/mealplanning/mp-crawler-kurly:1ea4a8be3d274a675a419a34aaa91366e2cc8980
               command: ["python", "crawler/kurly/prototype.py", "--kafka"]
               envFrom:
                 - configMapRef:
