@@ -7,3 +7,6 @@ kubeconfig*
 admin.conf
 __pycache__/
 *.py[cod]
+
+# PDV(에이전트 위임)가 만드는 git worktree. 레포 사본이라 커밋 대상이 아니다.
+.pdv/

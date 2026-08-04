@@ -53,8 +53,15 @@ DIRECTORY_APPS = [
 
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"}
 
+# 스캔에서 통째로 뺄 디렉터리. `.pdv` 는 PDV(에이전트 위임) 가 만드는 git worktree 자리로,
+# 레포 전체의 사본이라 여기까지 세면 같은 오브젝트가 worktree 수만큼 중복 계수된다
+# (실제로 mp-pg-instance NetworkPolicy 가 1개 → 3개로 잡혀 cnpg-failsafe 검사가 오탐했다).
+# git-ignored 임시 작업본이고 배포되지 않으므로 검사 대상이 아니다.
+SCAN_EXCLUDE_PARTS = {".git", ".pdv"}
+
 # 이 스크립트 자신과 문서는 FQDN 린트 대상에서 제외한다(설명하려면 그 문자열을 써야 한다).
-FQDN_LINT_EXCLUDE = re.compile(r"^(scripts/|README\.md$|\.github/)")
+# AGENTS.md 도 같은 이유 — 하위 모델에게 "4-dot 금지" 규칙을 알려주려면 그 문자열을 적어야 한다.
+FQDN_LINT_EXCLUDE = re.compile(r"^(scripts/|README\.md$|AGENTS\.md$|\.github/)")
 
 
 class Result:
@@ -271,7 +278,7 @@ def renderer() -> list[str]:
 def kustomize_dirs() -> list[pathlib.Path]:
     out = []
     for k in REPO.rglob("kustomization.yaml"):
-        if ".git" in k.parts:
+        if SCAN_EXCLUDE_PARTS & set(k.parts):
             continue
         d = k.parent
         if SKIP_KUSTOMIZE_RE.search(str(d.relative_to(REPO))):
@@ -346,7 +353,7 @@ def check_fqdn(res: Result) -> None:
     comment = re.compile(r"^\s*(#|//)")
     hits = []
     for f in REPO.rglob("*"):
-        if not f.is_file() or ".git" in f.parts:
+        if not f.is_file() or SCAN_EXCLUDE_PARTS & set(f.parts):
             continue
         rel = str(f.relative_to(REPO))
         if FQDN_LINT_EXCLUDE.match(rel) or f.suffix not in (".yaml", ".yml", ".json", ".md"):
