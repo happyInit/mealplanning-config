@@ -55,6 +55,44 @@ spec:
             summary: "{{ $labels.cronjob }} 성공이 예정 주기보다 오래 갱신되지 않음"
             description: "마지막 성공 이후 임계(빈도별 3h/30h/120h)를 초과. 잡 자체가 실패 중이면 KubeJobFailed 가 동반 발화한다."
 
+        # ── 컬리 크롤의 "조용한 절단" 감지 (2026-08-04 실장애) ──────────────────────
+        # 🔴 위 MpPollerStale 로는 원리적으로 못 잡는 사고가 있었다. 컬리가 3,324건 대신
+        #    **96건**만 긁고도 exit 0 으로 끝나 lastSuccessfulTime 이 갱신됐다 —
+        #    알림 침묵 · ArgoCD 초록 · 그날 가격 97% 유실. 성공/실패 축으로는 안 보인다.
+        #    (원인 = 서치도메인 변조로 res.kurly.com 이 가짜 IP 로 풀려 컬리 JS 가 안 옴.
+        #     고침 = pipelines/kustomization.yaml 의 ndots:1. 이 규칙은 그게 풀렸을 때의 그물이다.)
+        #
+        # 그래서 성공 여부가 아니라 **소요시간**을 본다. 실측(kube_job, 2026-08-04):
+        #    정상 393초(08-01) · 472초(08-02) · 472초(ndots:1 고침 검증)  vs  절단 **26초**
+        #    → 임계 180초 = 정상 최저(393)의 절반 아래, 절단(26)의 7배 위.
+        #
+        # 🔴 컬리에만 건다 — 조용한 절단이 가능한 건 **브라우저로 JS 렌더 결과를 긁는 컬리뿐**이다.
+        #    oasis·recipe 는 requests 기반이라 차단당하면 예외로 죽는다(= MpPollerStale 이 잡는다).
+        #    deal-timesale/closesale 은 정상이 ~100초라 같은 임계를 공유하면 오탐이 된다.
+        # 🔴 job_name 정규식이 `[0-9]+` 인 건 **크론이 만든 잡만** 보기 위해서다. 손으로 만든
+        #    일회성 잡(디버그·재수집)은 짧아도 정상이라 여기 걸리면 안 된다.
+        - alert: MpKurlyCrawlTruncated
+          expr: |
+            (
+              kube_job_status_completion_time{namespace="pipeline", job_name=~"mp-poller-kurly-[0-9]+"}
+              - kube_job_status_start_time{namespace="pipeline", job_name=~"mp-poller-kurly-[0-9]+"}
+              < 180
+            )
+            and (
+              time() - kube_job_status_completion_time{namespace="pipeline", job_name=~"mp-poller-kurly-[0-9]+"} < 7200
+            )
+          for: 5m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "컬리 크롤이 {{ $value }}초 만에 끝남 — 조용한 절단 의심 (정상 6~8분)"
+            description: >-
+              exit 0 이라 MpPollerStale 은 울지 않는다. ① 파드 로그의 record_count 확인(정상 ~3,300).
+              ② 낮으면 res.kurly.com 이 가짜 IP 로 풀렸는지 본다 —
+              kubectl -n kube-system exec ds/cilium -c cilium-agent -- hubble observe --namespace pipeline --verdict DROPPED
+              ③ 파드에 dnsConfig ndots:1 이 살아 있는지 확인(pipelines/kustomization.yaml).
+
         # ── 컨슈머 백로그·KEDA 감시 4종 (2026-07-31) ────────────────────────────────
         # 🔴 감시 지표는 KEDA 가 아니라 **kafka-exporter**(data/mp-kafka-exporter) 를 본다 —
         #    고장난 당사자의 자기 신고에 기대면 KEDA 가 멈춘 국면을 못 잡는다.

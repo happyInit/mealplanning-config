@@ -24,6 +24,28 @@ resources:
 #    root(uid=0)로 도는 걸 실측(2026-07-30). 매니페스트만으로 켜면 전 파이프라인 기동 불가라
 #    이미지에 USER 를 넣는 별건(app 레포 Dockerfile) 뒤에 켠다 — 그때까지 warn 1종 잔존이 정상.
 # jobs/reindex-recipes-es.yaml 은 kustomize 밖(1회성 kubectl)이라 파일에 직접 넣었다 — 동기 유지.
+#
+# ── DNS ndots:1 — toFQDNs 정책을 조용히 무력화하던 서치도메인 변조 차단 ──────────────
+# 🔴 2026-08-03 실장애의 고침이다. 지우면 컬리 크롤이 다시 97% 유실된다.
+#
+# 무슨 일이었나: 파드 기본 resolv.conf 는 `search ...svc.cluster.local ... cluster.local local`
+#   + `ndots:5` 다. 마지막 `local` 은 노드가 LAN DHCP 에서 받아 kubelet 이 물려준 것이다.
+#   점이 5개 미만인 외부 이름은 **서치도메인부터** 붙여 질의하므로 `res.kurly.com` 은
+#   `res.kurly.com.local` 이 먼저 나간다. 그런데 ISP 가 그 이름에 NXDOMAIN 대신
+#   **가짜 A 레코드(218.38.137.28)** 를 물려준다(간헐적). 리졸버는 거기서 확정해버린다.
+#   그 IP 는 `*.kurly.com` 에 매치되지 않으니 Cilium 이 **RST 없이 SYN 을 드롭**한다 —
+#   빠른 에러가 아니라 무한 대기라, 브라우저는 JS 를 영원히 기다린다.
+#
+# 실측(2026-08-04, 같은 노드·같은 이미지):
+#   변조 상태  →  23초 / 3,346건 중 **96건**, 하이재킹 IP 로 SYN 드롭 165회, 그런데 result="success"
+#   ndots:1    →  7분52초 / **3,346건**, 하이재킹 IP 드롭 **0회**   (기준선 08-02 = 3,324건)
+#
+# 🔴 왜 `2` 가 아니라 `1` 인가 — `kurly.com` 은 점이 **1개**다. ndots:2 면 그 이름은 여전히
+#    서치도메인이 먼저 붙는다. 외부 이름은 점이 1개인 것도 있으므로 1 이어야 전부 덮는다.
+# 🔴 왜 크롤러만이 아니라 일괄인가 — 터지는 건 toFQDNs 가 걸린 워크로드지만, 어느 파드가
+#    외부로 나가는지는 시간이 지나며 바뀐다. 개별 부여는 "새 폴러가 빠뜨리는" 사고를 부른다.
+#    클러스터 내부 이름(`kafka-...data.svc`)은 NXDOMAIN 한 번 더 왕복할 뿐 정상 동작한다.
+# ⚠️ app ns 워크로드(account·ocr·chat·video)는 이 kustomization 밖이라 별도로 넣는다.
 patches:
   - target:
       kind: Deployment
@@ -39,6 +61,12 @@ patches:
           allowPrivilegeEscalation: false
           capabilities:
             drop: ["ALL"]
+      - op: add
+        path: /spec/template/spec/dnsConfig
+        value:
+          options:
+            - name: ndots
+              value: "1"
   - target:
       kind: CronJob
     patch: |-
@@ -53,3 +81,9 @@ patches:
           allowPrivilegeEscalation: false
           capabilities:
             drop: ["ALL"]
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/dnsConfig
+        value:
+          options:
+            - name: ndots
+              value: "1"
