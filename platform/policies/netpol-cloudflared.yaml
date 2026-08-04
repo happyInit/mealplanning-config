@@ -1,0 +1,72 @@
+# 보안 ③ CiliumNetworkPolicy — mp-cloudflared egress (default-deny). 인터넷 접점 파드의 외부 경로를 좁힌다.
+#
+# 왜 Cilium 인가: 표준 netpol 은 IP/CIDR 만 다룬다. Cloudflare 엣지(region*.v2.argotunnel.com)는
+# CDN 뒤 고정 IP 가 아니므로 FQDN 학습이 필요하다. → netpol-backend-fqdn.yaml 과 같은 Cilium FQDN 패턴.
+#
+# 왜 이 정책이 필요했는가: app ns 에는 default-deny 베이스라인이 없고 기존 netpol 3 개는 라벨 셀렉터
+# (tier=backend · tier=frontend · app=operations)로만 걸린다. cloudflared 는 app=cloudflared-app / tier=ingress
+# 라 어느 셀렉터에도 안 걸려(2026-08-04 실측) 지금 **양방향 default-allow** 로 노드 서브넷 192.168.0.0/24 전체에
+# 닿는다. 거기엔 호스트 C 의 Harbor·Jenkins·SonarQube 가 있고 Jenkins 는 ArgoCD auto-sync 레포 쓰기키를
+# 든다 — 인터넷 접점 파드→배포 파이프라인의 L3 경로를 이 정책으로 닫는다.
+#
+# 왜 egress-only 인가: Cilium 은 규칙이 있는 방향에만 default-deny 를 적용한다. readiness/liveness(:2000) 는
+# kubelet 에서 들어오므로 ingress 를 잠그면 그 예외를 또 맞춰야 하고(기동을 깨뜨릴 수 있음) 이 태스크
+# 목적(외부로 나가는 경로 차단)과 무관하다. → ingress 규칙은 넣지 않는다.
+#
+# 🔴 FQDN·포트 출처 = 파드 로그의 기동 프리체크(2026-08-04). 목적지가 늘면 여기 추가하고, 누락 시
+#    cilium monitor --type drop 에 그 FQDN 이 뜬다(netpol-backend-fqdn.yaml 과 동일 안내).
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-cloudflared-egress
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: cloudflared-app
+  egress:
+    # 1) DNS + L7 가시성 — toFQDNs 를 쓰려면 DNS L7 규칙이 같은 정책에 있어야 Cilium 이 응답을 파싱한다
+    #    (표준 netpol 의 L4 DNS 허용만으론 FQDN 학습 안 됨). 아래 toFQDNs 의 전제.
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    # 2) 오리진 = 공개 GW :443 — same ns. GW 파드에는 app/tier 라벨이 없어 Gateway API 표준 라벨로
+    #    고른다(netpol-frontend/backend.yaml 과 동일). 목적지 = configmap 의
+    #    service: https://mp-gw-public-istio.app.svc:443.
+    - toEndpoints:
+        - matchLabels:
+            gateway.networking.k8s.io/gateway-name: mp-gw-public
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+    # 3) Cloudflare 엣지 — 7844/UDP(QUIC 기본) + 7844/TCP(HTTP/2 폴백) 둘 다.
+    #    🔴 7844 TCP 를 함께 여는 이유: QUIC 이 막히는 망에서 HTTP/2 로 폴백하는 게 cloudflared 의 정상
+    #    동작이라 TCP 를 빼면 폴백 경로가 조용히 죽는다. 포트 출처 = 기동 프리체크(PASS 기록).
+    #    🔴 matchPattern 을 함께 두는 이유(2026-08-04 1차 적용 실패 후 추가): 프리체크 로그가 보여주는
+    #    이름은 region1/region2 지만, cloudflared 의 엣지 탐색은 SRV 조회를 거쳐 다른 이름의 타깃을
+    #    받을 수 있다. 그 이름을 우리가 열거할 수 없으므로 argotunnel.com 아래로만 넉넉히 잡는다 —
+    #    "열거 못 하니 전부 열자"가 아니라 **Cloudflare 터널 도메인 한 그루로 한정**하는 것이다.
+    - toFQDNs:
+        - matchName: "region1.v2.argotunnel.com"
+        - matchName: "region2.v2.argotunnel.com"
+        - matchPattern: "*.argotunnel.com"
+      toPorts:
+        - ports:
+            - { port: "7844", protocol: UDP }
+            - { port: "7844", protocol: TCP }
+    # 4) api.cloudflare.com :443 — 기동 프리체크만 붙는다. named tunnel + credentials-file 운영엔
+    #    필수가 아니다(hard_fail=false, 없어도 터널은 뜸) → 프리체크 전용 · 제거 가능.
+    - toFQDNs:
+        - matchName: "api.cloudflare.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

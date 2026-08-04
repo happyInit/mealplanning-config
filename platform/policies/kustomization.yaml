@@ -14,14 +14,18 @@ resources:
   #   둘 다 egress 전용이다: 입구를 ingress 로 잠그면 유입 소스(노드·LAN·cloudflared)를 하나만
   #   빠뜨려도 공개 서비스가 전면 불가가 된다. ingress 는 default-deny 베이스라인과 함께 별건.
   - netpol-gateway.yaml             # 티어 0: 공개 GW egress (DNS·istiod·backend·frontend·tempo)
-  # 🔴 cloudflared 용 CiliumNetworkPolicy(netpol-cloudflared.yaml)는 **철회했다** — 2026-08-04 적용 중
-  #    약 50초간 app.mealbong.cloud 가 502 였다(터널 전멸 → 삭제 + 파드 재기동으로 복구).
-  #    증상: `failed to dial to edge with quic: timeout: no recent network activity` — 엣지 IP 로 나가는
-  #    패킷이 통째로 드롭됐다. 유력 원인 = Cilium toFQDNs 는 **정책이 걸린 뒤 관측한 DNS 응답의 IP만**
-  #    허용하는데, 그 파드는 27시간째 떠 있어 엣지 IP 를 이미 해석·보유한 상태였다. 학습된 매핑이 0인
-  #    채로 정책이 붙어 전부 막혔다. (netpol-backend-fqdn.yaml 의 "앱이 클러스터 DNS 를 써야 성립"과
-  #    같은 계열이지만, 거기 앱들은 요청마다 재해석하는 반면 cloudflared 는 상주 커넥션이라 다르다.)
-  #    재도입 조건 = 정책 적용과 **파드 재기동을 한 묶음**으로 하고(정책 하에서 재해석시킨다),
-  #    저트래픽 시간대에 롤백 명령을 손에 쥔 채 검증할 것.
+  # 🔴 netpol-cloudflared.yaml 은 **적용 순서에 조건이 붙는다.** 2026-08-04 1차 적용 때 그냥 sync 만
+  #    했다가 app.mealbong.cloud 가 약 50초간 502 였다(터널 전멸 → 삭제 + 파드 재기동으로 복구).
+  #    증상은 `failed to dial to edge with quic: timeout: no recent network activity` — 엣지로 나가는
+  #    패킷이 통째로 드롭됐다. 원인은 FQDN 목록이 아니라 **학습 타이밍**이었다: Cilium toFQDNs 는
+  #    정책이 걸린 뒤 DNS 프록시가 관측한 응답의 IP만 허용하는데, 그 파드는 27시간째 떠 있어 엣지
+  #    주소를 이미 들고 있었고 상주 QUIC 커넥션이라 재해석을 하지 않는다 → 학습 0인 채로 전부 막혔다.
+  #    ⚠️ netpol-backend-fqdn.yaml 의 앱들(account·ocr·chat·video)은 요청마다 이름을 다시 푸는 단발
+  #    HTTP 클라이언트라 정책을 나중에 붙여도 곧 학습된다. cloudflared 는 그 자연 복구가 없다.
+  #
+  #    🔴 그래서 이 정책을 재적용·수정할 때는 **반드시 파드 재기동을 한 묶음으로** 할 것:
+  #       kubectl apply -f netpol-cloudflared.yaml && kubectl -n app rollout restart deploy/mp-cloudflared-app
+  #    2차 적용(그 순서로)은 성공했다 — 터널 4커넥션 등록·사이트 200 실측.
+  - netpol-cloudflared.yaml         # 티어 0: cloudflared egress (DNS·GW:443·CF 엣지 FQDN, CiliumNetworkPolicy)
   # 티어 3 data → 티어 4 pipeline 이 순서대로 추가된다.
   # 🔴 data·pipeline 대상 netpol 은 그 ns 로 가야 하므로(이 kustomization 은 namespace:app 강제) 그때 별도 배치.
