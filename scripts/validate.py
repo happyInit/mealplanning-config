@@ -278,7 +278,10 @@ def renderer() -> list[str]:
 def kustomize_dirs() -> list[pathlib.Path]:
     out = []
     for k in REPO.rglob("kustomization.yaml"):
-        if SCAN_EXCLUDE_PARTS & set(k.parts):
+        # 🔴 REPO 상대 경로로 판정한다. 절대 경로(k.parts)를 쓰면, 이 레포를 `.pdv/worktrees/<x>`
+        #    안에 체크아웃한 상태(= PDV worktree 안에서 검증을 돌릴 때) 자기 자신이 통째로
+        #    제외돼 "kustomization 0개" 가 된다.
+        if SCAN_EXCLUDE_PARTS & set(k.relative_to(REPO).parts):
             continue
         d = k.parent
         if SKIP_KUSTOMIZE_RE.search(str(d.relative_to(REPO))):
@@ -353,7 +356,10 @@ def check_fqdn(res: Result) -> None:
     comment = re.compile(r"^\s*(#|//)")
     hits = []
     for f in REPO.rglob("*"):
-        if not f.is_file() or SCAN_EXCLUDE_PARTS & set(f.parts):
+        if not f.is_file():
+            continue
+        # 위 kustomize_dirs() 와 같은 이유로 REPO 상대 경로로 판정한다.
+        if SCAN_EXCLUDE_PARTS & set(f.relative_to(REPO).parts):
             continue
         rel = str(f.relative_to(REPO))
         if FQDN_LINT_EXCLUDE.match(rel) or f.suffix not in (".yaml", ".yml", ".json", ".md"):
