@@ -1,0 +1,181 @@
+# 최소권한 계정 3개 생성 (이슈 #521 — 작업 2/3).
+#
+# 🔴 이 Job 은 `elastic` 슈퍼유저를 쓴다. 유저를 만드는 주체는 슈퍼유저일 수밖에 없다 —
+#    예외가 아니라 부트스트랩의 성격이다. 비번은 `es-es-elastic-user` 시크릿 secretKeyRef 로
+#    주입한다(매니페스트에 비밀 값을 쓰지 않는다). 새 계정들은 각자 자기 롤(elasticsearch.yaml
+#    의 `mp-es-roles`)만 갖는 최소권한으로 끝난다.
+#
+# 왜 Job 인가: ECK `fileRealm` 은 bcrypt 해시를 요구한다 — ESO 의 평문 비번 과 매니페스트의
+# 해시 두 벌을 동기화해야 한다. 대신 이 계정들은 native realm(`_security/user`) 으로 만들기 때문에
+# ESO 가 준 평문 비번을 그대로 PUT 하므로 자격증명 출처가 하나(ESO)로 유지된다.
+#
+# 🔴 멱등 + 부분적용 방지: `PUT _security/user/<name>` 은 upsert 다. PUT 뒤 GET 으로 롤이 실제
+#    반영됐는지 검증하고, 실패하면 비정상 종료시켜 조용한 부분적용을 막는다.
+#    `GET /_security/user/<name>` 응답은 `{"<유저명>": {"roles": [...]}}` — 유저명 키 아래를 읽는다
+#    (최상위 `["roles"]` 는 항상 빈 값이라 첫 계정에서 실패한다).
+#
+# 🔴 ES 준비 대기 (직전 리뷰 지적): sync-wave 는 제출 순서만 보장하고 `es-es-http` 의 readiness 는
+#    기다리지 않는다. 신규/재구축 클러스터의 첫 sync 에 연결이 바로 실패하면 backoff 를 빨리
+#    소진한다 → 계정을 만들기 전에 ES 가 응답할 때까지 **상한 있는** 재시도를 하고, 상한에 닿으면
+#    명확히 실패한다(무한 대기는 금지).
+#    준비 대기 worst-case = 30 × 10s(timeout) + 29 × 5s(sleep) ≈ 445s, 그 뒤 계정 3개 PUT/GET
+#    6 요청 × 10s = 60s → 단일 실행 최악 ≈ 505s. activeDeadlineSeconds(620s) 는 그보다 여유 있게
+#    잡아 스크립트의 명시적 실패(≈505s) 가 Job 타임아웃보다 **먼저** 온다. backoffLimit: 0 —
+#    재시도 파드는 상한 대기를 처음부터 다시 태우므로 같은 상한 경쟁을 벌인다. 스크립트 자체가
+#    bounded 재시도를 수행하므로 파드 재시도는 두지 않고, 한 번의 전체 실행이 정직하게 실패하도록 한다.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-es-users-bootstrap
+  namespace: data
+  annotations: {argocd.argoproj.io/sync-wave: "-2"}
+data:
+  provision_users.py: |
+    import base64
+    import json
+    import os
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+    ES = "http://es-es-http.data.svc:9200"
+    # (유저명, 비번 env, 롤) — 롤은 elasticsearch.yaml 의 `mp-es-roles` 에 정의한 것과 1:1.
+    USERS = [
+        ("mp_recipe_reader", "RECIPE_READER_PASSWORD", ["mp_recipe_reader"]),
+        ("mp_pipeline_writer", "PIPELINE_WRITER_PASSWORD", ["mp_pipeline_writer"]),
+        ("mp_pgsync_writer", "PGSYNC_WRITER_PASSWORD", ["mp_pgsync_writer"]),
+    ]
+    READY_ATTEMPTS = 30
+    READY_INTERVAL_SECONDS = 5
+
+    def request(url, method="GET", body=None, headers=None):
+        # HTTPError 를 감싸지 않고 그대로 올린다 — 호출부가 상태 코드(영구 vs 일시적)를 판별해야
+        # 하기 때문. provision 루프에서는 미처리 예외가 그대로 비정상 종료로 이어져 부분적용을 막는다.
+        req = urllib.request.Request(
+            url,
+            data=None if body is None else json.dumps(body).encode(),
+            method=method,
+            headers=headers or {},
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return json.load(response)
+
+    elastic_auth = base64.b64encode(
+        ("elastic:" + os.environ["ELASTICSEARCH_PASSWORD"]).encode()
+    ).decode()
+    headers = {
+        "Authorization": "Basic " + elastic_auth,
+        "Content-Type": "application/json",
+    }
+
+    # ES 가 응답할 때까지 bounded retry. sync-wave 는 readiness 를 안 기다리므로 첫 sync 의
+    # 신규/재구축 클러스터는 여기서 차단되지 않으면 backoff 를 소진한다. 상한에 닿으면 명확히 실패.
+    # 🔴 인증이 켜진 ES 는 준비 상태에서도 인증 없는 `GET /` 는 401 을 돌린다 — headers 로 인증을
+    #    함께 보낸다. 각 시도는 요청 timeout(10s) 까지 걸릴 수 있어, 아래 worst-case 계산에 포함한다.
+
+    def transient(exc):
+        # 401/403(인증·권한) 은 영구 오류 — 몇 번을 재시도해도 풀리지 않으므로 즉시 실패시킨다.
+        # 그 외(연결 실패·타임아웃·ES 준비 전 5xx) 는 일시적이라 READY_ATTEMPTS 상한까지 재시도한다.
+        if isinstance(exc, urllib.error.HTTPError):
+            return exc.code >= 500
+        return True
+
+    started = time.monotonic()
+    last_error = None
+    for attempt in range(1, READY_ATTEMPTS + 1):
+        try:
+            request(ES + "/", headers=headers)
+            break
+        except Exception as exc:  # noqa: BLE001 — 아래에서 영구/일시를 갈라 남기고 보고한다
+            last_error = exc
+            if not transient(exc):
+                print(
+                    f"Elasticsearch auth/config error (attempt {attempt}): {exc}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if attempt == READY_ATTEMPTS:
+                print(
+                    f"Elasticsearch not ready after {attempt} attempts "
+                    f"({time.monotonic() - started:.0f}s) — last error: {last_error}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            time.sleep(READY_INTERVAL_SECONDS)
+
+    for user, env_name, roles in USERS:
+        request(ES + "/_security/user/" + user, "PUT", {
+            "password": os.environ[env_name],
+            "roles": roles,
+        }, headers)
+        # PUT 은 upsert — 롤이 실제 반영됐는지 검증. 유저명 키 아래의 roles 를 읽는다.
+        created = request(ES + "/_security/user/" + user, headers=headers)
+        actual = created.get(user, {}).get("roles", [])
+        if actual != roles:
+            print(
+                f"role verification failed for {user}: actual={actual} expected={roles}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    print("provisioned least-privilege Elasticsearch users")
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mp-es-users-provision
+  namespace: data
+  labels: {app: es-users-provision}
+  annotations:
+    argocd.argoproj.io/hook: Sync # 실패가 sync 실패로 드러나게 (PostSync 아님)
+    # 🔴 ES CR(elasticsearch.yaml, wave 0) 이 적용된 뒤 실행돼야 한다. sync-wave 가 ES CR 과 같거나
+    #    앞서면 신규 설치에서 아직 존재하지 않는 ES 를 대기하게 된다. → ES CR(wave 0) 이후인 wave 1.
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  # 🔴 backoffLimit: 0 — 파드를 재시도하면 스크립트의 bounded 대기(30×10s+29×5s≈445s) 를 처음부터
+  #    다시 태워 동일한 상한 경쟁을 벌이고, 대기 시간이 깨진 클러스터에선 몇 개 파드가 연쇄 실패한다.
+  #    스크립트 자체가 상한 있는 재시도를 하므로 파드 재시도 없이 한 번의 전체 실행이 정직하게 실패한다.
+  backoffLimit: 0
+  # 단일 실행 worst-case ≈ 505s (준비 대기 445s + 계정 6 요청 60s). 620s 는 그에 여유(~115s) 를 더해
+  # 스크립트의 명시적 실패(≈505s) 가 Job 타임아웃보다 먼저 온다 — 상한 실패가 실패 원인을 남긴다.
+  activeDeadlineSeconds: 620
+  template:
+    metadata:
+      labels: {app: es-users-provision}
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      priorityClassName: app-normal
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: provision-es-users
+          image: 192.168.0.10/mealplanning/mp-pgsync:5b4e66c723bbee21bf41066d4736b72fa53aa994
+          command: ["python3", "/bootstrap/provision_users.py"]
+          env:
+            - name: ELASTICSEARCH_PASSWORD
+              valueFrom: {secretKeyRef: {name: es-es-elastic-user, key: elastic}}
+            - name: RECIPE_READER_PASSWORD
+              valueFrom: {secretKeyRef: {name: mp-es-service-accounts, key: RECIPE_READER_PASSWORD}}
+            - name: PIPELINE_WRITER_PASSWORD
+              valueFrom: {secretKeyRef: {name: mp-es-service-accounts, key: PIPELINE_WRITER_PASSWORD}}
+            - name: PGSYNC_WRITER_PASSWORD
+              valueFrom: {secretKeyRef: {name: mp-es-service-accounts, key: PGSYNC_WRITER_PASSWORD}}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+      volumes:
+        - name: bootstrap
+          configMap: {name: mp-es-users-bootstrap, defaultMode: 0444}
