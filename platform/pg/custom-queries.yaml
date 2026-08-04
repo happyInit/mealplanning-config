@@ -1,0 +1,58 @@
+# 이슈 #516 — 복제 슬롯 보류 WAL 지표 (2026-08-03 신설).
+#
+# 🔴 CNPG 기본 exporter 에는 복제 슬롯 지표가 없다. 라이브 Prometheus 의 `cnpg_*` 전체(30종)를
+#    훑은 결과 `pg_replication_slots` 계열은 0건이고, 있는 것은 `cnpg_collector_*_wal*` 같은 WAL
+#    **생성량**뿐이라 슬롯이 붙잡고 있는 양은 볼 수 없다. 그래서 이 ConfigMap 으로 직접 만든다.
+#
+# 쓰임: cluster.yaml 의 `spec.monitoring.customQueriesConfigMap` 으로 배선 — 아래 지표로
+#    platform/pg/monitoring.yaml(MpPGReplicationSlotRetainedWALHigh) · monitoring/rules-data-tier.yaml 의
+#    알림이 돈다. 지표명을 바꾸면 그쪽 알림이 조용히 죽으므로 동기화를 깨뜨리지 말 것.
+#
+# 슬롯별로 노출하는 것:
+#   · cnpg_pg_replication_slots_pg_wal_lsn_diff  — 슬롯이 붙잡고 있는 WAL 바이트 (GAUGE)
+#   · cnpg_pg_replication_slots_active           — 슬롯에 소비자(가데이터베이스 sender) 연결 여부 (GAUGE 0/1)
+#   · wal_status — reserved/extended/unreserved/lost (LABEL 로만 남는다 — 문자열이라 GAUGE 로 못 쓴다)
+#     독립 시계열이 아니라 위 GAUGE 들(`cnpg_pg_replication_slots_pg_wal_lsn_diff`,
+#     `cnpg_pg_replication_slots_active`)에 붙는 라벨이다. `lost`(상한/정리로 필요한 WAL 이 사라져
+#     **무효화**)는 `{wal_status="lost"}` 로 걸러 잡는다.
+#   · 라벨: slot_name · slot_type (물리 슬롯 _cnpg_pg_* 와 PGSync 논리 슬롯을 가르기 위해 slot_type 필수)
+#     dbname 은 exporter 가 database=... 로 붙는 데서 오는 값이 아니라 배타적이라 제외.
+#
+# 🔴 standby 안전: `pg_current_wal_lsn()` 은 recovery(standby) 중인 인스턴스에서 에러를 낸다.
+#    `primary: true` 로 primary 만 돌도록 제한하고, 혹시라도 그 밖에서 도는 상황을 막으려
+#    `pg_is_in_recovery()` 로 행 자체를 걸러 이중 방어한다. 놓치면 standby 의 수집기가 에러를 뱉고
+#    cnpg_collector_collection_errors_total 이 올라간다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-pg-custom-queries # mp- 접두사 규칙
+  namespace: data
+data:
+  queries: |
+    pg_replication_slots:
+      query: |
+        SELECT
+          slot_name,
+          slot_type,
+          active::int AS active,
+          pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS pg_wal_lsn_diff,
+          wal_status
+        FROM pg_replication_slots
+        WHERE NOT pg_is_in_recovery()
+      primary: true
+      metrics:
+        - slot_name:
+            usage: "LABEL"
+            description: "Replication slot name."
+        - slot_type:
+            usage: "LABEL"
+            description: "Slot type where the plugin is one of the logical replication plugins."
+        - active:
+            usage: "GAUGE"
+            description: "True if this slot is currently actively being used (a walsender is connected)."
+        - pg_wal_lsn_diff:
+            usage: "GAUGE"
+            description: "WAL bytes retained by this slot (pg_current_wal_lsn - restart_lsn)."
+        - wal_status:
+            usage: "LABEL"
+            description: "reserved/extended/unreserved/lost — lost means the required WAL was removed (slot invalidated)."
