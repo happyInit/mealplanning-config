@@ -55,18 +55,30 @@
 #      (PGSync 는 인덱스를 만들 때 nori 매핑을 넣지 않는다. 매핑 정본 = user-recipes-index.json).
 #      그리고 pgsync 롤에 recipebook USAGE·CREATE·SELECT·TRIGGER 가 있어야 한다
 #      (정본 DDL = app 레포 docs/prd/schema-production.sql, PR #524·#526).
-#   2. 🔴 search_path 전환:
-#      ALTER ROLE pgsync IN DATABASE foodbudget SET search_path = recipebook, public;
+#   2. 🔴 search_path 전환 — **대상 스키마 하나만. public 을 넣으면 안 된다**:
+#      ALTER ROLE pgsync IN DATABASE foodbudget SET search_path = recipebook;
+#
+#      ⚠️ `search_path = recipebook, public` 은 듣지 않는다(2026-08-04 실패로 확인).
+#         `DROP INDEX IF EXISTS _idx` 는 search_path 를 **순서대로 훑어 처음 찾은 것**을 대상으로
+#         삼는다. recipebook._idx 가 아직 없는 첫 부트스트랩에서는 목록의 다음 항목인
+#         public._idx 를 찾아내 그대로 같은 실패가 난다. public 을 빼야 IF EXISTS 가 no-op 이 되고,
+#         이어지는 CREATE 는 `ON "recipebook"."_view"` 로 스키마를 명시하므로 정상 생성된다.
 #   3. kubectl -n data apply -f user-recipes-bootstrap-job.yaml
 #   4. kubectl -n data patch job mp-pgsync-user-recipes-bootstrap -p '{"spec":{"suspend":false}}'
 #   5. kubectl -n data logs job/mp-pgsync-user-recipes-bootstrap -f
 #   6. 🔴 성공·실패와 무관하게 **즉시 되돌린다**(노출 시간을 짧게):
 #      ALTER ROLE pgsync IN DATABASE foodbudget RESET search_path;
 #   7. 검증 — recipebook._idx 생성 · public._idx **무사** · 슬롯 foodbudget_user_recipes_live
-#      생성 · shared_recipe 트리거 설치
+#      생성 · shared_recipe 트리거 설치(recipebook_shared_recipe_notify·_truncate)
 #   8. daemon 이 새 슬롯을 잡도록 재시작: kubectl -n data rollout restart deployment/mp-pgsync
+#      → 로그에 두 문서가 나란히 떠야 한다:
+#          Sync foodbudget:recipes_live      ... Elasticsearch: [8,963]
+#          Sync foodbudget:user_recipes_live ... Elasticsearch: [12]
 #   9. 정리: kubectl -n data delete job mp-pgsync-user-recipes-bootstrap
 #      configmap mp-pgsync-schema-user-recipes
+#
+# ✅ 2026-08-04 이 절차로 성공했다(유저 발행 레시피 12건 색인 · 메인 검색 8,963건 무중단 ·
+#    public._idx 무사 · nori 형태소 검색 실증: '김치' → '돼지김치찜').
 #
 # 🔴 daemon(mp-pgsync)을 미리 0으로 내리지 않는다. stock 절차가 내리는 이유는 그것이 live slot 을
 #    drop 하기 때문이고, 여기는 대상이 겹치지 않는다. 내리면 그 시간만큼 메인 검색이 낡는다.
