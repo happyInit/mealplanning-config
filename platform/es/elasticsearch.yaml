@@ -101,11 +101,14 @@ metadata:
   annotations: {argocd.argoproj.io/sync-wave: "-2"}
 stringData:
   roles.yml: |
-    # chat·recipe 는 .search() 만 쓴다 → 읽기만. (절대규칙: 최소권한)
+    # chat·recipe·recipebook 은 .search() 만 쓴다 → 읽기만. (절대규칙: 최소권한)
+    # 🔴 user_recipes* 를 반드시 함께 넣는다 — 유저 발행 레시피 인덱스(#515 A단계로 신설된
+    #    alias `user_recipes_live`)는 접두사가 달라 `recipes*` 에 매칭되지 않는다.
+    #    recipebook 이 #515 B단계에서 이 인덱스를 읽으므로 빠지면 403 으로 발행목록이 죽는다.
     mp_recipe_reader:
       cluster: []
       indices:
-        - names: ["recipes*"]
+        - names: ["recipes*", "user_recipes*"]
           privileges: ["read", "view_index_metadata"]
     # 파이프라인 잡은 인덱스를 만들고 쓴다 → 쓰기 + 인덱스 관리.
     mp_pipeline_writer:
