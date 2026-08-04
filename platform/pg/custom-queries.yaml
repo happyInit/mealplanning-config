@@ -1,8 +1,21 @@
 # 이슈 #516 — 복제 슬롯 보류 WAL 지표 (2026-08-03 신설).
 #
-# 🔴 CNPG 기본 exporter 에는 복제 슬롯 지표가 없다. 라이브 Prometheus 의 `cnpg_*` 전체(30종)를
-#    훑은 결과 `pg_replication_slots` 계열은 0건이고, 있는 것은 `cnpg_collector_*_wal*` 같은 WAL
-#    **생성량**뿐이라 슬롯이 붙잡고 있는 양은 볼 수 없다. 그래서 이 ConfigMap 으로 직접 만든다.
+# 🔴 배선 전에는 슬롯 지표가 하나도 없었다 — 라이브 Prometheus 의 `cnpg_*` 전체(30종)를 훑은
+#    결과 `pg_replication_slots` 계열 0건. 있는 건 `cnpg_collector_*_wal*` 같은 WAL **생성량**뿐이라
+#    슬롯이 붙잡고 있는 양은 볼 수 없었다. 그래서 platform/pg/monitoring.yaml 의 critical 알림
+#    MpPGReplicationSlotRetainedWALHigh 는 **빈 결과만 평가하며 죽어 있었다**(#516 사고를 못 잡은 근인).
+#
+# ⚠️ 적용 후 실측(2026-08-04) — 지표를 살린 것은 cluster.yaml 의 `customQueriesConfigMap` **배선
+#    자체**였다. 그 필드를 넣자 CNPG 오퍼레이터가 기본 쿼리 ConfigMap(`cnpg-default-monitoring`)도
+#    리스트에 함께 넣었고, 거기에 이미 pg_replication_slots 쿼리가 있다(slot_name·slot_type·
+#    database·active·pg_wal_lsn_diff). 즉 기존 알림을 살린 것은 기본 쿼리 쪽이다.
+#
+#    그래서 이 파일이 **추가로** 주는 것은 `wal_status` 라벨 하나다 — 상한(max_slot_wal_keep_size)
+#    초과로 슬롯이 **무효화**됐는지(`lost`)는 기본 쿼리로 볼 수 없는데, #516 의 상한 도입이 최악을
+#    "PG 정지"에서 "슬롯 무효화"로 바꾼 이상 그 상태를 봐야 한다. 그래서 유지한다.
+#
+# 🔴 대가 = 같은 지표명이 **두 시계열**로 온다(기본=database 라벨 / 여기=wal_status 라벨).
+#    슬롯 지표를 쓰는 알림은 반드시 `max by(slot_name)` 으로 중복을 흡수할 것.
 #
 # 쓰임: cluster.yaml 의 `spec.monitoring.customQueriesConfigMap` 으로 배선 — 아래 지표로
 #    platform/pg/monitoring.yaml(MpPGReplicationSlotRetainedWALHigh) · monitoring/rules-data-tier.yaml 의

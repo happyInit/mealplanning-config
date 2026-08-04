@@ -189,16 +189,29 @@ spec:
             summary: "복제 슬롯 {{ $labels.slot_name }} 이 WAL {{ $value | humanize1024 }}B 보유 — 소비자(PGSync 등) 정체 의심"
             description: "슬롯이 붙잡는 WAL 이 256MiB 를 넘었다. 소비자가 사라진 고아 슬롯이면 그 인덱스의 CDC 만 재부트스트랩한다(상한 1GB 도달 시 슬롯 무효화). pg_replication_slots 를 조회해 소비자 연결 여부를 확인한다."
 
-        # 고아 슬롯의 조기 발견. 이번 사고(2026-08-03 구 foodbudget_recipes_pgsync)가 정확히
-        # "소비자 없이 active=0 인 채 WAL 만 축적" 형태였다. 다만 PGSync 는 순간적 재연결/재시작 때도
-        # brief 하게 active=0 이 될 수 있어(라이브 슬롯도 스냅샷 순간 active=f 실측), 오탐을 막기 위해
-        # `for` 를 길게 잡는다. 길게 잡은 만큼 1GB 상한 도달 전에 확실히 울리는 256MiB 조기경보가
-        # 주 방어선이고, 이것은 장시간 멈춘 소비자(CDC 중단)를 확인하는 보조 지표다.
-        - alert: MpPGReplicationSlotInactive
-          expr: max by(slot_name) (cnpg_pg_replication_slots_active{namespace="data", slot_type="logical"}) == 0
-          for: 6h
+        # 고아 슬롯의 조기 발견 — **증가 추세**로 잡는다. 보유량(위 알림)이 임계에 닿기 전에
+        # "소비가 안 따라가고 있다"를 먼저 본다.
+        #
+        # 🔴 active=0 을 조건으로 쓰지 않는다(2026-08-04 실측으로 폐기). PGSync 는 walsender
+        #    스트리밍이 아니라 **SQL 폴링으로 logical decoding** 을 해서 슬롯이 **상시 active=f** 다:
+        #      · pg_stat_replication 에 PGSync 가 없다(잡히는 건 standby pg-2 뿐)
+        #      · foodbudget_recipes_live 는 정상 소비 중인데도 active=f 로 계속 관측된다
+        #        (이슈 #516 본문의 2026-08-03 실측도 active=f · retained 16MB, 하루 뒤 지금도 동일 —
+        #         고아였다면 128MB/h 로 하루 3GB 가 쌓였어야 한다)
+        #    즉 `active == 0` 은 정상 상태라 변별력이 없고, for 를 6h 로 잡아도 영구 오탐이 된다.
+        #
+        # 그래서 진짜 위험 신호인 **보유량 증가**를 본다. 이번 사고는 15분에 32MB(=128MB/h)였으므로
+        # 2시간이면 256MB 증가 → 아래 200MiB 임계를 확실히 넘는다. 반대로 정상 슬롯은 보유량이
+        # 16MB 근처에 머물러 delta 가 0 이라 울리지 않는다. gauge 이므로 increase() 가 아니라 delta().
+        #
+        # ⚠️ max by(slot_name) 은 중복 흡수용이다 — 같은 슬롯이 **두 시계열**로 온다.
+        #    CNPG 기본 쿼리(cnpg-default-monitoring)와 우리 custom-queries.yaml 이 같은 지표명을
+        #    내고 라벨만 다르다(기본=database 라벨 / 우리=wal_status 라벨). 2026-08-04 실측 확인.
+        - alert: MpPGReplicationSlotWALGrowing
+          expr: max by(slot_name) (delta(cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="data", slot_type="logical"}[2h])) > 200 * 1024 * 1024
+          for: 15m
           labels: {severity: warning, service: data-tier}
           annotations:
-            summary: "복제 슬롯 {{ $labels.slot_name }} 이 6시간째 비활성 — 소비자 없이 방치된 고아 슬롯 의심"
-            description: "PGSync 등 소비자가 슬롯에 연결하지 않은 지 6시간. 고아 슬롯이면 WAL 이 무한 보존된다. pg_replication_slots 의 active·wal_status·restart_lsn 을 조회하고, 쓸모없는 슬롯은 삭제한다(런북 ops/pgsync-stable-alias/README.md '구 슬롯 삭제' 단계)."
+            summary: "복제 슬롯 {{ $labels.slot_name }} 의 보유 WAL 이 2시간새 {{ $value | humanize1024 }}B 증가 — 소비 정체"
+            description: "슬롯이 붙잡는 WAL 이 계속 늘고 있다(소비자가 못 따라가거나 사라졌다). 방치하면 상한 1GB 에 닿아 슬롯이 무효화되고 그 인덱스는 재부트스트랩이 필요해진다. pg_replication_slots 의 restart_lsn 이 전진하는지 확인하고, 소비자가 없는 고아면 삭제한다(런북 ops/pgsync-stable-alias/README.md §3-1)."
 

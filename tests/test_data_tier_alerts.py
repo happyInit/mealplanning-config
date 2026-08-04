@@ -42,7 +42,7 @@ class DataTierAlertContractTests(unittest.TestCase):
                 "MpMinIOVolumeMetricsUnavailable",
                 "MpMinIODiskHigh",
                 "MpPGReplicationSlotRetainedWALWarning",
-                "MpPGReplicationSlotInactive",
+                "MpPGReplicationSlotWALGrowing",
             },
             set(self.alerts),
         )
@@ -94,7 +94,7 @@ class DataTierAlertContractTests(unittest.TestCase):
             "MpMinIOVolumeMetricsUnavailable",
             "MpMinIODiskHigh",
             "MpPGReplicationSlotRetainedWALWarning",
-            "MpPGReplicationSlotInactive",
+            "MpPGReplicationSlotWALGrowing",
         ):
             self.assertEqual("warning", self.alerts[name]["labels"]["severity"])
 
