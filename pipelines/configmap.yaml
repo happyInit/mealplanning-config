@@ -12,7 +12,13 @@ data:
   PGUSER: fbapp
   ESHOST: es-es-http.data.svc # 코드 계약 = ESHOST/ESPORT (pipelines/ingest/_db.py 실측)
   ESPORT: "9200"
-  ES_USER: elastic # basic_auth — env 없으면 무인증 폴백(Q13 하위호환)이므로 K8s 에서만 켜진다
+  # ES_USER: mp_pipeline_writer (#521 3단계) — ECK file realm 롤 `mp_pipeline_writer`(`recipes*` read·write·create_index·manage).
+  #    슈퍼유저 `elastic` 자격증명이 평문으로 오가던 것을 대상 한정 계정으로 낮췄다.
+  #    basic_auth — env 없으면 무인증 폴백(Q13 하위호환)이므로 K8s 에서만 켜진다.
+  #    비밀번호는 data-secrets/ES_PIPELINE_WRITER_PASSWORD (externalsecret.yaml 이 한 세트로 참조).
+  # 🔴 ConfigMap 값 — 파드 기동 시점에만 주입된다. CronJob 은 다음 실행부터 새 값을 받지만,
+  #    상시 컨슈머 워크로드가 있다면 rollout restart 가 별도로 필요하다.
+  ES_USER: mp_pipeline_writer
   # ✅ Q3 해소 (2026-07-29) — 4단계 실측 후 **분기 C(Sentinel-aware 클라이언트) 확정**.
   #    근거·수치 = food-budget-app/docs/mp_k8s_redis_ha_handoff.md §4.
   #    🔴 Service 경로(A)는 "master 파드가 스케줄되지 못하는 동안 엔드포인트가 빈다"를 못 넘었다.
