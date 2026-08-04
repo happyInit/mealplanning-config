@@ -9,7 +9,8 @@
 #   · 인증 = 켬 (ECK 예약설정이라 끌 수 없음) — 앱은 basic_auth(코드 반영 완료·env 하위호환)
 #   · HTTP TLS = 끔 — 경로별 TLS 는 API 에 없다(서버 전역 스위치). 암호화는 WireGuard.
 #   · transport TLS(ES 노드 간)는 ECK 가 항상 켠다 — 우리가 못 끄고, 끌 필요도 없다.
-#   · 접속 계정: ECK 가 만드는 Secret `es-es-elastic-user` (user=elastic).
+#   · ECK 가 만드는 슈퍼유저 Secret `es-es-elastic-user` (user=elastic) 는 계정 부트스트랩
+#     (아래 es-users-job.yaml) 전용으로만 남긴다 — 앱 소비자는 elastic 을 쓰지 않는다(이슈 #521).
 #
 # vm.max_map_count=262144 는 노드 sysctl 로 선반영돼 있다(k8s_node 롤, 4노드 실측 §2-A-4-1)
 # → 특권 initContainer 불필요·불가(data ns PSS baseline 이 거부, §9-9). 여기엔 아무것도 안 넣는 게 맞다.
@@ -26,7 +27,7 @@ spec:
   # ECK `spec.auth.roles` 는 RoleSource 배열이고 필드가 secretName 하나뿐 — Secret 은 ES CR 과
   # 같은 `data` ns 에 두고 그 `roles.yml` 키 값을 롤 맵으로 읽는다. 비밀 값이 없어 선언형 적합.
   # 롤만 선언한다 — 계정 생성은 es-users-job.yaml 이 elastic 로 부트스트랩한다(아래 작업 2).
-  # 🔴 소비자(chats·recipe·pipeline·mp-pgsync)는 아직 전환 전이라 이 롤은 아무도 안 쓴다.
+  # 🔴 mp-pgsync 는 이 롤의 mp_pgsync_writer 로 전환돼 쓴다(이슈 #521). 파이프라인 잡 전환은 별도 작업.
   auth:
     roles:
       - secretName: mp-es-roles
@@ -116,9 +117,13 @@ stringData:
       indices:
         - names: ["recipes*"]
           privileges: ["read", "write", "create_index", "manage"]
-    # mp-pgsync 는 자체 물리 인덱스(recipes_pgsync*)를 만들고 쓴다.
+    # mp-pgsync 는 두 stable alias `recipes_live`·`user_recipes_live` 에 쓴다(스키마 정본 =
+    # schema-configmap.yaml. user_recipes_live 는 #515 A단계로 신설).
+    # 🔴 이슈 #521 표의 "recipes_pgsync*" 는 틀렸다 — recipes_pgsync 는 alias 전환 전의 구 물리
+    #    인덱스(롤백용 사본)라 PGSync 가 안 쓴다. 위 aliases 와 그 물리 인덱스
+    #    (recipes_v2·user_recipes_v1)를 모두 덮도록 `recipes*`·`user_recipes*` 로 확장한다.
     mp_pgsync_writer:
       cluster: []
       indices:
-        - names: ["recipes_pgsync*"]
+        - names: ["recipes*", "user_recipes*"]
           privileges: ["read", "write", "create_index", "manage"]
