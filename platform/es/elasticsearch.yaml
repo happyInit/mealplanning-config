@@ -122,8 +122,12 @@ stringData:
     # 🔴 이슈 #521 표의 "recipes_pgsync*" 는 틀렸다 — recipes_pgsync 는 alias 전환 전의 구 물리
     #    인덱스(롤백용 사본)라 PGSync 가 안 쓴다. 위 aliases 와 그 물리 인덱스
     #    (recipes_v2·user_recipes_v1)를 모두 덮도록 `recipes*`·`user_recipes*` 로 확장한다.
+    # 🔴 cluster:["monitor"] 는 PGSync 라이브러리가 요구한다 — 기동 시 `client.info()` 로 ES 메이저
+    #    버전을 확인한다(pgsync/search_client.py). 그 호출은 cluster:monitor/main 액션이라
+    #    인덱스 권한만으로는 403 이 나고 **파드가 CrashLoopBackOff 로 아예 못 뜬다**(2026-08-04 실측).
+    #    앱·파이프라인 코드에는 .info() 호출이 없어 다른 롤에는 필요 없다(최소권한 유지).
     mp_pgsync_writer:
-      cluster: []
+      cluster: ["monitor"]
       indices:
         - names: ["recipes*", "user_recipes*"]
           privileges: ["read", "write", "create_index", "manage"]
