@@ -81,6 +81,16 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       terminationGracePeriodSeconds: 30
+      # 🔴 ndots:1 — 소셜 로그인 FQDN 이 서치도메인 변조로 조용히 막히는 것을 차단한다.
+      #    기본 ndots:5 아래에서 `kauth.kakao.com`(점 2개)은 `kauth.kakao.com.local` 이
+      #    **먼저** 질의되고, ISP 가 NXDOMAIN 대신 가짜 IP 를 물려주면(간헐) 리졸버가 거기서
+      #    확정한다. 그 IP 는 netpol-backend-fqdn.yaml 의 toFQDNs 에 안 걸려 Cilium 이
+      #    **RST 없이 드롭** → 빠른 에러가 아니라 무한 대기 → 로그인이 타임아웃으로 보인다.
+      #    2026-08-03 컬리 크롤 실장애와 같은 뿌리다(측정·근거 = config#139).
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       containers:
         - name: account                      # 🔴 HPA containerResource 가 이 이름을 참조
           image: 192.168.0.10/mealplanning/mp-account-service:1.1.9   # overlay images 트랜스포머가 :sha 재확인
