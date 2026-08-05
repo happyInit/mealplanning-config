@@ -7,4 +7,4 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-recipebook-service
   newName: 192.168.0.10/mealplanning/mp-recipebook-service
-  newTag: cf4fd5d261ad8e0fad15dbc231772b37e31b4b02
+  newTag: 24fa81a1f95f6c3ad4f7c7e7320a5dcb1a9d35cc
