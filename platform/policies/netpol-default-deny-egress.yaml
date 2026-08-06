@@ -1,0 +1,38 @@
+# 보안 ③ NetworkPolicy — app ns **egress default-deny 베이스라인**.
+# 짝 = netpol-default-deny-ingress.yaml. 같은 구조적 구멍(라벨 안 단 파드는 아무 정책에도 안 걸림)을
+# 나가는 방향에서 닫는다.
+#
+# 🔴 방향을 나눠 단계로 온 이유: egress 는 ingress 보다 위험하다. 유입은 막혀도 "그 기능만" 죽지만,
+#    egress 가 막히면 **DNS 부터 죽어** 파드가 아무것도 못 한다. 그래서 ingress 를 먼저 세우고
+#    (2026-08-06 오전) 그 다음 이 파일이다.
+#
+# 🔴 적용 전 실측 — "정책 없이 나가고 있는 파드가 있나"를 추측이 아니라 Cilium 엔드포인트
+#    enforcement 로 직접 확인했다(2026-08-06, `cilium-dbg endpoint list` 를 5개 노드 전부에서):
+#      → app ns 파드 **19개 전부 `enforcement=both`**. 즉 도는 파드는 이미 egress 가 잠겨 있다.
+#    그래서 이 파일이 오늘 바꾸는 실물 흐름도 **0**이다. 값은 미래에 있다.
+#
+# 지금 안 도는 워크로드까지 확인한 결과(같은 날):
+#   · CronJob `mp-ocr-config-canary` → 파드 라벨이 **`tier: backend`** 라 netpol-backend +
+#     netpol-backend-fqdn 이 이미 덮는다. 마지막 실행 성공(2026-08-03) 확인.
+#   · Argo Rollouts AnalysisRun → AnalysisTemplate 4종이 전부 **`prometheus` provider** 다.
+#     컨트롤러가 대신 질의하므로 **app ns 에 파드가 안 뜬다**. (Job 타입이었다면 파드가 떠서
+#     여기 걸렸을 것이다 — 나중에 Job 타입 metric 을 추가하면 그 파드의 egress 를 함께 열 것.)
+#   → app ns 에 무정책 워크로드는 없다.
+#
+# 🔴 DNS 를 여기서 일괄 허용하지 않는다. "어차피 다 필요하니 podSelector:{} 로 DNS 만 열어두자"가
+#    편하지만, 그러면 새 파드가 **절반만 동작하는 상태**(이름은 풀리는데 목적지는 막힘)로 떠서
+#    원인 파악이 더 어려워진다. 기존 정책 5종은 전부 자기 DNS 규칙을 갖고 있다 —
+#    새 워크로드도 자기 몫을 명시하게 두는 편이 실패를 시끄럽게 만든다.
+#
+# ⚠️ 앞으로 app ns 에 워크로드를 추가할 때는 egress 정책을 **함께** 내야 한다. 빠뜨리면
+#    배포는 성공하는데 DNS 부터 막혀 죽는다. 진단 = `hubble observe --verdict DROPPED`.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-default-deny-egress
+  namespace: app
+spec:
+  # 빈 셀렉터 = ns 의 모든 파드(ingress 짝과 동일). 아래 egress 키가 없으므로 허용 목록이 비어 차단.
+  podSelector: {}
+  policyTypes:
+    - Egress

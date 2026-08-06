@@ -35,5 +35,9 @@ resources:
   # 🔴 베이스라인은 **반드시 마지막**이다. podSelector:{} 라 위 두 ingress 정책이 먼저 살아 있지
   #    않으면 게이트웨이·cloudflared 가 함께 잠겨 공개 서비스가 전면 불가가 된다.
   - netpol-default-deny-ingress.yaml # app ns ingress default-deny (미래·미분류 파드 잠금)
+  # 🔴 egress 베이스라인은 ingress 보다 뒤다. 유입은 막혀도 "그 기능만" 죽지만 egress 가 막히면
+  #    DNS 부터 죽어 파드가 아무것도 못 한다. 적용 전 `cilium-dbg endpoint list` 로 app ns 파드
+  #    19개가 전부 enforcement=both 임을 확인했다(= 도는 파드는 이미 egress 잠김, 실물 변화 0).
+  - netpol-default-deny-egress.yaml  # app ns egress default-deny (미래·미분류 파드 잠금)
   # 티어 3 data → 티어 4 pipeline 이 순서대로 추가된다.
   # 🔴 data·pipeline 대상 netpol 은 그 ns 로 가야 하므로(이 kustomization 은 namespace:app 강제) 그때 별도 배치.
