@@ -1,0 +1,42 @@
+# 보안 ③ NetworkPolicy — app ns **ingress default-deny 베이스라인**.
+#
+# 🔴 이 파일이 이 묶음의 진짜 목적이다. 지금까지의 app ns 정책은 전부 **라벨 셀렉터로 고른 파드만**
+#    덮었다(tier=backend · tier=frontend · app=operations · gateway-name · app=cloudflared-app).
+#    그래서 그 라벨을 안 단 파드가 새로 뜨면 **아무 정책에도 안 걸려 유입 무제한**이 된다 —
+#    실제로 게이트웨이·cloudflared 가 정확히 그 상태로 오래 방치돼 있었고(netpol-gateway.yaml 상단),
+#    "빠뜨린 걸 나중에 발견한다"가 반복됐다. 이 정책은 그 구조적 구멍을 닫는다:
+#    **기본이 차단이고, 열려면 명시해야 한다**(§10.1 화이트리스트 스위치).
+#
+# 🔴 적용 순서가 중요하다 — 이 파일은 **반드시 마지막**이다.
+#    podSelector:{} 는 ns 의 모든 파드를 고르므로, 앞선 두 ingress 정책(mp-gw-public-ingress ·
+#    mp-cloudflared-ingress)이 먼저 살아 있지 않으면 게이트웨이와 cloudflared 가 함께 잠겨
+#    공개 서비스가 전면 불가가 된다.
+#
+# 🔴 왜 표준 NetworkPolicy 인가(CNP 아니고): EKS 이식성(플랜 §6.1). 그리고 default-deny 는
+#    identity 개념이 필요 없는 순수 "빈 화이트리스트"라 표준으로 충분하다.
+#
+# 🔴 Ingress 만이다. Egress default-deny(2-d)는 별건 — 지금 걸면 정책 없는 파드의 나가는 길이
+#    전부 끊겨 DNS 부터 죽는다. 방향을 나눠 단계로 가는 게 이 작업의 전제다.
+#
+# 왜 이걸 붙여도 기존 파드가 안 깨지나(2026-08-06 점검):
+#   · tier=backend / tier=frontend / app=operations → 이미 ingress 규칙이 있어 **이미 default-deny 상태**다.
+#     k8s netpol 은 "ingress 규칙을 가진 파드는 그 규칙 외 전부 차단"이라, 이 파일이 더 조이는 게 없다.
+#   · 게이트웨이·cloudflared → 앞의 두 CNP 가 덮는다. Cilium 은 netpol 과 CNP 의 allow 를 **합집합**으로
+#     본다(둘 중 하나가 허용하면 통과) → 이 default-deny 가 그 허용을 뒤엎지 않는다.
+#   · app ns 의 나머지 = CronJob `mp-ocr-config-canary` 의 Job 파드뿐이고, 유입을 받지 않는다(나가서 호출만 함).
+#     Argo Rollouts 의 AnalysisRun 파드도 마찬가지(Prometheus 로 나가는 쪽).
+#   → 즉 **오늘 당장 바뀌는 실물 흐름은 0**이다. 값은 미래에 있다: 라벨을 안 단 파드가 뜰 때 자동으로 잠긴다.
+#
+# ⚠️ 그래서 앞으로 app ns 에 유입을 받는 워크로드를 추가할 때는 netpol/CNP 를 **함께** 내야 한다.
+#    빠뜨리면 배포는 성공하는데 트래픽만 안 붙는 형태로 실패한다(Hubble `--verdict DROPPED` 로 확인).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-default-deny-ingress
+  namespace: app
+spec:
+  # 빈 셀렉터 = ns 의 모든 파드. 🔴 "모두 선택"이지 "모두 차단"이 아니다 —
+  # 아래 ingress 키가 없으므로 결과적으로 허용 목록이 비어 차단이 된다.
+  podSelector: {}
+  policyTypes:
+    - Ingress
