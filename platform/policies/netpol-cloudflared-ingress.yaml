@@ -1,0 +1,39 @@
+# 보안 ③ CiliumNetworkPolicy — mp-cloudflared **ingress**.
+# 짝 = netpol-cloudflared.yaml(egress). 그 파일이 "ingress 를 잠그면 그 예외를 또 맞춰야 하고
+# (기동을 깨뜨릴 수 있음)" 라며 미뤄뒀던 나머지 절반이다. 그 예외를 이제 실측으로 확정했다.
+#
+# 🔴 실측(2026-08-06, cilium-dbg bpf ct list global · 파드가 뜬 노드 a2):
+#      CF 파드 10.244.4.17 유입 = **2000/TCP ← srcID=1(host) 406건이 전부**.
+#    다른 포트·다른 소스는 0. cloudflared 는 터널 클라이언트라 **밖에서 들어오는 연결이 원래 없다** —
+#    Cloudflare 엣지로 자기가 나가서(egress 7844) 상주 커넥션을 유지하는 구조다. 그래서 유입은
+#    kubelet 프로브 하나뿐인 게 정상이다.
+#
+# 🔴 :2000 은 컨테이너 포트 이름이 `metrics` 지만 지금 **Prometheus 가 안 긁는다.**
+#    app ns 의 ServiceMonitor `mp-app-services` 는 `app` 라벨이 있는 **Service** 를 고르는데
+#    cloudflared 는 Service 자체가 없다(2026-08-06 확인). readinessProbe·livenessProbe 가 같은
+#    :2000/ready 를 쓰므로 host 만 열면 된다.
+#    ⚠️ 나중에 cloudflared 메트릭을 수집하기로 하면 여기에 observability→2000 규칙을 추가해야 한다.
+#       (Service 를 만들어 ServiceMonitor 에 걸리게 하는 순간 이 정책이 스크레이프를 막는다.)
+#
+# 🔴 egress 파일의 그 함정(toFQDNs 학습 타이밍 → 파드 재기동 필수)은 **이 파일엔 해당 없다.**
+#    여기엔 toFQDNs 가 없고, 상주 커넥션의 방향은 egress 라 ingress 규칙이 그걸 건드리지 않는다.
+#    즉 이 정책은 파드 재기동 없이 붙여도 된다.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-cloudflared-ingress
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: cloudflared-app
+  ingress:
+    # 1) 노드(kubelet) → :2000. readinessProbe + livenessProbe 둘 다 /ready 로 여기를 친다.
+    #    🔴 막히면 livenessProbe 실패 → 파드가 **무한 재시작 루프**에 빠지고 터널이 끊긴다.
+    #    소스는 파드가 뜬 노드이므로 host 로 충분하다(srcID=1 실측).
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - { port: "2000", protocol: TCP }

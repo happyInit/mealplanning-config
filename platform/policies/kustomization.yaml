@@ -31,5 +31,6 @@ resources:
   #   미뤄뒀던 나머지 절반. 2026-08-06 conntrack 전수 실측(GW 파드가 뜬 두 노드 양쪽)으로 그 불확실성을
   #   제거하고 연다. 🔴 세 파일의 순서 = 진입점 먼저, default-deny 마지막(각 파일 상단 근거).
   - netpol-gateway-ingress.yaml     # 티어 0: 공개 GW ingress (world→443·80 / cloudflared→443 / host→15021)
+  - netpol-cloudflared-ingress.yaml # 티어 0: cloudflared ingress (host→2000 프로브가 전부)
   # 티어 3 data → 티어 4 pipeline 이 순서대로 추가된다.
   # 🔴 data·pipeline 대상 netpol 은 그 ns 로 가야 하므로(이 kustomization 은 namespace:app 강제) 그때 별도 배치.
