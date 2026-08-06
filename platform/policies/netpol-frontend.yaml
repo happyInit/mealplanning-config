@@ -57,3 +57,22 @@ spec:
               app: istiod
       ports:
         - { protocol: TCP, port: 15012 }
+    # 3) 🔴 Tempo(observability) :4317 — OTLP 트레이스 전송 (2026-08-06 신설).
+    #    netpol-backend.yaml egress 5번·netpol-gateway.yaml egress 5번과 **같은 규칙**이다.
+    #    이 파일에만 빠져 있었다: istio-system 의 Telemetry `mp-mesh-tracing` 은 selector 없이
+    #    = 메시 전역(프론트 사이드카 포함) randomSamplingPercentage 100 으로 걸려 있는데,
+    #    frontend egress 는 DNS·istiod 뿐이라 frontend 사이드카의 트레이스만 조용히 드롭됐다.
+    #    🔴 발견 경위 = ingress default-deny 작업(2026-08-06) 중 Hubble `--verdict DROPPED` 에
+    #       `app/mp-frontend → observability/tempo-0:4317 Policy denied DROPPED` 가 계속 찍혀서.
+    #       증상이 "에러"가 아니라 **트레이스가 그냥 없는 것**이라 눈에 안 띄었다.
+    #    최소권한 유지 — observability ns 전체가 아니라 tempo 파드 하나, 포트 하나(4317)만 연다.
+    #    4318=HTTP 는 안 쓰므로 안 연다(backend 와 동일).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+      ports:
+        - { protocol: TCP, port: 4317 }
