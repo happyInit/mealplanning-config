@@ -10,4 +10,4 @@ patches:
 images:
 - name: 192.168.0.10/mealplanning/mp-ranking-serving
   newName: 192.168.0.10/mealplanning/mp-ranking-serving
-  newTag: fbffab83ebc36f60323ac8c534b8ea47a69567c4
+  newTag: cb5f77a04198d82830aef1139de98a2befba43ef
