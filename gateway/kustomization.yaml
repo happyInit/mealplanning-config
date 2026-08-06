@@ -1,12 +1,14 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: app
+# 🔴 이 디렉터리는 이제 **HTTPRoute 만** 담는다 (#532 ③, 2026-08-06).
+#    게이트웨이 실체(Gateway·params·PDB·EnvoyFilter·Issuer·Certificate·CF토큰)는
+#    `ingress/`(ns=mp-ingress)로 옮겼다 — 근거는 그쪽 kustomization.yaml 상단.
+#
+# 🔴 라우트가 app 에 남는 이유: HTTPRoute 의 backendRef 가 app ns 의 Service 다. 라우트를
+#    게이트웨이 따라 옮기면 그 참조가 전부 cross-ns 가 되어 **ReferenceGrant 12개**가 필요해진다.
+#    반대로 라우트를 남기면 cross-ns 가 되는 건 "라우트→게이트웨이 부착" 한 곳뿐이고, 그건
+#    게이트웨이 쪽 `allowedRoutes: Selector` + 각 parentRef 의 `namespace:` 두 줄로 끝난다.
+#    비용이 12 대 2 라 남기는 쪽이 명백히 싸다.
 resources:
-  - gateway.yaml
-  - gateway-params.yaml            # HA 파라미터(replica 2 + TSC) — Gateway parametersRef 대상
-  - pdb.yaml                       # mp-gw-public-pdb (minAvailable 1) — istiod 생성분 아님
   - httproutes.yaml
-  - request-body-limit.yaml
-  - externalsecret-cloudflare.yaml   # CF API 토큰(ESO) — DNS-01 발급 크리덴셜
-  - issuer.yaml                      # Let's Encrypt ACME Issuer (staging/prod)
-  - certificate.yaml                 # app.mealbong.cloud → Secret mp-gw-public-tls

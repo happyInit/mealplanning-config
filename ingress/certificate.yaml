@@ -10,7 +10,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: mp-gw-public-cert
-  namespace: app
+  namespace: mp-ingress
 spec:
   secretName: mp-gw-public-tls          # Gateway https 리스너의 certificateRefs 가 가리키는 이름(같은 app ns)
   issuerRef:

@@ -10,12 +10,19 @@
 # TLS(object_spec §5.2): HTTPS 443 종단 + HTTP 80 → 443 리다이렉트.
 #   443 리스너가 cert-manager Secret `mp-gw-public-tls`(Let's Encrypt·app.mealbong.cloud)로 TLS 를 끊고,
 #   앱 라우트 10개는 sectionName: https 로 443 에만 붙는다. 80 리스너에는 리다이렉트 라우트(mp-https-redirect)만.
-#   발급 배선 = issuer.yaml · certificate.yaml · externalsecret-cloudflare.yaml(전부 app ns).
+#   발급 배선 = issuer.yaml · certificate.yaml · externalsecret-cloudflare.yaml(전부 **이 ns**).
+#
+# 🔴 ns 이전(#532 ③, 2026-08-06): app → mp-ingress. 근거 = 쿼터 결합(app 쿼터 6Gi 를 앱과 공유해
+#    HPA 가 붙으면 게이트웨이 surge 파드가 못 뜬다). 보안은 #532 ② 가 이미 해결했다.
+#    🔴 **HTTPRoute 는 app ns 에 남는다** — backendRef 가 같은 ns 의 Service 라 ReferenceGrant 가
+#       불필요하기 때문이다. 옮기면 라우트 12개 × ReferenceGrant 가 생긴다. 대신 라우트 부착이
+#       cross-ns 가 되므로 아래 allowedRoutes 를 Same → Selector 로 연다(이 파일의 유일한 로직 변경).
+#    같이 옮긴 것 = params CM·PDB·EnvoyFilter·Issuer×2·Certificate·CF토큰 ES (전부 같은 ns 전제 참조).
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: mp-gw-public
-  namespace: app
+  namespace: mp-ingress
 spec:
   gatewayClassName: istio
   infrastructure:
@@ -35,9 +42,17 @@ spec:
     - name: http
       protocol: HTTP
       port: 80
+      # 🔴 Same → Selector (#532 ③). Gateway 만 mp-ingress 로 왔고 HTTPRoute 는 app 에 남았다.
+      #    Same 이면 이 ns(mp-ingress)의 라우트만 받는데 거기엔 라우트가 하나도 없어
+      #    **리스너가 라우트 0개로 뜬다** = 전 경로 404. 반드시 app 을 열어야 한다.
+      #    ⚠️ `from: All` 이 아니라 Selector 다 — 아무 ns 나 우리 공개 입구에 라우트를 붙이면
+      #       임의 워크로드가 공개 경로를 만들 수 있다. 허용 대상은 app 하나로 못박는다.
       allowedRoutes:
         namespaces:
-          from: Same          # HTTPRoute·Service 가 전부 app ns → ReferenceGrant 불요(§5.7)
+          from: Selector
+          selector:
+            matchLabels:
+              kubernetes.io/metadata.name: app
     - name: https                       # 🔴 TLS 종단 리스너 (object_spec §5.2)
       protocol: HTTPS
       port: 443
@@ -46,7 +61,11 @@ spec:
         mode: Terminate                 # GW 가 여기서 TLS 를 끊는다(오리진 = 인클러스터 평문/메시 mTLS)
         certificateRefs:
           - kind: Secret
-            name: mp-gw-public-tls       # cert-manager Certificate 가 채우는 Secret(같은 app ns → RefGrant 불요)
+            name: mp-gw-public-tls       # cert-manager Certificate 가 채우는 Secret(같은 ns → RefGrant 불요)
+      # http 리스너와 같은 이유로 Selector — 근거는 위 주석 참조.
       allowedRoutes:
         namespaces:
-          from: Same
+          from: Selector
+          selector:
+            matchLabels:
+              kubernetes.io/metadata.name: app

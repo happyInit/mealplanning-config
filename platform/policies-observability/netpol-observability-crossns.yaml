@@ -83,14 +83,22 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # app ns 전체 → Tempo :4317(OTLP gRPC). 백엔드 9종 + 공개 게이트웨이 사이드카가 보낸다.
-    #   netpol-backend.yaml egress 5) 의 짝. 포트는 4317 만 — 4318(HTTP)은 안 쓴다.
-    #   ⚠️ ns 스코프인 이유 = 보내는 주체가 tier=backend 전부 + GW 사이드카라 파드 셀렉터로
-    #      좁히면 새 서비스가 생길 때마다 빠뜨린다(그리고 그 증상은 "그 서비스만 트레이스 없음").
+    # app + mp-ingress → Tempo :4317(OTLP gRPC). 백엔드 9종·프론트 + 공개 게이트웨이가 보낸다.
+    #   netpol-backend.yaml egress 5)·netpol-frontend.yaml egress 3)·policies-ingress/netpol-gateway.yaml
+    #   egress 5) 의 짝. 포트는 4317 만 — 4318(HTTP)은 안 쓴다.
+    #   ⚠️ ns 스코프인 이유 = 보내는 주체가 tier=backend 전부 + GW 라 파드 셀렉터로 좁히면
+    #      새 서비스가 생길 때마다 빠뜨린다(그리고 그 증상은 "그 서비스만 트레이스 없음").
+    #   🔴 mp-ingress 추가(#532 ③, 2026-08-06) — 게이트웨이가 그리로 이전했다. 이걸 빠뜨리면
+    #      **게이트웨이 트레이스가 조용히 사라진다.** 정확히 같은 실패를 2026-08-06 오전에
+    #      frontend 에서 겪었다(보내는 쪽만 열려 있고 여기가 안 열려 있던 게 아니라 그 반대였지만,
+    #      증상은 동일하게 "에러 없이 트레이스만 없음"이라 눈에 안 띈다).
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: app
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mp-ingress
       ports:
         - { protocol: TCP, port: 4317 }
     # pipeline ns 는 **일부러 넣지 않았다** — 현재 OTLP 를 보내지 않는다

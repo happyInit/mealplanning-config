@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mp-ingress
+# 공개 진입점 ns 보안 정책 (#532 ③, 2026-08-06). child app = argocd/applications/policies-ingress.yaml
+# (mp-policies-ingress, 수동 sync). `platform/policies`(app) 와 별개 앱 — dest namespace 가 다르고
+# 저쪽 kustomization 은 `namespace: app` 을 강제해 재사용이 불가능하다(policies-data 와 같은 구조).
+#
+# 여기 4개는 전부 `platform/policies/` 에서 **그대로 옮겨온 것**이다(#532 ①·②에서 만들어 검증까지
+# 끝낸 정책들). ns 만 바뀌었고 규칙은 그대로다 — 유일한 로직 변경은 netpol-gateway.yaml 의
+# backend·frontend 대상에 namespaceSelector(app)를 붙인 것(cross-ns 가 됐으므로).
+#
+# 🔴 적용 순서 = 진입점 정책 먼저, default-deny 마지막. app ns 에서 쓴 것과 같은 규칙이다.
+resources:
+  - netpol-gateway.yaml             # 공개 GW egress (DNS·istiod·backend·frontend·tempo)
+  - netpol-gateway-ingress.yaml     # 공개 GW ingress (world→443·80 / cloudflared→443 / host→15021)
+  - netpol-cloudflared.yaml         # cloudflared egress (DNS·GW:443·CF 엣지 FQDN, CiliumNetworkPolicy)
+  - netpol-cloudflared-ingress.yaml # cloudflared ingress (host→2000 프로브가 전부)
+  - netpol-default-deny.yaml        # ingress+egress 베이스라인 — 반드시 마지막
+#
+# 🔴 netpol-cloudflared.yaml 재적용 시의 함정은 ns 가 바뀌어도 그대로다:
+#    Cilium toFQDNs 는 정책이 걸린 뒤 DNS 프록시가 관측한 응답의 IP만 허용하는데, cloudflared 는
+#    상주 QUIC 커넥션이라 재해석을 안 한다 → 학습 0 인 채로 전부 막혀 터널이 죽는다(2026-08-04, 502 50초).
+#    **반드시 파드 재기동을 한 묶음으로:**
+#       kubectl apply -f netpol-cloudflared.yaml && kubectl -n mp-ingress rollout restart deploy/mp-cloudflared-app

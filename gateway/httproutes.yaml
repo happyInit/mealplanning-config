@@ -20,6 +20,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -39,6 +40,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -63,6 +65,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -79,6 +82,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -96,6 +100,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -114,6 +119,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -130,6 +136,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -146,6 +153,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -169,6 +177,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -187,6 +196,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https          # 443(HTTPS) 리스너에만 바인딩 — 80 은 리다이렉트 전용
   rules:
     - matches:
@@ -206,6 +216,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: http
   rules:
     - filters:
@@ -224,6 +235,7 @@ metadata:
 spec:
   parentRefs:
     - name: mp-gw-public
+      namespace: mp-ingress      # 🔴 cross-ns 부착(#532 ③) — 없으면 같은 ns(app)에서 찾다 실패
       sectionName: https
   rules:
     - matches:

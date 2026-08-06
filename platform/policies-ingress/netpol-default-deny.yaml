@@ -1,0 +1,36 @@
+# mp-ingress ns **양방향 default-deny 베이스라인** (#532 ③, 2026-08-06).
+# app ns 의 `netpol-default-deny-{ingress,egress}.yaml` 과 같은 목적·같은 근거다 —
+# 라벨 안 단 파드가 새로 뜨면 아무 정책에도 안 걸려 무제한이 되는 구조적 구멍을 닫는다.
+#
+# 🔴 왜 새 ns 에 처음부터 넣나: app ns 는 이 구멍을 **1년 가까이 열어둔 채** 운영했고, 하필
+#    거기 걸린 게 인터넷에 가장 가까운 게이트웨이·cloudflared 였다(#532 발단). 새 ns 를 만들면서
+#    같은 실수를 반복하지 않으려면 **베이스라인이 첫 커밋에 있어야** 한다. 나중에 붙이면
+#    "그 사이에 뜬 워크로드"가 다시 무정책으로 남는다.
+#
+# 🔴 지금 이 ns 의 워크로드 2종은 이미 자기 정책이 있다(netpol-gateway{,-ingress}.yaml ·
+#    netpol-cloudflared{,-ingress}.yaml). Cilium 은 netpol 과 CNP 의 allow 를 **합집합**으로
+#    보므로 이 파일이 그 허용을 뒤엎지 않는다 → **적용 시점의 실물 변화 0**. 값은 미래에 있다.
+#
+# ⚠️ 이 ns 에 뭔가 추가할 때는 ingress·egress 정책을 **함께** 내야 한다. egress 를 빠뜨리면
+#    DNS 부터 막혀 죽고, ingress 를 빠뜨리면 배포는 성공하는데 트래픽만 안 붙는다.
+#    진단 = `hubble observe --namespace mp-ingress --verdict DROPPED`.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-default-deny-ingress
+  namespace: mp-ingress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-default-deny-egress
+  namespace: mp-ingress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress

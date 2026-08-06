@@ -17,7 +17,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: mp-gw-public-egress
-  namespace: app
+  namespace: mp-ingress
 spec:
   podSelector:
     matchLabels:
@@ -50,8 +50,15 @@ spec:
     # 3) backend :8001–8011 — 같은 ns. 실측 확인된 라우트 백엔드 포트:
     #    recipe 8001 · price 8002 · chat 8003 · account 8004 · pantry 8005 · recipebook 8006 ·
     #    mealplan 8007 · notify 8008 · ocr 8010 · video 8011. netpol-backend 의 ingress 1번(같은 범위)과 대칭.
+    #    🔴 ns 이전(#532 ③) — 게이트웨이가 mp-ingress 로 오면서 backend 가 **cross-ns** 가 됐다.
+    #       표준 netpol 에서 `podSelector` 만 쓰면 **정책과 같은 ns**(= mp-ingress) 안에서만 찾는다.
+    #       거기엔 tier=backend 파드가 없으므로 namespaceSelector 를 빠뜨리면 규칙이 조용히
+    #       0개 파드에 매칭되고 **전 API 경로가 죽는다.** 아래 frontend 규칙도 같다.
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: app
+          podSelector:
             matchLabels:
               tier: backend
       ports:
@@ -60,7 +67,10 @@ spec:
     #    backendRefs.port 는 80 이지만 NetworkPolicy 는 **파드 포트**를 본다. netpol-frontend 의 ingress 1번이
     #    GW 로부터 8080 을 허용하고 있고 그게 지금 동작하므로, 대칭인 이 규칙도 8080 이어야 한다.
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: app
+          podSelector:
             matchLabels:
               tier: frontend
       ports:

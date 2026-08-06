@@ -10,30 +10,15 @@ resources:
   - netpol-backend.yaml             # 티어 2: backend 공통 (GW+intra-app+probe / data+DNS+istiod+intra-app)
   - netpol-operations.yaml          # 티어 2 부록: operations cross-ns ↔ observability(Alertmanager/Prometheus)
   - netpol-backend-fqdn.yaml        # 티어 2 부록: account→OAuth · ocr/chat→Gemini FQDN (CiliumNetworkPolicy)
-  # 티어 0 진입점 — 위 셀렉터(tier=backend/frontend·app=operations) 어디에도 안 걸려 무정책이던 3파드.
-  #   둘 다 egress 전용이다: 입구를 ingress 로 잠그면 유입 소스(노드·LAN·cloudflared)를 하나만
-  #   빠뜨려도 공개 서비스가 전면 불가가 된다. ingress 는 default-deny 베이스라인과 함께 별건.
-  - netpol-gateway.yaml             # 티어 0: 공개 GW egress (DNS·istiod·backend·frontend·tempo)
-  # 🔴 netpol-cloudflared.yaml 은 **적용 순서에 조건이 붙는다.** 2026-08-04 1차 적용 때 그냥 sync 만
-  #    했다가 app.mealbong.cloud 가 약 50초간 502 였다(터널 전멸 → 삭제 + 파드 재기동으로 복구).
-  #    증상은 `failed to dial to edge with quic: timeout: no recent network activity` — 엣지로 나가는
-  #    패킷이 통째로 드롭됐다. 원인은 FQDN 목록이 아니라 **학습 타이밍**이었다: Cilium toFQDNs 는
-  #    정책이 걸린 뒤 DNS 프록시가 관측한 응답의 IP만 허용하는데, 그 파드는 27시간째 떠 있어 엣지
-  #    주소를 이미 들고 있었고 상주 QUIC 커넥션이라 재해석을 하지 않는다 → 학습 0인 채로 전부 막혔다.
-  #    ⚠️ netpol-backend-fqdn.yaml 의 앱들(account·ocr·chat·video)은 요청마다 이름을 다시 푸는 단발
-  #    HTTP 클라이언트라 정책을 나중에 붙여도 곧 학습된다. cloudflared 는 그 자연 복구가 없다.
-  #
-  #    🔴 그래서 이 정책을 재적용·수정할 때는 **반드시 파드 재기동을 한 묶음으로** 할 것:
-  #       kubectl apply -f netpol-cloudflared.yaml && kubectl -n app rollout restart deploy/mp-cloudflared-app
-  #    2차 적용(그 순서로)은 성공했다 — 터널 4커넥션 등록·사이트 200 실측.
-  - netpol-cloudflared.yaml         # 티어 0: cloudflared egress (DNS·GW:443·CF 엣지 FQDN, CiliumNetworkPolicy)
-  # 티어 0 ingress — 위 두 egress 파일이 "유입 소스를 하나만 빠뜨려도 공개 서비스가 전면 불가"라며
-  #   미뤄뒀던 나머지 절반. 2026-08-06 conntrack 전수 실측(GW 파드가 뜬 두 노드 양쪽)으로 그 불확실성을
-  #   제거하고 연다. 🔴 세 파일의 순서 = 진입점 먼저, default-deny 마지막(각 파일 상단 근거).
-  - netpol-gateway-ingress.yaml     # 티어 0: 공개 GW ingress (world→443·80 / cloudflared→443 / host→15021)
-  - netpol-cloudflared-ingress.yaml # 티어 0: cloudflared ingress (host→2000 프로브가 전부)
-  # 🔴 베이스라인은 **반드시 마지막**이다. podSelector:{} 라 위 두 ingress 정책이 먼저 살아 있지
-  #    않으면 게이트웨이·cloudflared 가 함께 잠겨 공개 서비스가 전면 불가가 된다.
+  # 🔴 티어 0 진입점 정책 4종(netpol-gateway{,-ingress}·netpol-cloudflared{,-ingress})은
+  #    **여기 없다** — 2026-08-06 `platform/policies-ingress/`(ns=mp-ingress)로 이전했다(#532 ③).
+  #    게이트웨이·cloudflared 가 app 을 떠났기 때문이다(근거 = ingress/kustomization.yaml 상단).
+  #    ⚠️ 그 파일들의 함정 메모(특히 netpol-cloudflared.yaml 의 toFQDNs 학습 타이밍 →
+  #       apply 와 rollout restart 를 한 묶음으로)도 그쪽 kustomization 으로 따라갔다.
+  #    ⚠️ 이 ns 에 남은 정책들은 이제 게이트웨이를 **cross-ns 로** 참조한다 —
+  #       netpol-frontend/backend 의 ingress 1) 에 namespaceSelector(mp-ingress)가 붙어 있고,
+  #       그게 빠지면 셀렉터가 app 안에서만 찾아 0개에 매칭돼 사이트가 통째로 죽는다.
+  # 🔴 베이스라인은 **반드시 마지막**이다(podSelector:{} 라 앞의 정책이 먼저 살아 있어야 한다).
   - netpol-default-deny-ingress.yaml # app ns ingress default-deny (미래·미분류 파드 잠금)
   # 🔴 egress 베이스라인은 ingress 보다 뒤다. 유입은 막혀도 "그 기능만" 죽지만 egress 가 막히면
   #    DNS 부터 죽어 파드가 아무것도 못 한다. 적용 전 `cilium-dbg endpoint list` 로 app ns 파드

@@ -14,7 +14,7 @@ spec:
     path: services/cloudflared/overlays/onprem
   destination:
     server: https://kubernetes.default.svc
-    namespace: app
+    namespace: mp-ingress
   # auto + selfHeal 승격 — P2 후속으로 계획됐던 auto-sync 를 이제 반영(P2 완료 2026-07-30).
   #   상태 없는 터널 Deployment 라 선언값을 강제(selfHeal)해 드리프트를 없앤다. ArgoCD 접근은
   #   내부 게이트웨이(.15)라 터널 오설정에 의한 lockout 위험은 낮다.

@@ -14,7 +14,7 @@ apiVersion: networking.istio.io/v1alpha3
 kind: EnvoyFilter
 metadata:
   name: mp-gw-request-body-limit
-  namespace: app
+  namespace: mp-ingress
 spec:
   workloadSelector:
     labels:

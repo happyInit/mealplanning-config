@@ -23,7 +23,12 @@ data:
         # 🔴 `.svc` 단축형 고정 — 4-dot FQDN 은 search 확장 중 `.local` 로 새어 ISP 가 공인 IP 를
         #    물려준다(2026-08-02 실측 21.7%). 여기가 걸리면 외부 유입 오리진이 통째로 어긋난다.
         #    (originServerName 이 SNI 를 고정하므로 인증서 검증이 막아 주지만 = 가로채기가 아니라 장애.)
-        service: https://mp-gw-public-istio.app.svc:443
+        # 🔴 ns 이전(#532 ③, 2026-08-06): `.app.svc` → `.mp-ingress.svc`.
+        #    게이트웨이가 mp-ingress 로 갔으므로 이 한 줄이 안 따라가면 **공개 사이트가 전면 502** 다.
+        #    cloudflared 자신도 같은 ns 로 옮겼지만, Service DNS 는 ns 를 명시하므로 여기는 그대로
+        #    ns 를 적는다(단축형 `mp-gw-public-istio` 만 쓰면 같은 ns 라 동작은 하나, 위 `.local`
+        #    누출 함정과 얽히는 search 확장에 다시 의존하게 되므로 명시형을 유지한다).
+        service: https://mp-gw-public-istio.mp-ingress.svc:443
         originRequest:
           originServerName: app.mealbong.cloud
       - service: http_status:404

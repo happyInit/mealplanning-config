@@ -1,6 +1,11 @@
-# child app — 공개 게이트웨이(.14) + nginx /api/* 13경로를 대체하는 HTTPRoute 10개.
-# Gateway 는 인프라 소유 오브젝트지만(object_spec §5.1 역할분담) HTTPRoute 와 우선순위가
-# 리스너 전역으로 맞물려 있어 **한 단위로 검토·배포**한다.
+# child app — nginx /api/* 13경로를 대체하는 **HTTPRoute 12개**(ns=app).
+#
+# 🔴 2026-08-06(#532 ③) 이후 이 앱은 **Gateway 를 들고 있지 않다.** 게이트웨이 실체는
+#    `mp-ingress` Application(path `ingress/`, ns=mp-ingress)으로 갈라졌다.
+#    라우트만 app 에 남긴 이유 = backendRef 가 app ns Service 라 여기 있으면 ReferenceGrant 가
+#    불필요하다(옮기면 12개 필요). 상세 = `gateway/kustomization.yaml` 상단.
+#    ⚠️ 구 주석("Gateway 와 HTTPRoute 는 리스너 전역 우선순위로 맞물려 한 단위로 배포")은
+#       이제 성립하지 않는다 — 두 앱을 함께 sync 하는 운영 규칙으로 대체됐다.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

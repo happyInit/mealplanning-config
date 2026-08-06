@@ -34,7 +34,7 @@ apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: mp-gw-public-ingress
-  namespace: app
+  namespace: mp-ingress
 spec:
   endpointSelector:
     matchLabels:

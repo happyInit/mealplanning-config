@@ -21,8 +21,10 @@
 # 왜 이걸 붙여도 기존 파드가 안 깨지나(2026-08-06 점검):
 #   · tier=backend / tier=frontend / app=operations → 이미 ingress 규칙이 있어 **이미 default-deny 상태**다.
 #     k8s netpol 은 "ingress 규칙을 가진 파드는 그 규칙 외 전부 차단"이라, 이 파일이 더 조이는 게 없다.
-#   · 게이트웨이·cloudflared → 앞의 두 CNP 가 덮는다. Cilium 은 netpol 과 CNP 의 allow 를 **합집합**으로
-#     본다(둘 중 하나가 허용하면 통과) → 이 default-deny 가 그 허용을 뒤엎지 않는다.
+#   · 게이트웨이·cloudflared → 당시엔 이 ns 의 CNP 2개가 덮었다. Cilium 은 netpol 과 CNP 의 allow 를
+#     **합집합**으로 본다(둘 중 하나가 허용하면 통과) → 이 default-deny 가 그 허용을 뒤엎지 않았다.
+#     🔴 2026-08-06(#532 ③) 이후 그 둘은 **이 ns 에 없다** — mp-ingress 로 이전했다. 즉 지금 이
+#        파일이 덮는 대상은 app 의 앱 워크로드뿐이고, 진입점 잠금은 platform/policies-ingress 소관이다.
 #   · app ns 의 나머지 = CronJob `mp-ocr-config-canary` 의 Job 파드뿐이고, 유입을 받지 않는다(나가서 호출만 함).
 #     Argo Rollouts 의 AnalysisRun 파드도 마찬가지(Prometheus 로 나가는 쪽).
 #   → 즉 **오늘 당장 바뀌는 실물 흐름은 0**이다. 값은 미래에 있다: 라벨을 안 단 파드가 뜰 때 자동으로 잠긴다.

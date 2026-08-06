@@ -22,8 +22,14 @@ spec:
     - Egress
   ingress:
     # 1) 공개 GW → backend API (/api/*). GW 파드는 app/tier 라벨이 없어 gateway-name 으로 고른다(frontend 와 동일).
+    #    🔴 ns 이전(#532 ③, 2026-08-06) — 게이트웨이가 mp-ingress 로 갔다. namespaceSelector 를
+    #       빠뜨리면 `podSelector` 가 **같은 ns(app)** 안에서만 찾아 0개 파드에 매칭되고,
+    #       **전 API 경로가 죽는다.** (netpol-frontend.yaml ingress 1 도 같은 수정.)
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mp-ingress
+          podSelector:
             matchLabels:
               gateway.networking.k8s.io/gateway-name: mp-gw-public
       ports:
