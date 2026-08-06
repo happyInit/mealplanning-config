@@ -1,0 +1,72 @@
+# 보안 ③ CiliumNetworkPolicy — 공개 게이트웨이(mp-gw-public) **ingress**.
+# 짝 = netpol-gateway.yaml(egress). 그 파일이 "ingress 는 default-deny 베이스라인과 함께 별건"이라
+# 미뤄뒀던 나머지 절반이다.
+#
+# 🔴 왜 지금 열 수 있게 됐나: egress 파일이 ingress 를 미룬 이유는 "유입 소스(노드·LAN·cloudflared)를
+#    하나만 빠뜨려도 공개 서비스가 전면 불가"였다. 그 불확실성을 **conntrack 전수 실측으로 제거**했다
+#    (2026-08-06, `cilium-dbg bpf ct list global` 을 GW 파드가 뜬 두 노드 a2·b2 양쪽에서).
+#    실측 트래픽을 직접 만들어(공개 URL 25회 + LAN https 25회 + LAN http 10회) 재측정한 결과:
+#      GW-a2  15021←srcID=1(host) · 443←srcID=2(world) · 80←srcID=2(world)
+#      GW-b2  15021←srcID=1(host) · 443←srcID=2(world) · 80←srcID=2(world) · 443←srcID=18358(cloudflared)
+#    → 유입은 이 4가지가 전부다. 그 외 포트(15020 metrics·15090 envoy-prom)로는 **아무도 안 들어온다**.
+#
+# 🔴 왜 CiliumNetworkPolicy 인가: 유입 소스를 `world`(클러스터 밖 전체)·`host`(파드가 뜬 노드) 라는
+#    **정체성(identity)** 으로 구분해야 하는데 표준 netpol 은 IP/CIDR 밖에 못 쓴다. 노드 서브넷을
+#    ipBlock 으로 쓰면(netpol-frontend 방식) LAN 의 아무 PC 나 kubelet 과 같은 취급이 돼
+#    15021 status-port 까지 열린다. Cilium 이면 "노드만 15021" 로 정확히 좁혀진다.
+#
+# 🔴 포트 80 은 실측으로 뒤늦게 드러난 항목이다. 이전 세션 기록에는 "world+cf→443, host→15021" 만
+#    있었는데, 그때 관측 창에 평문 HTTP 요청이 없었을 뿐이다. 실제로는 Gateway 에 `http`(:80) 리스너와
+#    거기 붙는 **mp-https-redirect HTTPRoute** 가 살아 있고, `curl http://192.168.0.14/` = **301** 을 확인했다.
+#    🔴 이걸 빠뜨리면 브라우저에 호스트명만 친 사용자의 https 리다이렉트가 조용히 죽는다.
+#
+# 🔴 world 가 LAN 까지 포함한다: 우리 LAN(192.168.0.x) 의 비-노드 IP 도 srcID=2 로 찍혔다(실측).
+#    Cilium 에서 `world` = 클러스터 밖 전부(≈0.0.0.0/0)라 인터넷·LAN 을 한 번에 덮는다.
+#    ⚠️ 반대로 **노드 자신(192.168.0.17~21)에서 쏜 443 은 world 가 아니라 host/remote-node** 다.
+#    노드에 SSH 해서 `curl https://192.168.0.14` 로 점검하는 습관이 있다면 그건 이 정책에 막힌다
+#    (서비스 장애가 아니라 점검 방법의 문제 — 검증은 LAN PC 나 공개 URL 에서 할 것).
+#
+# 🔴 externalTrafficPolicy=Cluster + Cilium SNAT 기본값이라 "다른 노드로 넘어간 외부 트래픽이
+#    노드 IP 로 SNAT 돼 world 가 아니게 되는" 시나리오를 의심했으나, **두 노드 모두 srcID=2 로
+#    클라이언트 정체성이 보존**됐다(위 실측). 그래서 world 하나로 충분하다.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-gw-public-ingress
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      # egress 파일과 같은 기준 — Gateway API 표준 라벨. Deployment 이름·app 라벨은 istiod 소유라
+      # 우리가 못 믿는다(netpol-gateway.yaml 상단 근거와 동일).
+      gateway.networking.k8s.io/gateway-name: mp-gw-public
+  ingress:
+    # 1) 인터넷·LAN → :443(HTTPS 리스너) · :80(HTTP 리다이렉트 리스너)
+    #    여기가 공개 서비스의 유일한 입구다. 소스를 좁힐 수 없는(=전 세계인) 자리라 제한의 실익은
+    #    **포트**에 있다: 이 규칙 덕분에 15020·15090 같은 프록시 관리/메트릭 포트는 외부에서 못 닿는다.
+    - fromEntities:
+        - world
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+            - { port: "80", protocol: TCP }
+    # 2) cloudflared → :443. 공개 도메인(app.mealbong.cloud)의 실제 경로다:
+    #    Cloudflare 엣지 → 인클러스터 cloudflared 파드 → 여기. 같은 ns 라 fromEndpoints 로 충분하다.
+    #    🔴 이 파드는 클러스터 안이라 world 가 아니다(srcID=18358). 1번 규칙으론 안 덮인다 —
+    #       빠뜨리면 공개 사이트가 전면 502 다.
+    - fromEndpoints:
+        - matchLabels:
+            app: cloudflared-app
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+    # 3) 노드(kubelet) → :15021 status-port. istio-proxy 의 readinessProbe·startupProbe 가
+    #    /healthz/ready 로 여기를 친다. 🔴 막히면 파드가 NotReady → Service 엔드포인트에서 빠져
+    #    **게이트웨이가 스스로 죽는다.** 소스는 파드가 뜬 그 노드이므로 host(로컬 노드) 로 충분하다
+    #    (a2·b2 양쪽에서 srcID=1 로 실측). remote-node 는 필요 없다 — kubelet 은 자기 노드 파드만 찌른다.
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - { port: "15021", protocol: TCP }

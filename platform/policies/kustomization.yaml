@@ -27,5 +27,9 @@ resources:
   #       kubectl apply -f netpol-cloudflared.yaml && kubectl -n app rollout restart deploy/mp-cloudflared-app
   #    2차 적용(그 순서로)은 성공했다 — 터널 4커넥션 등록·사이트 200 실측.
   - netpol-cloudflared.yaml         # 티어 0: cloudflared egress (DNS·GW:443·CF 엣지 FQDN, CiliumNetworkPolicy)
+  # 티어 0 ingress — 위 두 egress 파일이 "유입 소스를 하나만 빠뜨려도 공개 서비스가 전면 불가"라며
+  #   미뤄뒀던 나머지 절반. 2026-08-06 conntrack 전수 실측(GW 파드가 뜬 두 노드 양쪽)으로 그 불확실성을
+  #   제거하고 연다. 🔴 세 파일의 순서 = 진입점 먼저, default-deny 마지막(각 파일 상단 근거).
+  - netpol-gateway-ingress.yaml     # 티어 0: 공개 GW ingress (world→443·80 / cloudflared→443 / host→15021)
   # 티어 3 data → 티어 4 pipeline 이 순서대로 추가된다.
   # 🔴 data·pipeline 대상 netpol 은 그 ns 로 가야 하므로(이 kustomization 은 namespace:app 강제) 그때 별도 배치.
