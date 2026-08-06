@@ -7,6 +7,7 @@ namespace: data
 # 스토어별로 하나씩 추가·sync·관찰: Redis(첫) → ES → PG(백업·apiserver·복제) → (Kafka 는 Strimzi 소유라 제외).
 resources:
   - netpol-redis.yaml               # Redis(mp-redis + sentinel) default-deny — 3-1 ✅ 검증완료
+  - netpol-redis-pgsync.yaml        # redis-pgsync(PGSync 전용 브로커) default-deny — 3-1b 누락분(클라=pgsync 단일, CLIENT LIST 실측)
   - netpol-es.yaml                  # ES(ECK, cluster=es) default-deny — 3-2 ✅ 검증완료
   - netpol-es-exporter.yaml         # ES exporter: Prometheus ingress + DNS/ES-only egress
   - netpol-es-exporter-bootstrap.yaml # one-shot monitor user bootstrap: DNS + ES only

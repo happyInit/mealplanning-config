@@ -1,0 +1,37 @@
+# 보안 ③ NetworkPolicy — 티어 3(data ns) 스토어별 잠금: redis-pgsync (PGSync 전용 브로커).
+#
+# 🔴 왜 별도 파일인가: netpol-redis.yaml 은 mp-redis/mp-redis-s 만 덮고 redis-pgsync 는
+#    "별도 인스턴스라 제외"했는데, 그 후속 정책이 누락돼 redis-pgsync 가 **정책 미적용(=오픈)** 상태였다.
+#    (kustomization 의 "스토어별 하나씩" 롤아웃에서 빠진 스토어.) 이 파일이 그 갭을 닫는다.
+#
+# 🔴 data ns=메시 밖 → netpol 이 유일한 L3/L4 경계. 단 redis-pgsync 는 probe/exporter 가 없어
+#    (redis-pgsync.yaml: liveness/readiness 없음·비영속 단일 브로커) 노드 ipBlock·Prometheus 불필요.
+#
+# 클라이언트(라이브 CLIENT LIST 실측): mp-pgsync 단 하나(REDIS_HOST=redis-pgsync:6379, 커넥션 6).
+#   단일 인스턴스라 복제·외부 egress 없음 → egress 는 DNS 만.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-redis-pgsync
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app: redis-pgsync
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # PGSync → redis-pgsync 6379 (유일한 클라이언트). pgsync 는 같은 data ns.
+    - from:
+        - podSelector: { matchLabels: { app: pgsync } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+  egress:
+    # DNS 만 — 단일 브로커라 복제·외부 egress 없음(REDIS_CHECKPOINT=False, save 없음).
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
