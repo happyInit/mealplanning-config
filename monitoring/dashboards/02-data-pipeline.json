@@ -46,7 +46,7 @@
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
       "targets": [
         {"editorMode": "code", "expr": "fb_poller_last_run_success", "legendFormat": "poller / {{poller}}", "range": true, "refId": "A"},
-        {"editorMode": "code", "expr": "min by(pod) (kube_pod_status_ready{namespace=\"pipeline\",condition=\"true\"})", "legendFormat": "consumer / {{pod}}", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "min by(pod) (kube_pod_status_ready{namespace=\"pipeline\",condition=\"true\"} and on(namespace, pod) kube_pod_owner{namespace=\"pipeline\",owner_kind=\"ReplicaSet\"})", "legendFormat": "consumer / {{pod}}", "range": true, "refId": "B"},
         {"editorMode": "code", "expr": "absent(fb_poller_last_run_success)", "legendFormat": "poller / telemetry", "range": true, "refId": "C"}
       ],
       "title": "Pipeline Status",
