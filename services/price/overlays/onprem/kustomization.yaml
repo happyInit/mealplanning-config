@@ -7,4 +7,4 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-price-service
   newName: 192.168.0.10/mealplanning/mp-price-service
-  newTag: da9ec3e5bf2d42018a6626b91903f97cdba686cf
+  newTag: e02f0a290da01695b9ae25e66df463c6fb8f3006
