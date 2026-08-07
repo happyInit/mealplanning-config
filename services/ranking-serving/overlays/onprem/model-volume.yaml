@@ -1,5 +1,8 @@
 # /models 볼륨을 emptyDir → PVC(mp-ranking-model)로 교체 — 모델 재시작 durability(B1).
 #   emptyDir: null 로 base의 emptyDir을 제거하고 persistentVolumeClaim으로 치환(strategic merge, 키=name).
+# fsGroup: PVC는 emptyDir과 달리 이미지 chown을 못 물려받아 root:root(755)로 마운트됨 →
+#   앱(uid/gid 10001)이 /models에 못 씀. fsGroup=10001로 볼륨을 gid 10001로 chown → 쓰기 가능.
+#   (PSS restricted 허용. base pod securityContext에 병합.)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,6 +10,9 @@ metadata:
 spec:
   template:
     spec:
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
       volumes:
         - name: models
           emptyDir: null
