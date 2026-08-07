@@ -8,6 +8,11 @@ kind: Deployment
 metadata:
   name: mp-ranking-serving
 spec:
+  # RWO PVC라 RollingUpdate surge(신·구 파드 동시) 시 볼륨 Multi-Attach로 롤아웃이 교착된다
+  #   (FailedMount: device already mounted). Recreate로 구 파드를 먼저 종료해 볼륨을 놓게 한다.
+  #   단일 replica·내부 소비자(mealplan 폴백)라 짧은 전환 다운타임 허용.
+  strategy:
+    type: Recreate
   template:
     spec:
       securityContext:
