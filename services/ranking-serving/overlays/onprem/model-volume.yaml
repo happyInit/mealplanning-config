@@ -1,0 +1,14 @@
+# /models 볼륨을 emptyDir → PVC(mp-ranking-model)로 교체 — 모델 재시작 durability(B1).
+#   emptyDir: null 로 base의 emptyDir을 제거하고 persistentVolumeClaim으로 치환(strategic merge, 키=name).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-ranking-serving
+spec:
+  template:
+    spec:
+      volumes:
+        - name: models
+          emptyDir: null
+          persistentVolumeClaim:
+            claimName: mp-ranking-model
