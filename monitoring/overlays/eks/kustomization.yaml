@@ -1,16 +1,54 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
+# ── EKS 사이트 오버레이 — 🔴 아직 배포 대상이 아니다 ──────────────────────────────
+# 신설 = 0-1(2026-08-09) · 0-3c 반영 = 2026-08-10.
 #
-# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
-#    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+# 🔴 validate.py 는 `overlays/eks` 를 정책 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE) — 렌더 성공만 본다.
+#    **초록 = 이관 준비 완료가 아니다.** 아래 "아직 안 갈린 것"을 반드시 같이 읽을 것.
 #
-# 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - 🔴 0-3c `rules-physical.yaml` 을 **빼야 한다** — 안 빼면 EKS 에서 영구 TargetDown
-#      (15일 내 4건 실발화한 룰이다: TempCritical·TempHigh·DiskReadBurst·MpHostCDown)
-#    - 0-3b `externalLabels.site` 는 kube-prometheus-stack values 쪽(= Ansible, 0-3) 소관이라 여기가 아니다
-#    - 대시보드 JSON 은 데이터소스 uid 가 같으면 무수정 이식
+# ── ✅ 갈린 것 ────────────────────────────────────────────────────────────────
+# 1. **0-3c `rules-physical.yaml` (PrometheusRule/mp-physical-layer · 9룰)** — 이 오버레이에
+#    **패치가 없다.** 파일이 `../onprem/` 으로 내려가 base 에 없기 때문이다(그쪽이 정본).
+#    근거는 도달성이 아니라 **장애 도메인**이다: 타깃이 Proxmox 물리 2대(`job=hypervisor`)와
+#    호스트 C(`job=vm-node`·`vm-cadvisor`)인데 AWS 에 **대응물이 없다** → 영구 TargetDown.
+#    🔴 검증 방법 = `kubectl kustomize monitoring/overlays/eks | grep mp-physical-layer` 가
+#       **빈 결과**여야 한다. 누가 base 에 되돌려 놓으면 여기서 조용히 다시 샌다.
+#
+# 2. **`mp-data-tier` 의 `mp-minio` 그룹 제거 (C-18)** — AWS 에는 MinIO 가 없다(→ S3).
+#    두 룰 중 `MpMinIOVolumeMetricsUnavailable` 이 `absent_over_time(...)` 기반이라
+#    **대상이 없으면 발화한다** — 즉 EKS 에서 영구 firing 이 된다(0-3c 와 같은 실패 유형).
+#    🔴 `op: test` 를 앞에 둔 이유: JSON6902 는 **인덱스**로 지운다. 누가 groups 순서를 바꾸면
+#       엉뚱한 그룹이 지워지므로, 이름이 다르면 **렌더가 실패하도록** 막아 둔다.
+#       (validate.py `check_site_overlays()` 가 eks 렌더 실패를 잡는다 = 조용히 안 썩는다.)
+#
+# ── 🔴 아직 안 갈린 것 (이 레포에서 못 하거나, 사람 결정 대기) ──────────────────
+# A. **0-3b `externalLabels: {site: aws}` · 1-27 `retentionSize` · Prometheus `nodeSelector`**
+#    → kube-prometheus-stack values = **앱 레포 Ansible** 소관. 명세 = `monitoring/SITE-SPLIT.md`.
+# B. **스크레이프 job 4종**(hypervisor·vm-node·vm-cadvisor·vm-alloy) → 같은 파일. 위와 한 묶음.
+# C. **`PrometheusRule/mp-workload-spread`** — zone 을 노드 **이름 정규식**
+#    (`k8s-worker-([ab])[0-9]+`)으로 파생한다. EKS 노드 이름은 `ip-10-…` 이라 **하나도 안 맞는다**:
+#      · `MpNodeZoneMapUnknown` → 전 노드에서 영구 발화
+#      · zone 파생이 전부 빈 라벨로 접혀 `MpDeploymentPodsOnSingleZone` 이 **전 Deployment 오발화**
+#    고쳐야 할 방향은 정해져 있다(룰 주석의 "제대로 된 해법") — KSM 에
+#    `--metric-labels-allowlist=nodes=[topology.kubernetes.io/zone]` 을 켜고 `kube_node_labels`
+#    조인으로 교체. **그건 앱 레포 선행이라 여기서 임의로 못 한다** → 사람 결정. SITE-SPLIT.md §4.
+# D. **대시보드 `08-hypervisor.json`** — 온프렘 물리 전용이라 EKS 에선 빈 패널이 된다.
+#    알람이 아니라 소음이 0 이므로 **의도적으로 두었다**(빼려면 CM 을 갈라야 하는데 그러면
+#    onprem 렌더가 바뀐다 = 0-1 안전기준 위반). 정리하려면 별건으로.
+# E. **`rules-backup.yaml` 의 런북 문자열** — `ssh ubuntu@192.168.0.17` / `.10` 이 박혀 있다.
+#    `annotations` 는 발화·라우팅에 참여하지 않아 **오발화를 만들지 않는다** → 0-3c 대상 아님.
+#    다만 AWS 온콜이 없는 호스트로 안내받는다 → 문구 정리 별건.
 resources:
   - ../../base
+patches:
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: PrometheusRule
+      name: mp-data-tier
+    patch: |
+      - op: test
+        path: /spec/groups/2/name
+        value: mp-minio
+      - op: remove
+        path: /spec/groups/2

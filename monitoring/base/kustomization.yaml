@@ -4,7 +4,11 @@ namespace: app
 resources:
   - servicemonitor.yaml
   - rules.yaml
-  - rules-physical.yaml
+  # 🔴 `rules-physical.yaml` 은 여기 없다 — **`../overlays/onprem/` 로 내려갔다**(0-3c, 2026-08-10).
+  #    이유는 도달성이 아니라 **장애 도메인**이다. 그 9룰의 타깃(Proxmox 물리 2대 · 호스트 C)은
+  #    AWS 에 대응물이 **없다** — base 에 두면 EKS 오버레이로 새고 영구 TargetDown 이 된다.
+  #    스크레이프 job 4종(hypervisor·vm-node·vm-cadvisor·vm-alloy)은 kube-prometheus-stack
+  #    values(앱 레포 Ansible) 소관이라 여기서 못 가른다 — 명세 = `monitoring/SITE-SPLIT.md`.
   # 🔴 2026-08-03 신설 — 파일을 가른 이유는 내용이 아니라 **소유권**이다.
   #    rules.yaml 하나를 여러 명이 동시에 고치면 머지 충돌이 난다.
   #    두 항목을 **여기에 미리 등록**해 두는 것이 핵심 — 안 그러면 각자 작업하다가

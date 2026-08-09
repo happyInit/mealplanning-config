@@ -1,15 +1,27 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # ── 온프렘 사이트 오버레이 ─────────────────────────────────────────────────────
-# 🔴 지금은 **순수 통과(base 그대로)** 다. 신설 시점(0-1, 2026-08-09)의 안전 기준이
-#    "재구성 전후 렌더가 동일" 이라, 여기에 아무것도 얹지 않았다.
-#    검증 = `kubectl kustomize monitoring/overlays/onprem` 결과가 재구성 전 렌더와 같음(전 트랙 확인).
-#
-# 🔴 여기에 넣을 것 = **온프렘에서만 참인 값**. AWS 이관(C-3)으로 온프렘은 DR 대기 사이트 +
+# 🔴 여기에 넣는 것 = **온프렘에서만 참인 값**. AWS 이관(C-3)으로 온프렘은 DR 대기 사이트 +
 #    크롤 프로덕션으로 **계속 살아 있다** — 그래서 온프렘 전용 설정은 지우는 게 아니라
-#    base 에서 이쪽으로 내려야 한다:
-#    - 🔴 0-3c `rules-physical.yaml` 9룰 + job 4종(hypervisor·vm-node·vm-cadvisor·vm-alloy)
-#      = Proxmox 물리 2대 + 호스트 C. **온프렘에만 타깃이 있다**
-#    - rules.yaml 의 zone=host-a/host-b 전제 주석
+#    base 에서 이쪽으로 내린다.
+#
+# 0-3c (2026-08-10) — `rules-physical.yaml` 을 base 에서 여기로 내렸다.
+#   근거는 도달성이 아니라 **장애 도메인**이다. 9룰의 타깃 = Proxmox 물리 2대(`hypervisor`) +
+#   호스트 C(`vm-node`·`vm-cadvisor`)로, **AWS 에 대응물이 없다.** base 에 남기면 EKS 오버레이가
+#   그대로 상속해 영구 TargetDown 이 된다. 반대로 지우면 온프렘이 눈을 잃는다 —
+#   15일 내 실발화 4건(TempCritical·TempHigh·DiskReadBurst·MpHostCDown)이 그 증거다.
+#
+# 🔴 `namespace: app` 을 여기 다시 적는 이유 — base 의 `namespace:` 는 base 의 resources 에만
+#    적용된다. 오버레이가 **직접** 넣은 `rules-physical.yaml` 은 base 트랜스포머를 안 거치므로
+#    여기서 지정하지 않으면 네임스페이스 없이 렌더돼 라이브(app/mp-physical-layer)와 갈린다.
+#    base 산출물은 이미 전부 app 이라 이 줄은 그쪽에 대해 무연산이다(렌더 diff 0 으로 확인).
+namespace: app
 resources:
   - ../../base
+  - rules-physical.yaml
+
+# ── 여기에 아직 내려오지 **못한** 온프렘 전용 값 (config 레포 밖) ──────────────────
+# · 스크레이프 job 4종(hypervisor·vm-node·vm-cadvisor·vm-alloy) = kube-prometheus-stack
+#   values → 앱 레포 `roles/k8s_observability/templates/kube-prometheus-stack-values.yaml.j2`
+# · `externalLabels.site` (0-3b) · `retentionSize` (1-27) · Prometheus `nodeSelector zone: host-b`
+#   → 같은 파일. 전부 **앱 레포 PR 선행**이다. 명세 = `monitoring/SITE-SPLIT.md`.
