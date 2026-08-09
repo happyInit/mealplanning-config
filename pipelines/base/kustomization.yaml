@@ -1,4 +1,5 @@
-# 파이프라인 (pipeline ns) — 컨슈머 4 + CronJob 11 + PVC (런북 Q12 · §1 실측 인벤토리).
+# 파이프라인 (pipeline ns) — 컨슈머 4 + CronJob 11 (런북 Q12 · §1 실측 인벤토리).
+# 🔴 PVC 2종은 여기 없다 — C-20 으로 **온프렘 잔류**라 `overlays/onprem/pvc.yaml` 로 내려갔다.
 # 소유 = 인프라 / child = platform-root 가 집고 project=mealplanning (Q8).
 # 이미지 = 파이프라인 트랙 1.2.0 (:21db938c… — 2026-07-29 릴리스 런[Sentinel-aware], 3태그 정책대로 :sha 핀).
 # ✅ 전환창 §4-9 실행(2026-07-29) — 컨슈머 4 replicas 1 · CronJob 11 unsuspend, K8s 파이프라인이 정본.
@@ -13,7 +14,7 @@ resources:
   - consumers.yaml
   - pollers.yaml
   - pruners.yaml
-  - pvc.yaml
+  # pvc.yaml → overlays/onprem (C-20: pipeline PVC 2종은 온프렘 잔류, EKS PVC = 0)
   - monitoring.yaml
   - scaledobjects.yaml  # KEDA — Kafka lag 스케일(P3). min 0 전환 조건은 파일 상단 주석
 

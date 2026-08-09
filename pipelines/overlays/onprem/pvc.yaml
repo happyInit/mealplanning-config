@@ -1,3 +1,7 @@
+# 🔴 이 파일은 **온프렘 전용**이다 (C-20 — EKS 는 pipeline PVC 0개).
+#    근거: 두 볼륨의 소비자가 온프렘에 남는 워크로드이고(만개 크롤 resume/dedup ·
+#    chat-insights 리포트 열람), 실사용이 합쳐 ~2.1 MiB 라 EBS 를 사서 옮길 값이 없다.
+#    ⚠️ 감시 사각지대 — 마운트 파드가 상주하지 않아 `kubelet_volume_stats_*` 가 아예 안 나온다.
 # 파이프라인 영속 상태 2종 — openebs-lvm(RWO·WaitForFirstConsumer)이라 첫 Job 실행 때
 # 바인딩되고 그 노드에 고정된다(이후 실행도 같은 노드 — CronJob 파드는 어차피 단일).
 apiVersion: v1

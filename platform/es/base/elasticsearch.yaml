@@ -57,12 +57,13 @@ spec:
                   memory: 1536Mi
                 limits:
                   memory: 1536Mi # 플랜 §2.2 예산 3×1.5. CPU limits 는 넣지 않는다(§13.7 — 부하테스트 병목 재발 방지)
+      # 🔴 storageClassName 은 **사이트 오버레이가 넣는다**(0-8). onprem=openebs-lvm / eks=gp3.
+      #    vct 는 immutable 이라 라이브 변경 = `--cascade=orphan` 삭제 후 재생성이다.
       volumeClaimTemplates:
         - metadata:
             name: elasticsearch-data
           spec:
             accessModes: [ReadWriteOnce]
-            storageClassName: openebs-lvm
             resources:
               requests:
                 storage: 10Gi
@@ -83,12 +84,13 @@ spec:
                   memory: 1536Mi
                 limits:
                   memory: 1536Mi
+      # 🔴 storageClassName 은 **사이트 오버레이가 넣는다**(0-8). onprem=openebs-lvm / eks=gp3.
+      #    vct 는 immutable 이라 라이브 변경 = `--cascade=orphan` 삭제 후 재생성이다.
       volumeClaimTemplates:
         - metadata:
             name: elasticsearch-data
           spec:
             accessModes: [ReadWriteOnce]
-            storageClassName: openebs-lvm
             resources:
               requests:
                 storage: 10Gi

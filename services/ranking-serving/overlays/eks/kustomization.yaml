@@ -4,6 +4,14 @@ namespace: app
 resources:
   - ../../base
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
+#
+# ── 0-8 / C-20 스토리지: 여기는 손댈 게 없다(확인 완료 2026-08-10) ─────────────
+# `mp-ranking-model` PVC(1Gi · openebs-lvm)와 /models 볼륨 치환 패치는 **이미
+# `overlays/onprem` 에만** 있다(model-pvc.yaml · model-volume.yaml). 즉 base 는 emptyDir 이고
+# 이 오버레이는 그 emptyDir 을 그대로 쓴다 — EKS PVC 0개라는 C-20 결정과 이미 일치한다.
+# 🔴 다만 C-20 의 나머지 절반("ranker.pkl 을 이미지에 굽는다")은 **앱 레포 Dockerfile 소관**이다.
+#    그게 안 되면 EKS 에서는 파드 재시작마다 모델을 다시 받아야 한다(emptyDir 은 비휘발이 아니다).
+#    ⚠️ 그 emptyDir 은 지금 sizeLimit 이 없다 — 0-8d 대상. 모델 1개(0.95 MiB)라 위험도는 낮다.
 images:
   - name: 192.168.0.10/mealplanning/mp-ranking-serving
     newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-ranking-serving

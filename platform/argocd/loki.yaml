@@ -80,6 +80,26 @@ spec:
           persistence:
             size: 10Gi
             storageClass: openebs-lvm
+            # 🔴 0-8c — 차트 기본값이 만든 3단 연쇄 삭제 체인을 끊는다 (2026-08-10).
+            #
+            # 무엇이 문제였나: loki 차트 7.1.0 의 `singleBinary.persistence` 기본값이
+            #   enableStatefulSetAutoDeletePVC=true · whenDeleted=Delete · whenScaled=Delete
+            # 라, 렌더된 STS 에 `persistentVolumeClaimRetentionPolicy: {Delete, Delete}` 가 박힌다.
+            # **라이브 STS 11개 중 이것 하나만 그랬다**(나머지 10개는 K8s 기본 Retain/Retain).
+            # 우리가 설정한 값이 아니라 차트 의견이고, valuesObject 에 흔적이 없어 안 보였다.
+            #
+            # 왜 위험한가 — 세 겹이 겹친다:
+            #   ① 이 STS 정책      : replica 0 으로 줄이기만 해도(whenScaled=Delete) PVC 가 삭제
+            #   ② PV reclaimPolicy : `openebs-lvm` = Delete → PVC 가 지워지면 **디스크까지** 삭제(0-8b)
+            #   ③ Application 정책 : loki 는 automated{prune:true, selfHeal:true}
+            # → 스케일다운 한 번, 또는 Application 실수 한 번이 PVC→PV→LV 로 번진다.
+            #   ⚠️ Loki 는 청크 정본이 S3(MinIO)라 손실 자체는 작다(WAL·캐시). 문제는 **패턴**이다 —
+            #      이 템플릿을 그대로 EBS 로 복제하면 재파생 불가 데이터에도 같은 체인이 생긴다.
+            #
+            # false 로 두면 차트가 그 블록을 아예 렌더하지 않고, API 서버 기본값
+            # Retain/Retain 이 적용된다(= 나머지 STS 10개와 동일). 필드는 mutable 이라
+            # 적용 시 파드 재시작 없이 STS spec 만 갱신된다.
+            enableStatefulSetAutoDeletePVC: false
           resources:
             requests:
               cpu: 100m

@@ -1,9 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
-#
+# ── EKS 사이트 오버레이 — 🔴 **아직 배포 대상이 아니다.** ──────────────────────
 # 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
 #    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
 #
@@ -17,10 +14,15 @@ kind: Kustomization
 #         nodeSet `b` 의 파드 2개가 같은 AZ 에 떠도 ES 는 "다른 zone" 이라고 믿는다.
 #         C-21(= master-eligible AZ 당 1개)이 nodeSets 를 3×1 로 재편하면서 함께 풀어야 한다.
 #         **그 전에는 EKS 에 붙이지 말 것.** (이 레인 0-5 의 범위 밖 — 사람 판단 필요)
-#    - 0-8 SC → gp3. 🔴 vct 는 immutable 이라 **이관 시점이 유일한 무비용 창**이다
-#    - 0-8b ECK `volumeClaimDeletePolicy` 미설정 = 기본값(DeleteOnScaledownAndClusterDeletion) 노출.
-#      EKS 에서 이 비대칭을 재현할지 **명시적으로 정할 것**
+#    - ✅ 0-8 SC → gp3 (아래 patch). 🔴 vct 는 immutable 이라 **이관 시점이 유일한 무비용 창**이다
+#    - C-16 용량 **10Gi → 8Gi × 3** — 미착수
+#    - 0-8b ECK `volumeClaimDeletePolicy` = 미설정(기본 DeleteOnScaledownAndClusterDeletion) 노출.
+#      🔴 **아래 "0-8b 미결" 참조 — EKS 에서 이 비대칭을 재현할지 사람이 정할 것**
 #    - 0-15 ES PoLP(슈퍼유저 4곳) · HTTP TLS 는 현행대로 끔
+#
+# 🔴 **아래 patch 는 인덱스 지정(JSON6902)이다.** 지금 nodeSets 순서 = [0]=b · [1]=a.
+#    C-21 이 nodeSets 를 재편하면 **인덱스 4개를 다 같이** 고쳐야 한다 — 어긋나도 kustomize 는
+#    조용히 성공하고 엉뚱한 nodeSet 에 붙는다.
 resources:
   - ../../base
 
@@ -34,6 +36,21 @@ resources:
 #    250m 도 여전히 실사용의 몇 배다. 대가 = 노드 CPU 가 실제로 100% 인 순간의 배분 몫이 절반이 된다.
 # 🔴 메모리(1536Mi req==limit)는 **건드리지 않는다** — 실사용과 거의 같고 축출 보호가 걸려 있다.
 # 🔴 온프렘 base 는 500m 그대로다(사이트 분리 근거 = 이 파일 하단 "왜 eks 에만" 참조).
+#
+# ── 0-8 StorageClass = gp3 ─────────────────────────────────────────────────────
+# 🔴 SC 이름 `gp3` 는 EBS CSI 애드온이 자동 생성하지 않는다(기본 SC 는 `gp2` 하나뿐).
+#    Terraform 이 만들어야 바인딩된다 — 앱 레포 IaC 선행 항목.
+#
+# ── 🔴 0-8b 미결 (여기서 정하지 않았다) ────────────────────────────────────────
+# 온프렘 IaC 의도 = "PG·ES·Kafka 는 Retain — CR 을 실수로 지워도 데이터가 즉사하지 않는 마지막 방어선".
+# 그런데 온프렘 라이브는 **PV 21/21 이 Delete** 이고 `openebs-lvm-retain` SC 는 소비자가 0 이다.
+# ES 는 그 위에 **한 겹 더 노출**돼 있다 — `spec.volumeClaimDeletePolicy` 미설정 = ECK 기본
+# `DeleteOnScaledownAndClusterDeletion`(Kafka 는 `deleteClaim:false` 로 오퍼레이터가 막아준다).
+# EKS 에서 이 비대칭을 **재현할지 고칠지**는 사람이 정할 일이라 손대지 않았다. 고치려면 둘 다 필요:
+#   ① SC = `gp3-retain`(reclaimPolicy=Retain) 을 Terraform 에 추가하고 아래 값을 그 이름으로
+#   ② `spec.volumeClaimDeletePolicy: DeleteOnScaledownOnly` 를 patch 로 추가
+# ⚠️ ①만 하면 반쪽이다 — ECK 가 PVC 를 지우면 Retain PV 는 `Released` 로 남아 **자동 재사용이 안 된다**
+#    (수동 `claimRef` 해제 필요). "안 지워진다"와 "자동으로 돌아온다"는 다르다.
 patches:
   - target:
       group: elasticsearch.k8s.elastic.co
@@ -47,6 +64,12 @@ patches:
       - op: replace
         path: /spec/nodeSets/1/podTemplate/spec/containers/0/resources/requests/cpu
         value: 250m
+      - op: add
+        path: /spec/nodeSets/0/volumeClaimTemplates/0/spec/storageClassName
+        value: gp3
+      - op: add
+        path: /spec/nodeSets/1/volumeClaimTemplates/0/spec/storageClassName
+        value: gp3
 
 # ── 왜 eks 에만 — 온프렘 base 는 그대로 둔다 ──────────────────────────────────
 # ① 이득이 사이트마다 다르다. AWS 에서 CPU 요청은 **인스턴스 대수 = 청구서**다(3대 vs 4대 = $146.44/월).

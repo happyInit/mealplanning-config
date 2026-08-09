@@ -1,17 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
-#
+# ── EKS 사이트 오버레이 — 🔴 **아직 배포 대상이 아니다.** ──────────────────────
 # 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
 #    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
 #
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
+#    - ✅ 0-8 `spec.storage.class` → gp3 (아래 patch)
+#    - C-16 용량 **20Gi → 10Gi**(실측 110 MB 는 정상상태 · 30일 환산 356 MB) — 미착수
 #    - 0-6 🔴 **kafka-combined 가 정족수를 TSC 로 잡은 유일한 워크로드**다. Strimzi 는 StrimziPodSet 이라
 #      `kubectl get sts` 스캔에서 사라진다 — 집계는 파드 레벨로 할 것
 #    - C-21 브로커 **AZ 당 1개** · C-10 = MSK 미채택, Strimzi 자체운영 유지
-#    - 0-8 `spec.storage.class` → gp3
 #    - C-11/C-12/C-13 MM2(정방향 1개·AWS 배치·소스 별칭 onprem)는 **새 리소스**라 eks 전용 추가분이다
 #    - ✅ 0-6 hostname 축 hard → ScheduleAnyway · ✅ 0-27 CPU 250m → 150m (아래)
 resources:
@@ -40,6 +38,14 @@ resources:
 #   그대로 위로 뚫는다. 메모리(1Gi req==limit)는 건드리지 않는다.
 #
 # ⚠️ 인덱스 패치다. base 의 TSC 순서는 [0]=zone · [1]=hostname 이다. 순서를 바꾸면 여기도 같이 고칠 것.
+# ── 0-8 StorageClass = gp3 ─────────────────────────────────────────────────────
+# 🔴 SC 이름 `gp3` 는 EBS CSI 애드온이 자동 생성하지 않는다(기본 SC 는 `gp2` 하나뿐).
+#    Terraform 이 만들어야 바인딩된다 — 앱 레포 IaC 선행 항목.
+# 🔴 EBS 는 AZ 에 묶인다 — PV 에 `topology.ebs.csi.aws.com/zone` nodeAffinity 가 박혀서
+#    브로커 파드는 그 AZ 를 벗어나 못 뜬다. C-21(AZ 당 1개)과 같은 제약이고, AZ 상실 시
+#    해당 브로커는 **결정론적 Pending** 이다(RF=3 이므로 클러스터는 산다).
+# 🔴 0-8b — Kafka 는 `deleteClaim:false` 로 이미 막혀 있어 SC 의 reclaimPolicy 의존도가 낮다.
+#    PG·ES 와 달리 `gp3-retain` 이 없어도 CR 삭제가 데이터 삭제로 번지지 않는다.
 patches:
   - target:
       group: kafka.strimzi.io
@@ -53,3 +59,23 @@ patches:
       - op: replace
         path: /spec/resources/requests/cpu
         value: 150m
+
+  # 🔴 **같은 오브젝트인데 patches 항목이 둘인 이유 = 패치 방언이 다르다.**
+  #    위는 JSON6902(op 목록), 아래는 merge 패치(매핑)다. kustomize 의 한 `patch:` 문자열은
+  #    둘 중 하나여야 해서 **한 블록으로 못 합친다.** 두 항목은 순서와 무관하게 각각 적용되고,
+  #    건드리는 필드가 겹치지 않는다(TSC·CPU ↔ storage.class).
+  #    ⚠️ 합치려고 아래를 op 목록으로 옮겨 적지 말 것 — `spec.storage` 가 jbod(리스트)로 바뀌면
+  #       인덱스 경로가 조용히 엉뚱한 곳을 가리킨다. 매핑 패치는 그 형태 변화에 영향받지 않는다.
+  - target:
+      group: kafka.strimzi.io
+      version: v1
+      kind: KafkaNodePool
+      name: combined
+    patch: |-
+      apiVersion: kafka.strimzi.io/v1
+      kind: KafkaNodePool
+      metadata:
+        name: combined
+      spec:
+        storage:
+          class: gp3

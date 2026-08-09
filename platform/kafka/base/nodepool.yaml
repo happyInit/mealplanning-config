@@ -15,10 +15,12 @@ spec:
   roles:
     - controller
     - broker
+  # 🔴 `class` 는 **사이트 오버레이가 넣는다**(0-8). onprem=openebs-lvm / eks=gp3.
+  #    키 이름이 `storageClass*` 가 아니라 `class` 라 SC 하드코딩 스캔의 정규식에 안 걸린다 —
+  #    0-8 집계가 한 번 이 필드를 놓쳤던 자리다.
   storage:
     type: persistent-claim
     size: 20Gi
-    class: openebs-lvm
     deleteClaim: false # 🔴 CR 삭제가 데이터 삭제로 번지지 않게
   resources:
     requests:
