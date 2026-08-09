@@ -305,3 +305,27 @@ Helm 12개의 인라인 `valuesObject` 에 갇혀 있던 **사이트 결합 값 
 
 나머지 8개(`alloy` `keda` `descheduler` + 오퍼레이터 5)는 **사이트 결합 값이 0** 이라
 분기 자체가 필요 없다 — eks 오버레이에서 패치할 것이 없다.
+
+## 앱 레포(Ansible) 쪽에 필요한 변경 — 명세
+
+🔴 **이 레포에서 할 수 없는 부분이다.** 뿌리를 적용하는 주체가 Ansible `k8s_argocd` 롤이라
+(앱 레포 `infra/ansible/roles/k8s_argocd/`) 거기 PR 이 선행돼야 위 컷오버 2단계가 성립한다.
+
+1. **`mealplanning-root` Application 템플릿 신설** — 지금 **어떤 IaC 에도 없는 유일한 오브젝트**다.
+   `argocd-platform-root.yaml.j2` 가 플랫폼 쪽에 하는 일을 앱 쪽에 그대로 해주면 된다.
+   정확한 목표 spec = `bootstrap/argocd/base/roots.yaml`(라이브와 필드 단위 일치 검증됨).
+   🔴 `spec.project` 는 **`mealplanning-root`** 다. `mealplanning` 으로 쓰면 root 가
+   `InvalidSpecError` 로 죽는다(그래서 지금 라이브에 손 patch 가 들어가 있다).
+   🔴 finalizer 는 **라이브에 없다**. 붙이면 삭제 의미론이 바뀌므로 별건으로 판단할 것.
+
+2. **`argocd_allowed_namespaces` 에 `mp-ingress` 추가** — 라이브에만 있는 drift 다.
+   지금 `--tags argocd` 를 돌리면 **destination 이 지워지고 `mp-ingress` Application 이 배포 거부**된다.
+   descheduler 가 같은 방식으로 이미 한 번 죽었다(`defaults/main.yml` 주석).
+
+3. **사이트 변수 도입** — `argocd_site: onprem` 를 두고 두 뿌리의 `path` 를
+   `argocd/overlays/{{ argocd_site }}` · `platform/argocd/overlays/{{ argocd_site }}` 로.
+   이게 A안에서 사이트를 가르는 **유일한 스위치**가 된다.
+
+4. (선택) **정본 일원화** — 위 오브젝트들의 정본을 Ansible 템플릿에 계속 둘지,
+   `bootstrap/argocd/` 로 옮기고 Ansible 은 `kubectl apply -k` 만 할지. **미결(사람 결정)**.
+   지금은 Ansible 템플릿이 정본이고 `bootstrap/` 은 기록이다 — 둘이 갈리지 않게 하는 것이 관건.
