@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# EKS ESO 스토어. 🔴 base/ 가 없는 이유는 ../../README.md "왜 base 가 없나" 참조 —
+# 두 사이트의 스토어는 provider 가 달라 공유할 필드가 한 개도 없다.
+resources:
+  - clustersecretstore.yaml

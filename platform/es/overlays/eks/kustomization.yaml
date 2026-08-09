@@ -81,3 +81,21 @@ patches:
 #    이 오버레이는 그 지침과 **다르다**. 갈린 이유 = 이 레인의 머지 조건이 "onprem 렌더 diff 0" 이라
 #    base 를 건드릴 수 없다. 온프렘 선적용을 택하려면 **여기 값을 base 로 올리는 별도 PR** 이면 되고,
 #    그때 이 오버레이는 같은 값이라 무해하게 남는다(멱등). **사람 결정 대기.**
+
+# ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
+#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
+  # 🔴 `name:` 을 지정한 이유 — 같은 트랙의 `mp-elasticsearch-exporter-auth` 는
+  #    generator(Password CR) 기반이라 secretStoreRef 가 **일부러 없다**(monitoring.yaml).
+  #    kind 만으로 잡으면 그쪽에 없던 필드가 생겨 조용히 의미가 바뀐다.
+  - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-es-service-accounts}
+    patch: |-
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata: {name: mp-es-service-accounts}
+      spec:
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: mp-aws-ssm

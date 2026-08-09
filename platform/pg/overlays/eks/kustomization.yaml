@@ -10,6 +10,9 @@ kind: Kustomization
 #    - C-16 용량 **20Gi → 10Gi · WAL 10Gi → 4Gi**(AZ 당 1개 × 3) — 미착수
 #    - 0-13 스키마별 롤(현재 단일 슈퍼유저) 이 IRSA 의 전제
 #    - objectstore.yaml 자격증명 = 0-16(정적 키 제거 → IRSA)
+#    - C-15 CNPG 유지(RDS/Aurora 미채택) · C-21 **인스턴스 2 → 3**(AZ 당 1개)
+#    - 0-8 SC 2곳 → gp3 · 0-13 스키마별 롤(현재 단일 슈퍼유저) 이 IRSA/Pod Identity 의 전제
+#    - ✅ objectstore.yaml 자격증명 = 0-16 (2026-08-10, IRSA `inheritFromIAMRole` — 아래 patches)
 #    - onsite-backup.yaml 은 온프렘 전용(MinIO 목적지). C-18 = barman 과 **다른 버킷/계정**
 #    - ✅ 0-27 CPU 요청 500m → 250m (인스턴스당) — 아래
 resources:
@@ -61,3 +64,66 @@ patches:
           storageClass: gp3
         walStorage:
           storageClass: gp3
+
+# ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
+#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
+  - target: {group: external-secrets.io, kind: ExternalSecret}
+    patch: |-
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata: {name: selected-by-target}   # target 이 고르므로 이 이름은 매칭에 안 쓰인다
+      spec:
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: mp-aws-ssm
+
+  # ── 0-16 정적 AWS 키 제거 — barman(CNPG) 쪽 ────────────────────────────────
+  # 🔴 체크리스트 S4-4 의 범위 정정: 정적 AWS 키는 **2세트**다.
+  #    ① `pipeline/mp-pipeline-secrets`(pipelines 트랙에서 처리) ② **여기 `data/mp-pg-backup-s3`**.
+  #    ⚠️ 반대로 `mp-pg-onsite-minio` 는 **MinIO 자격증명이라 AWS 가 아니다** → IRSA 로 대체 불가.
+  #       명시적으로 범위 밖이다. 아래 "남은 결정" 참조.
+  #
+  # 세 조각이 한 묶음이다 — 하나만 하면 백업이 죽는다:
+  #   (a) ObjectStore 가 키 대신 롤을 쓰게 한다        ← inheritFromIAMRole
+  #   (b) 그러면 시크릿이 무용지물이므로 지운다          ← $patch: delete
+  #   (c) 롤이 붙을 자리를 만든다                      ← Cluster 의 SA 애너테이션
+  - target: {group: barmancloud.cnpg.io, kind: ObjectStore, name: mp-pg-backup}
+    patch: |-
+      apiVersion: barmancloud.cnpg.io/v1
+      kind: ObjectStore
+      metadata: {name: mp-pg-backup, namespace: data}
+      spec:
+        configuration:
+          s3Credentials:
+            inheritFromIAMRole: true
+            accessKeyId: null        # JSON merge patch 의 null = 키 삭제
+            secretAccessKey: null
+  - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-pg-backup-s3}
+    patch: |-
+      $patch: delete
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata: {name: mp-pg-backup-s3, namespace: data}
+  # 🔴 PLACEHOLDER 는 services/* 오버레이의 ECR 레지스트리와 같은 규약이다 —
+  #    계정 ID 가 아직 없다(C-8 계정 3개 미생성). 채우지 않고 배포하면 barman 이 인증에 실패한다.
+  #    CNPG 가 이 애너테이션을 클러스터 SA(`pg`)에 얹고, barman-cloud 사이드카가 그 SA 로 STS 를 탄다.
+  - target: {group: postgresql.cnpg.io, kind: Cluster, name: pg}
+    patch: |-
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata: {name: pg, namespace: data}
+      spec:
+        serviceAccountTemplate:
+          metadata:
+            annotations:
+              eks.amazonaws.com/role-arn: arn:aws:iam::PLACEHOLDER:role/mp-pg-barman
+
+# ── 🔴 이 트랙에 남은 결정 (0-2/0-16 범위 밖 · 사람이 정할 것) ─────────────────
+#  · `mp-pg-onsite-minio` + `onsite-backup.yaml` — 목적지가 인클러스터 MinIO 인데 C-18 로 EKS 에는
+#    MinIO 가 없다. eks 오버레이에서 **둘 다 걷어낼지**, S3 두 번째 버킷으로 살릴지가 미결.
+#    지금은 **일부러 남겨 뒀다** — 백업 트랙을 지우는 것은 자동 판단할 일이 아니다.
+#  · `objectstore.yaml` 의 `destinationPath: s3://mp-backup-ap2/pg` 는 사이트 축이 없다.
+#    양 사이트 Cluster 이름이 둘 다 `pg` 라 WAL 이 서로를 덮는다 → **0-23**. 여기서 손대지 않았다.

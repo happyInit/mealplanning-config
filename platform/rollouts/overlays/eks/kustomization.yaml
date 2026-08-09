@@ -8,7 +8,24 @@ kind: Kustomization
 #    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
 #
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - 0-9/0-2 ECR 은 노드 롤·Pod Identity 로 당기므로 **pull secret 자체가 불요**할 수 있다
+#    - 0-9 ECR 은 노드 롤·IRSA 로 당기므로 **pull secret 자체가 불요**할 수 있다
+#      (✅ 0-2 는 그때까지의 안전판으로 스토어만 갈아 뒀다 — 2026-08-10, 아래 patches)
 #      (C-27 로 Argo Rollouts 는 전 서비스 Blue-Green 으로 확대된다 — 컨트롤러는 계속 산다)
 resources:
   - ../../base
+
+# ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
+#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
+patches:
+  - target: {group: external-secrets.io, kind: ExternalSecret}
+    patch: |-
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata: {name: selected-by-target}   # target 이 고르므로 이 이름은 매칭에 안 쓰인다
+      spec:
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: mp-aws-ssm

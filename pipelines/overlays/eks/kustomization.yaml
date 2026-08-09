@@ -5,11 +5,15 @@ kind: Kustomization
 #    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
 #
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
+#    - 🔴 **D4-a 로 워크로드가 사이트별로 갈린다** — C-3 으로 크롤은 온프렘 상시 프로덕션이다.
+#      즉 eks 오버레이는 base 통과가 아니라 **부분집합 선택**이 될 가능성이 높다.
+#      (리파이너 6 + 내부 배치 CronJob 10 = AWS / 크롤 폴러 = 온프렘)
+#      🔴 **미착수 — 그래서 지금 이 렌더는 그대로 붙이면 깨진다**(아래 "매달린 claimName" 참조).
 #    - ✅ 0-8 PVC SC — **패치가 아니라 부재로 해결**했다. C-20 = EKS 는 pipeline PVC 0개라
 #      `pvc.yaml` 을 base 에서 `overlays/onprem` 으로 내렸다. 여기서는 아무것도 안 해도 안 나간다.
-#    - 🔴 **D4-a 미착수 — 그래서 지금 이 렌더는 그대로 붙이면 깨진다.** 아래 참조
-#    - 0-9 이미지 → ECR · 0-2 secretStoreRef — 미착수
-#    - 🔴 0-16 정적 AWS 키 envFrom 제거(pipeline ns 22 워크로드) — env 가 IRSA 보다 앞선다
+#    - 0-9 이미지 → ECR — 미착수
+#    - ✅ 0-2 secretStoreRef(2026-08-10)
+#    - ✅ 0-16 정적 AWS 키 제거(2026-08-10) — 🔴 워크로드 22개가 아니라 **시크릿에서 뺐다**. 아래 patches 주석 참조
 resources:
   - ../../base
 
@@ -24,3 +28,72 @@ resources:
 # 그건 스토리지 레인이 정할 일이 아니다. D4-a 가 워크로드 부분집합을 확정할 때
 # ① 두 워크로드를 eks 에서 빼거나 ② AWS 쪽 대체 저장소(S3 등)로 바꾸면 함께 해소된다.
 # ⚠️ 그때까지 이 오버레이를 ArgoCD 에 붙이지 말 것.
+
+# ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
+#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
+patches:
+  - target: {group: external-secrets.io, kind: ExternalSecret}
+    patch: |-
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata: {name: selected-by-target}   # target 이 고르므로 이 이름은 매칭에 안 쓰인다
+      spec:
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: mp-aws-ssm
+
+  # ── 0-16 정적 AWS 키 제거 ─────────────────────────────────────────────────
+  # 🔴 **여기가 0-16 의 실제 레버다.** 22개 워크로드가 `envFrom.secretRef: mp-pipeline-secrets` 로
+  #    시크릿을 **통째로** 받으므로, 워크로드 22개를 고치는 게 아니라 **시크릿에서 키를 빼면** 끝난다.
+  #    (온프렘에서 이걸 하려면 0-14d 처럼 시크릿을 2개로 쪼개야 한다 — 2개 CronJob 은 여전히 키가 필요해서다.
+  #     EKS 는 IRSA 가 그 자리를 대신하므로 **쪼갤 필요 없이 삭제**가 맞다. 사이트별로 해법이 다르다.)
+  #
+  # 🔴 왜 반드시 지워야 하나 — `AWS_ACCESS_KEY_ID` env 는 자격증명 체인에서 **IRSA 보다 앞선다.**
+  #    남겨두면 롤을 붙여도 파드가 조용히 옛 정적 키를 계속 쓴다. 에러가 없어서 안 드러난다.
+  #
+  # 🔴 `op: test` 를 앞에 둔 이유 — 인덱스 기반 remove 는 base 의 data 순서가 바뀌면
+  #    **틀린 엔트리를 조용히 지운다.** test 가 깨지면 렌더가 죽어서(=`validate.py` 실패) 드러난다.
+  #    base 에 엔트리를 추가할 때는 AWS 2개보다 **앞에** 넣지 말 것.
+  - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-pipeline-secrets}
+    patch: |-
+      - op: test
+        path: /spec/data/4/secretKey
+        value: AWS_ACCESS_KEY_ID
+      - op: test
+        path: /spec/data/5/secretKey
+        value: AWS_SECRET_ACCESS_KEY
+      - op: remove
+        path: /spec/data/5
+      - op: remove
+        path: /spec/data/4
+
+  # Bedrock 을 실제로 호출하는 워크로드 2개에만 IRSA 용 SA 를 물린다(나머지 20개는 AWS 를 안 쓴다).
+  # 🔴 **SA 이름은 제안이다.** 실물 생성은 0-14c(다른 레인) 소관 — 지금 pipeline ns 22/22 가 `default` SA 다.
+  #    이름이 확정되면 여기 두 줄만 맞추면 된다. 롤 = bedrock:InvokeModel 두 모델 ARN 한정.
+  # ℹ️ `automountServiceAccountToken` 은 건드리지 않는다 — IRSA 토큰은 EKS 웹훅이 별도 projected
+  #    볼륨(`aws-iam-token`)으로 주입하므로 그 플래그와 무관하다. 0-14c 가 false 로 잠가도 안 깨진다.
+  - target: {group: batch, kind: CronJob, name: mp-score-review-sentiment}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-score-review-sentiment}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-review-ai
+  - target: {group: batch, kind: CronJob, name: mp-summarize-reviews}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-summarize-reviews}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-review-ai

@@ -91,8 +91,74 @@ MinIO 엔드포인트 · 물리계층 알림)은 **지우면 안 되고 `overlay
    (Application 의 destination `argo-rollouts` 가 채운다). 여기서 강제하면 렌더가 갈린다.
 4. **`overlays/eks` 는 `validate.py` 의 정책 검사 대상이 아니다**(`SKIP_KUSTOMIZE_RE`).
    렌더 성공 여부만 `check_site_overlays()` 가 본다. **초록 = 이관 준비 완료가 아니다.**
+   ⚠️ 예외 하나 — `check_eks_secret_store()` 는 eks 렌더의 **내용**을 본다(아래 6).
 5. **eks 오버레이가 없는 트랙은 경고로 뜬다.** 지금은 `services/cloudflared` 하나 —
    C-5(cloudflared = 온프렘 DR 전용 존치)라 의도된 부재다. 새로 뜨면 0-1 누락이다.
+6. 🔴 **`ExternalSecret` 을 base 에 새로 추가하면 그 트랙 eks 오버레이에도 `secretStoreRef` 패치를 더한다.**
+   안 하면 온프렘은 멀쩡히 돌아서 아무도 모르고, AWS 에서만 NotReady 가 된다.
+   `validate.py check_eks_secret_store()` 가 실패로 잡는다(아래 §ESO).
+
+## §0-2 — ESO 비밀 백엔드의 사이트 분기
+
+> 신설 2026-08-10. 근거 = 체크리스트 **0-2**·**0-16**, 결정 **C-23**(비밀 = 양 사이트 독립).
+> 스토어 본문·값 적재·IAM 최소권한·미결 = **`bootstrap/eso/README.md`**.
+
+**온프렘 = `fb-kubernetes`(K8s provider) 유지 / EKS = `mp-aws-ssm`(SSM ParameterStore + IRSA).**
+
+### 갈리는 것은 한 필드다
+
+`ExternalSecret` 에서 사이트마다 다른 값은 **`secretStoreRef.name` 하나뿐**이고,
+`remoteRef` **67엔트리는 한 글자도 안 바뀐다.** 성립 근거 둘:
+
+| 전제 | 왜 |
+|---|---|
+| 스토어의 `spec.provider.aws.prefix: /mp/prod/` | key 앞에 그대로 이어 붙어 파라미터 이름이 된다(`app-secrets` → `/mp/prod/app-secrets`). 🔴 **끝 슬래시가 load-bearing** — 없으면 `/mp/prodapp-secrets` 가 된다 |
+| `property` 이름에 gjson 메타문자 0건 | AWS provider 는 `property` 를 JSON 값 안의 gjson 경로로 읽는다. 67/67 실측 — **새 키 이름에 `.` 을 넣지 말 것** |
+
+이걸 안 지키면 구현자가 67엔트리에 경로를 손으로 붙이기 시작하고, 그 순간 두 사이트의
+매니페스트가 갈려 base 공유가 무너진다. 그래서 **`prefix` 는 편의가 아니라 구조적 전제다.**
+
+### 스토어 자체는 왜 `bootstrap/eso/` 에 있나
+
+`ClusterSecretStore` 는 클러스터 스코프이고 **ExternalSecret 이 생기기 전에 이미 있어야** 하는
+부트스트랩 오브젝트다. 워크로드 트랙과 같은 수명주기에 태우면 닭-달걀이 된다.
+`bootstrap/argocd` 와 같은 성격 — **ArgoCD 두 뿌리의 감시 범위 밖**이고, 적용자는 Ansible
+`k8s_eso` 롤(앱 레포)이며, 여기 있는 것은 **목표 상태의 기록**이다.
+🔴 `base/` 가 없다 — 두 스토어는 `provider` 아래가 통째로 갈려 공유 필드가 0이다(README 참조).
+
+### 패치가 걸린 곳 (26 ExternalSecret / 20 트랙)
+
+| 트랙 | ExternalSecret |
+|---|---|
+| `services/*` 12 | 앱 비밀 13 (`video` 만 2개 — `mp-video-secrets`·`mp-gcp-sa`) |
+| `common` `ingress` `pipelines` `platform/pgsync` `platform/rollouts` | `mp-harbor-pull` 5 |
+| `gateway-internal` `ingress` | `mp-cloudflare-api-token` 2 |
+| `pipelines` | `mp-pipeline-secrets` |
+| `platform/es` | `mp-es-service-accounts` — 🔴 **이 트랙만 `name:` 지정**. 같은 트랙 `mp-elasticsearch-exporter-auth` 는 generator(Password CR) 기반이라 `secretStoreRef` 가 **일부러 없다**. `kind` 만으로 잡으면 없던 필드가 생긴다 |
+| `platform/pg` | `mp-pg-replica-source` · `mp-pg-onsite-minio` (`mp-pg-backup-s3` 는 **삭제** — 아래) |
+| `platform/pgsync` | `mp-pgsync-secrets` |
+
+**`services/cloudflared` 는 패치가 없다** — eks 오버레이 자체가 없고(C-5) 그게 정답이다.
+
+### 🔴 이 레포 밖에 남은 ExternalSecret 2개
+
+라이브 30개 중 **`observability/mp-alertmanager-slack`** 과 **`argocd/repo-food-budget-config`**
+는 config 레포에 없다(Ansible 이 직접 apply). **eks 에서 이 둘의 스토어를 안 갈면
+알림이 조용히 멈추고 ArgoCD 가 레포를 못 읽는다.** 앱 레포 쪽 숙제 —
+`bootstrap/eso/README.md` "앱 레포에 필요한 것 ③".
+
+### 0-16 (정적 AWS 키)이 여기 얹힌 이유
+
+같은 파일을 두 번 열지 않으려고 한 커밋에 넣었다. **eks 오버레이에서만** 벌어지는 일이다:
+
+- `pipelines` — `mp-pipeline-secrets` 에서 `AWS_ACCESS_KEY_ID`·`AWS_SECRET_ACCESS_KEY` 두 엔트리 제거.
+  🔴 **워크로드 22개를 고치는 게 아니다.** 전부 `envFrom.secretRef` 로 시크릿을 **통째로** 받으므로
+  시크릿에서 키를 빼면 22개가 한꺼번에 정리된다. (온프렘은 2개 CronJob 이 여전히 키가 필요해
+  0-14d 처럼 시크릿을 쪼개야 한다 — **사이트별로 해법이 다르다**.)
+  인덱스 기반 `op: remove` 앞에 **`op: test` 를 붙였다** — base 의 순서가 바뀌면 렌더가 죽어서 드러난다.
+- `platform/pg` — `mp-pg-backup-s3` ExternalSecret 삭제 + ObjectStore `inheritFromIAMRole: true`
+  + Cluster `serviceAccountTemplate` 애너테이션(`PLACEHOLDER` 계정 ID). 셋이 한 묶음이다.
+  ⚠️ `mp-pg-onsite-minio` 는 **MinIO 자격증명이라 AWS 가 아니다** → 0-16 범위 밖. 안 건드렸다.
 
 ## 🔴 이 브랜치를 머지할 때 (0-1 반영)
 

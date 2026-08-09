@@ -368,6 +368,51 @@ def check_site_overlays(res: Result) -> None:
                  + "\n  ".join(missing_eks))
 
 
+# 온프렘 ESO 스토어의 이름. eks 렌더에 이게 남아 있으면 그 ExternalSecret 은 AWS 에서 NotReady 다.
+ONPREM_SECRET_STORE = "fb-kubernetes"
+
+
+def check_eks_secret_store(res: Result) -> None:
+    """eks 렌더에 온프렘 스토어(`fb-kubernetes`)가 남아 있나 (0-2 · C-23).
+
+    왜 있는가 — **이 실수는 조용하다.** `secretStoreRef` 가 온프렘 스토어를 가리켜도 kustomize 는
+    잘 렌더되고 kubeconform 도 통과한다. AWS 에는 `fb-secrets` ns 도 `eso-reader` SA 도 없으므로
+    ExternalSecret 이 `SecretSyncedError` 로 앉고, 그 Secret 을 `envFrom` 으로 받는 파드는
+    **CreateContainerConfigError 로 영원히 안 뜬다.** 이관 당일에 30개가 한꺼번에 그렇게 된다.
+
+    특히 잘 썩는 경로 = **base 에 ExternalSecret 을 새로 추가했을 때**. 온프렘은 즉시 동작하니
+    아무도 eks 오버레이에 패치를 더해야 한다는 걸 모른다. 그 창을 이 검사가 닫는다.
+
+    ⚠️ eks 오버레이가 **없는** 트랙은 보지 않는다 — `services/cloudflared` 처럼 "그 사이트에
+       안 올린다"가 정답인 경우가 있고, 그건 check_site_overlays 의 경고가 이미 담당한다.
+    """
+    cmd = renderer()
+    for base in sorted(REPO.rglob("base")):
+        if not base.is_dir() or SCAN_EXCLUDE_PARTS & set(base.relative_to(REPO).parts):
+            continue
+        track = base.parent
+        eks = track / "overlays" / "eks"
+        if not (eks / "kustomization.yaml").is_file():
+            continue
+        p = subprocess.run(cmd + [str(eks)], capture_output=True, text=True)
+        if p.returncode != 0:
+            continue  # 렌더 실패는 check_site_overlays 가 이미 실패로 잡는다
+        stale = []
+        for d in yaml.safe_load_all(p.stdout):
+            if not d or d.get("kind") != "ExternalSecret":
+                continue
+            ref = (d.get("spec") or {}).get("secretStoreRef") or {}
+            if ref.get("name") == ONPREM_SECRET_STORE:
+                stale.append(d.get("metadata", {}).get("name"))
+        if stale:
+            res.fail(
+                f"[site] {track.relative_to(REPO)}/overlays/eks: ExternalSecret 이 온프렘 스토어"
+                f" `{ONPREM_SECRET_STORE}` 를 그대로 가리킨다 → {', '.join(stale)}\n"
+                "        AWS 에는 그 스토어가 없다. eks 오버레이에 secretStoreRef 패치를 더할 것"
+                " (본보기 = services/account/overlays/eks/kustomization.yaml · 설명 = bootstrap/eso/README.md)"
+            )
+
+
 def iter_workloads(docs: dict[str, list[dict]]):
     """(source, doc, podSpec) — CronJob 의 중첩 podSpec 까지 펴서 돌려준다."""
     for src, ds in docs.items():
@@ -1011,6 +1056,7 @@ def main() -> int:
         return 0
 
     check_site_overlays(res)
+    check_eks_secret_store(res)
     check_fqdn(res)
     check_image_tags(res, docs)
     check_tsc_duplicate_key(res, docs)
