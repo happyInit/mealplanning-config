@@ -9,3 +9,49 @@ images:
   - name: 192.168.0.10/mealplanning/mp-account-service
     newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-account-service
     newTag: "1.1.9"
+
+# ── 0-6 hard TSC 완화 + 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────
+#
+# ▸ 0-6 — `kubernetes.io/hostname` 축만 ScheduleAnyway. **zone 축은 DoNotSchedule 유지.**
+#   C-29 = `m7g.xlarge` × 3 · **AZ 당 1대** ⇒ EKS 에선 zone 도메인 = hostname 도메인(1:1)이라
+#   hostname 축이 추가로 막아 주는 것이 없다. 반대로 남겨 두면 위험이 둘 생긴다:
+#     ① C-27 Blue-Green — green 세트가 blue 와 동시에 뜬다. 노드 3대에서 hard 두 축이면
+#        "자리는 있는데 그 노드가 아니라서" Pending 이 나고, 그건 체크리스트가 미리 못박은
+#        **BG 포기 기준 4개 중 하나**("green 세트가 hard TSC 로 Pending")에 그대로 걸린다.
+#     ② Karpenter 가 한 AZ 에 노드를 더 띄우면 1:1 이 깨지면서 hard hostname 이 실제 제약이 된다.
+#   zone 축을 hard 로 남기는 이유 = D-rep. **replica 2 가 같은 AZ 에 뜨면 AZ 상실 대비가 0** 이고,
+#   soft(ScheduleAnyway)는 "보장"이 아니라 "선호"다 — 온프렘 실측에서 soft 2계층이 걸린 mp-recipe 가
+#   둘 다 host-a 에 뜬 전례가 있다(ingress/base/gateway-params.yaml 3차 주석).
+#   ⚠️ 온프렘 base 는 hard 그대로 둔다 — zone 2 · 워커 4대라 1:1 이 아니라서 hostname 축이 실제로 일한다.
+#
+# ▸ 0-27 — CPU 요청 500m → 350m. 🔴 **HPA 임계값을 같이 옮긴다.**
+#   지금 정책의 실체는 "파드 평균 CPU 350m 에서 확장"(500m × 70%)이다. 요청만 내리면 같은 부하에서
+#   utilization 이 올라가 **더 일찍 스케일**한다 — 노드를 아끼려다 파드를 늘리는 자충수가 된다.
+#   그래서 **확장 지점(350m/파드)을 절대값으로 고정**하고 요청을 거기에 맞췄다: 350m × 100% = 350m.
+#   부수 효과로 "요청 = 확장 지점"이 되어 정책이 한 줄로 읽힌다("자기 몫을 다 쓰면 옆으로 늘린다").
+#   CPU limits 는 없다(§13.7) — bcrypt 버스트는 요청 위로 그대로 뚫는다. 메모리는 손대지 않는다.
+#   절감 = 350m × 2(min) ~ 4(max) 기준 300m ~ 600m.
+#   ⚠️ 후속 후보 = metric 을 Utilization 대신 **AverageValue(350m)** 로 바꾸면 요청과 임계값이
+#      영구히 분리된다. 지금은 사이트 간 구조를 같게 두려고 퍼센트만 고쳤다(리뷰 가능한 최소 diff).
+patches:
+  - target:
+      group: argoproj.io
+      version: v1alpha1
+      kind: Rollout
+      name: mp-account
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints/1/whenUnsatisfiable
+        value: ScheduleAnyway
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 350m
+  - target:
+      group: autoscaling
+      version: v2
+      kind: HorizontalPodAutoscaler
+      name: mp-account
+    patch: |-
+      - op: replace
+        path: /spec/metrics/0/containerResource/target/averageUtilization
+        value: 100

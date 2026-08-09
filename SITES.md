@@ -21,8 +21,12 @@ MinIO 엔드포인트 · 물리계층 알림)은 **지우면 안 되고 `overlay
     eks/                   EKS 골격 — 🔴 지금은 base 통과라 값이 온프렘 그대로다
 ```
 
-- `overlays/onprem` 은 **2026-08-09 시점에 전 트랙이 순수 통과**다(`resources: [../../base]`).
+- `overlays/onprem` 은 **2026-08-09 시점에 전 트랙이 순수 통과**였다(`resources: [../../base]`).
   그게 이 작업의 안전 기준이었다 — 재구성 전후 렌더가 같아야 한다.
+  🔴 **2026-08-10 부터 예외 1건** — `platform/es/overlays/onprem` 이 nodeSelector 를 다시 얹는다
+  (0-5·0-7 로 base 에서 걷어낸 온프렘 zone 핀). **안전 기준은 그대로다**: 이사 전후로
+  onprem 렌더 33개가 **바이트 단위 동일**함을 확인했다. 순수 통과가 깨진 것이 아니라,
+  "온프렘 값은 onprem 오버레이가 갖는다"는 이 문서의 규칙이 처음 실제로 쓰인 것이다.
 - `overlays/eks` 는 `kustomization.yaml` 머리말에 **그 트랙에서 갈라야 하는 것**을
   체크리스트 항목 번호와 함께 적어 뒀다. 거기서부터 시작하면 된다.
 
@@ -323,6 +327,13 @@ Helm 12개의 인라인 `valuesObject` 에 갇혀 있던 **사이트 결합 값 
 | **0-8** storageClass (`openebs-lvm`) | 6 | `loki` 1 · `tempo` 1 · `kubecost` 4 |
 | **0-9** Harbor LAN IP (`192.168.0.10/…`) | 1 | `rollouts` initContainer 이미지 |
 | MinIO 인클러스터 엔드포인트 | 2 | `loki` · `tempo` (S3 전환 대상) |
+
+🔴 **"열어준다"는 아직 미래형이다** (2026-08-10 확인). 위 설계는 **실증**됐지만
+`platform/argocd/` 는 여전히 평평하다 — `base/`·`overlays/` 가 없다(§0-4 컷오버 1단계 미실행).
+그래서 이 15건은 **지금 config 레포 PR 로 못 고친다.** 0-5(nodeSelector 6건)·0-8(SC 6건)의
+실작업 상당수가 여기 갇혀 있으므로, **0-4 컷오버가 그 항목들의 선행**이다.
+0-27(CPU 요청)도 같은 벽에 걸린다 — `redis-operator`·`kubecost-finopsagent` 의 CPU 요청은
+이 레포에 **값이 아예 없고**(차트 기본값) Application 의 `valuesObject` 로만 덮을 수 있다.
 
 나머지 8개(`alloy` `keda` `descheduler` + 오퍼레이터 5)는 **사이트 결합 값이 0** 이라
 분기 자체가 필요 없다 — eks 오버레이에서 패치할 것이 없다.

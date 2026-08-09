@@ -8,3 +8,23 @@ images:
   - name: 192.168.0.10/mealplanning/mp-price-service
     newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-price-service
     newTag: "d20d3fdb3a4fe05d852bde354cca7991e11c6d59"
+
+# ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
+# 300m → 150m. 🔴 base 의 300m 은 **HPA 를 켜기 위한 값이 아니다** — price 에는 HPA 가 없다
+# (§9.3: HPA 는 실측 근거가 있는 account·recipe 만). 2026-08-01 부하실측 정합으로 올린 값이지만
+# 그 부하는 **replica 1 짜리 서비스의 피크**였고, 요청은 피크가 아니라 **스케줄러가 예약해 두는 몫**이다.
+# CPU limits 가 없으므로(§13.7) 피크는 요청 위로 그대로 뚫는다 — 150m 로 내려도 처리량 천장은 그대로다.
+# 온프렘 base 는 300m 유지(사이트 분리 근거 = platform/es/overlays/eks 하단 주석).
+#
+# 🔴 0-6 대상 아님 — price 의 TSC 는 hostname·zone 두 축 다 이미 ScheduleAnyway(soft)다(base 확인).
+#    hard TSC 보유는 실측 5종뿐 = account · recipe · frontend · gw-public · kafka-combined.
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: mp-price
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 150m

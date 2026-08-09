@@ -8,3 +8,21 @@ images:
   - name: 192.168.0.10/mealplanning/mp-mealplan-service
     newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-mealplan-service
     newTag: "d20d3fdb3a4fe05d852bde354cca7991e11c6d59"
+
+# ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
+# 150m → 100m (= 다른 백엔드 8종과 같은 값). mealplan 은 HPA 대상이 아니고
+# (§9.3 · 체크리스트: mealplan 은 다운스트림 대기형이라 HPA 무용), 2026-08-01 에 100m→150m 로 올린 것은
+# 부하시험 피크 정합이었다. 요청은 피크가 아니라 예약 몫이고 CPU limits 가 없으므로(§13.7)
+# 피크 처리량은 안 바뀐다. 온프렘 base 는 150m 유지.
+#
+# 🔴 0-6 대상 아님 — TSC 두 축 다 이미 soft.
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: mp-mealplan
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 100m

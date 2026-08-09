@@ -13,5 +13,43 @@ kind: Kustomization
 #    - C-21 브로커 **AZ 당 1개** · C-10 = MSK 미채택, Strimzi 자체운영 유지
 #    - 0-8 `spec.storage.class` → gp3
 #    - C-11/C-12/C-13 MM2(정방향 1개·AWS 배치·소스 별칭 onprem)는 **새 리소스**라 eks 전용 추가분이다
+#    - ✅ 0-6 hostname 축 hard → ScheduleAnyway · ✅ 0-27 CPU 250m → 150m (아래)
 resources:
   - ../../base
+
+# ── 0-6 hard TSC 완화 + 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────
+#
+# ▸ 0-6 — `kubernetes.io/hostname` 축만 ScheduleAnyway 로 내린다. **zone 축은 DoNotSchedule 유지.**
+#
+#   🔴 EKS 에서 hostname 축은 **증명 가능하게 잉여**다. C-29 가 노드 형상을 `m7g.xlarge` × 3 ·
+#      **AZ 당 1대**로 확정했으므로 zone 도메인과 hostname 도메인이 1:1 이다 — zone 축이 maxSkew 1 ·
+#      DoNotSchedule 로 "AZ 당 정확히 1개"를 이미 강제하는데, AZ 당 노드가 1대뿐이니 두 파드가
+#      같은 노드에 앉는 것 자체가 불가능하다. hostname 축이 막아 주는 것이 **0건**이다.
+#
+#   🔴 그런데 위험은 0 이 아니다. Karpenter NodePool(C-29 층2, BG 버스트 전용)이 어느 AZ 에 노드를
+#      한 대 더 띄우면 그 순간 1:1 이 깨지고, hostname 축이 hard 인 채로 남아 있으면 **파드가
+#      갈 수 있는 노드가 있는데도 Pending** 이 나는 조합이 생긴다. combined 는 controller+broker 라
+#      한 파드의 Pending 이 KRaft 정족수 3중 1 상실이다 — 잉여 제약 때문에 감수할 값이 아니다.
+#
+#   🔴 온프렘에서는 반대로 **hard 를 유지해야 한다**(그래서 base 를 안 건드린다). 온프렘은 zone 2 ·
+#      워커 4대라 1:1 이 아니고, base 주석의 실사고(zone spread 는 만족했는데 combined-0·combined-2 가
+#      **둘 다 k8s-worker-b1**)가 정확히 그 비대칭에서 났다.
+#
+# ▸ 0-27 — CPU 250m × 3 = 750m → 150m × 3 = 450m. Kafka 는 우리 볼륨에서 대기가 대부분이고
+#   (실측 클러스터 전체 실사용 1.145 코어) CPU limits 가 없어(§13.7) 리텐션 압축·리밸런스 버스트는
+#   그대로 위로 뚫는다. 메모리(1Gi req==limit)는 건드리지 않는다.
+#
+# ⚠️ 인덱스 패치다. base 의 TSC 순서는 [0]=zone · [1]=hostname 이다. 순서를 바꾸면 여기도 같이 고칠 것.
+patches:
+  - target:
+      group: kafka.strimzi.io
+      version: v1
+      kind: KafkaNodePool
+      name: combined
+    patch: |-
+      - op: replace
+        path: /spec/template/pod/topologySpreadConstraints/1/whenUnsatisfiable
+        value: ScheduleAnyway
+      - op: replace
+        path: /spec/resources/requests/cpu
+        value: 150m

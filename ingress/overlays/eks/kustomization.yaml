@@ -10,8 +10,67 @@ kind: Kustomization
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
 #    - C-26 유입 = Cloudflare → **NLB(TCP:443 패스스루)** → Istio Gateway. MetalLB 애너테이션 제거,
 #      Service 타입/애너테이션이 AWS LB Controller 문법으로 바뀐다(target-type `instance`)
-#    - 0-6 hard TSC → `hostname` 축은 ScheduleAnyway 로, `zone` 축은 soft 로 유지
+#    - ✅ 0-6 hard TSC — 2026-08-10 적용(아래). 🔴 **위 서술을 정정한다**: `zone` 축은 soft 가 아니라
+#         **DoNotSchedule 유지**다. soft 로 내리면 replica 2 가 같은 AZ 에 뜰 수 있어(D-rep) 이
+#         게이트웨이의 존재 이유(= 입구 SPOF 제거)가 무너진다. 완화하는 것은 `hostname` 축뿐이다.
 #    - 0-2 secretStoreRef (externalsecret-cloudflare.yaml)
 #    - TLS 종단은 Istio Gateway 유지(C-26) — cert-manager Let's Encrypt DNS-01 그대로
 resources:
   - ../../base
+
+# ── 0-6 hard TSC 완화 (2026-08-10) ────────────────────────────────────────────
+#
+# 🔴 이 트랙만 패치 모양이 다르다. `mp-gw-public-params` 의 `data.deployment` 는 **YAML 이 아니라
+#    문자열**이다(istiod 가 파싱해서 자기가 렌더한 Deployment 위에 얹는 오버레이 조각). kustomize 는
+#    문자열 안을 필드 단위로 못 고치므로 **값 전체를 교체**할 수밖에 없다.
+#    ⇒ 대가 = base 와 여기 두 곳에 같은 내용이 산다. **base 를 고치면 여기도 고쳐야 한다.**
+#       (base 의 4차에 걸친 실측 주석은 base 에만 둔다 — 여기는 결과값만.)
+#       교체 전 원본과의 동일성 확인법:
+#         kubectl kustomize ingress/overlays/onprem | \
+#           python3 -c "import sys,yaml;[print(yaml.dump(yaml.safe_load(d['data']['deployment']),sort_keys=False)) \
+#             for d in yaml.safe_load_all(sys.stdin) if d and d.get('kind')=='ConfigMap' and d['metadata']['name']=='mp-gw-public-params']"
+#
+# 바뀌는 것은 **한 필드뿐이다** — hostname 축 `whenUnsatisfiable: DoNotSchedule` → `ScheduleAnyway`.
+# replicas 2 · priorityClassName · zone 축 hard · nodeTaintsPolicy · matchLabelKeys · labelSelector 는 그대로.
+#
+# 근거: C-29 = `m7g.xlarge` × 3 · **AZ 당 1대** ⇒ zone 도메인과 hostname 도메인이 1:1 이라
+#   hostname 축이 EKS 에서 추가로 막아 주는 것이 없다. base 3차 주석이 hard 로 올린 이유("soft 는
+#   보장이 아니라 결과")는 **zone 축이 hard 로 남아 있으므로 그대로 지켜진다** — 서로 다른 AZ 를
+#   강제하는 것이 곧 서로 다른 노드를 강제하는 것이기 때문이다.
+#   반대로 hard 로 남기면 Karpenter 가 한 AZ 에 노드를 더 띄운 국면·C-27 BG 국면에서
+#   "자리는 있는데 그 노드가 아니라서" Pending 이 날 여지만 남는다. 입구가 Pending 이면 전면 장애다.
+#   ⚠️ 온프렘 base 는 hard 유지 — zone 2 · 워커 4대라 1:1 이 아니고, 1차 실측(두 파드가 a1·a2 =
+#      노드는 갈렸는데 물리호스트는 같음)이 정확히 그 비대칭에서 났다.
+patches:
+  - target:
+      version: v1
+      kind: ConfigMap
+      name: mp-gw-public-params
+    patch: |-
+      - op: replace
+        path: /data/deployment
+        value: |
+          spec:
+            replicas: 2
+            template:
+              spec:
+                priorityClassName: app-normal
+                topologySpreadConstraints:
+                  - maxSkew: 1
+                    topologyKey: topology.kubernetes.io/zone
+                    whenUnsatisfiable: DoNotSchedule
+                    nodeTaintsPolicy: Honor
+                    matchLabelKeys:
+                      - pod-template-hash
+                    labelSelector:
+                      matchLabels:
+                        gateway.networking.k8s.io/gateway-name: mp-gw-public
+                  - maxSkew: 1
+                    topologyKey: kubernetes.io/hostname
+                    whenUnsatisfiable: ScheduleAnyway   # 🔴 0-6 — EKS 에선 zone 축과 1:1 이라 잉여
+                    nodeTaintsPolicy: Honor
+                    matchLabelKeys:
+                      - pod-template-hash
+                    labelSelector:
+                      matchLabels:
+                        gateway.networking.k8s.io/gateway-name: mp-gw-public

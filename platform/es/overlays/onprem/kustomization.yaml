@@ -8,7 +8,32 @@ kind: Kustomization
 # 🔴 여기에 넣을 것 = **온프렘에서만 참인 값**. AWS 이관(C-3)으로 온프렘은 DR 대기 사이트 +
 #    크롤 프로덕션으로 **계속 살아 있다** — 그래서 온프렘 전용 설정은 지우는 게 아니라
 #    base 에서 이쪽으로 내려야 한다:
-#    - nodeSelector `topology.kubernetes.io/zone: host-b|host-a` (elasticsearch.yaml 2곳) — 0-5
-#    - volumeClaimTemplates storageClassName: openebs-lvm (2곳) — 0-8
+#    - ✅ nodeSelector `topology.kubernetes.io/zone: host-b|host-a` (2곳) — 0-5 · 2026-08-10 이사 완료(아래)
+#    - volumeClaimTemplates storageClassName: openebs-lvm (2곳) — 0-8 (미착수 · L2 레인)
 resources:
   - ../../base
+
+# ── 0-5 · 0-7 nodeSelector 복원 (2026-08-10) ──────────────────────────────────
+# base 에서 걷어낸 온프렘 zone 핀을 여기서 그대로 되돌려 얹는다. **온프렘 렌더는 이사 전과 동일**
+# (검증 = 전 트랙 정규화 diff 0). 배치 근거는 플랜 §5.2 "B에 2 · A에 1" — 물리호스트 A 급사 3회
+# 이력 때문에 ES 정족수를 A 에 몰지 않는다.
+#
+# 🔴 왜 JSON6902(인덱스 지정)인가: `spec.nodeSets` 는 CRD 의 리스트라 전략적 머지가 성립하지 않는다
+#    (병합 키가 없어 리스트 통째 교체가 된다 → nodeSets 정의가 오버레이로 복사되고 정본이 둘이 된다).
+#    인덱스 패치는 "그 한 필드만" 얹는다. ⚠️ 대가 = nodeSets 순서가 바뀌면 조용히 엉뚱한 곳에 붙는다.
+#    base 의 순서는 [0]=b(count 2) · [1]=a(count 1) 이고, 순서를 바꿀 때는 여기도 같이 고칠 것.
+patches:
+  - target:
+      group: elasticsearch.k8s.elastic.co
+      version: v1
+      kind: Elasticsearch
+      name: es
+    patch: |-
+      - op: add
+        path: /spec/nodeSets/0/podTemplate/spec/nodeSelector
+        value:
+          topology.kubernetes.io/zone: host-b
+      - op: add
+        path: /spec/nodeSets/1/podTemplate/spec/nodeSelector
+        value:
+          topology.kubernetes.io/zone: host-a

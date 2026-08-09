@@ -8,3 +8,37 @@ images:
   - name: 192.168.0.10/mealplanning/mp-recipe-service
     newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-recipe-service
     newTag: "d20d3fdb3a4fe05d852bde354cca7991e11c6d59"
+
+# ── 0-6 hard TSC 완화 + 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────
+# 근거 전문 = services/account/overlays/eks/kustomization.yaml (같은 판단, 같은 이유).
+#
+# ▸ 0-6 — hostname 축만 ScheduleAnyway · zone 축 DoNotSchedule 유지.
+# ▸ 0-27 — CPU 요청 300m → 200m · HPA 임계값 70% → 105%.
+#   🔴 **확장 지점은 안 움직인다**: 300m × 70% = 210m/파드 = 200m × 105%. 부하시험 근거
+#   (loadtest/stage1 — 단일 파드 CPU ~1.2코어 plateau 에서 recipe_search p95 2.7s)는 "확장을
+#   언제 거는가"에 대한 것이고, 그 지점을 보존했으므로 실측 근거가 그대로 살아 있다.
+#   요청 자체를 200m 로 내리는 근거는 **평시 실사용**이다(클러스터 전체 실사용 1.145 코어 / 요청 10.78).
+#   CPU limits 없음(§13.7) — 검색 버스트는 요청 위로 뚫는다. 메모리는 손대지 않는다.
+#   ⚠️ 105% 가 눈에 걸리면 후속으로 AverageValue(210m) 전환이 정답이다(account 오버레이 주석 참조).
+patches:
+  - target:
+      group: argoproj.io
+      version: v1alpha1
+      kind: Rollout
+      name: mp-recipe
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints/1/whenUnsatisfiable
+        value: ScheduleAnyway
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 200m
+  - target:
+      group: autoscaling
+      version: v2
+      kind: HorizontalPodAutoscaler
+      name: mp-recipe
+    patch: |-
+      - op: replace
+        path: /spec/metrics/0/containerResource/target/averageUtilization
+        value: 105

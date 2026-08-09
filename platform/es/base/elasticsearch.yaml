@@ -45,8 +45,10 @@ spec:
       podTemplate:
         spec:
           priorityClassName: data-critical
-          nodeSelector:
-            topology.kubernetes.io/zone: host-b
+          # 🔴 nodeSelector 는 여기 없다 — `overlays/onprem` 이 얹는다 (0-5 · 0-7, 2026-08-10).
+          #    값이 `topology.kubernetes.io/zone: host-b` 라 **온프렘에서만 참**이다. EKS 는 같은
+          #    라벨 키에 실제 AZ(`ap-northeast-2a`…)가 들어가서 `host-b` 는 어느 노드에도 안 맞고,
+          #    그러면 파드가 영구 Pending → WaitForFirstConsumer 인 EBS PVC 도 영원히 Pending 이다.
           containers:
             - name: elasticsearch
               resources:
@@ -72,8 +74,7 @@ spec:
       podTemplate:
         spec:
           priorityClassName: data-critical
-          nodeSelector:
-            topology.kubernetes.io/zone: host-a
+          # 🔴 nodeSelector 는 여기 없다 — `overlays/onprem` 이 얹는다 (0-5 · 0-7). 위 nodeSet `b` 주석 참조.
           containers:
             - name: elasticsearch
               resources:
