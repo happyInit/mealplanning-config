@@ -42,6 +42,10 @@ import yaml
 REPO = pathlib.Path(__file__).resolve().parent.parent
 BASELINE = REPO / "scripts" / "policy-baseline.txt"
 
+# 사이트 결합 값의 단일 선언점(0-10). 이 스크립트는 **읽기만** 한다 — 온프렘 LAN 값을
+# 코드에 리터럴로 두면 사이트가 늘 때마다 검증기를 고쳐야 한다. 근거·갱신 절차는 그 파일 머리말.
+SITES_FILE = REPO / "scripts" / "sites.yaml"
+
 # 실제로 배포되는 것만 본다. base/ 와 overlays/eks 는 ArgoCD 가 안 쓴다(온프렘 오버레이만 쓴다).
 SKIP_KUSTOMIZE_RE = re.compile(r"/(base|overlays/eks)$")
 
@@ -61,6 +65,62 @@ DIRECTORY_APPS = [
 # 사이트 분기 골격(0-1). ArgoCD 가 실제로 쓰는 것은 overlays/onprem 뿐이고,
 # overlays/eks 는 Wave B 에서 채운다 — 다만 **렌더는 지금부터 깨지지 않아야** 한다.
 SITE_OVERLAYS = ("onprem", "eks")
+
+# 우리가 CI 로 굽는 이미지의 이름 규칙(CLAUDE.md §명명 규칙 — 신규는 전부 `mp-`).
+# 3rd-party(quay.io·ghcr.io·docker.io)는 레지스트리 이관 결정이 따로라 검사 대상이 아니다.
+OUR_IMAGE_RE = re.compile(r"^mp-[A-Za-z0-9._-]+$")
+
+# CRD 가 이미지를 담는 필드는 kind 마다 다르다 — 컨테이너 경로만 보면 놓친다.
+#   Elasticsearch(ECK) = spec.image · Cluster(CNPG) = spec.imageName
+# 그래서 파싱된 문서를 통째로 걸어 이 키들의 **문자열** 값을 전부 모은다.
+IMAGE_KEYS = ("image", "imageName")
+
+
+def load_sites() -> dict:
+    """scripts/sites.yaml 로드. 없거나 깨졌으면 검증을 세운다 — 조용히 빈 값으로 통과시키면
+    kubelet 예외 CIDR 이 사라져 CNPG failsafe 검사가 **더 엄격해진 척** 오탐한다."""
+    if not SITES_FILE.is_file():
+        print(f"::error:: {SITES_FILE.relative_to(REPO)} 가 없다 — 사이트 결합 값의 정본이다",
+              file=sys.stderr)
+        sys.exit(2)
+    data = yaml.safe_load(SITES_FILE.read_text()) or {}
+    for site in SITE_OVERLAYS:
+        if site not in data:
+            print(f"::error:: sites.yaml 에 `{site}` 항목이 없다", file=sys.stderr)
+            sys.exit(2)
+    return data
+
+
+SITES = load_sites()
+
+
+def node_cidr_peers() -> list[dict]:
+    """kubelet probe 예외로 허용되는 ipBlock peer 목록 — 선언된 전 사이트의 노드 대역."""
+    peers = []
+    for site in SITE_OVERLAYS:
+        for cidr in SITES[site].get("node_cidrs") or []:
+            peers.append({"ipBlock": {"cidr": cidr}})
+    return peers
+
+
+def iter_images(node: object):
+    """파싱된 문서를 재귀로 걸어 이미지 문자열을 전부 뽑는다(컨테이너·CRD 필드·Helm values 포함)."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k in IMAGE_KEYS and isinstance(v, str) and v.strip():
+                yield v
+            else:
+                yield from iter_images(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from iter_images(v)
+
+
+def image_repo_name(image: str) -> str:
+    """`<registry>/<path>/<repo>:<tag>` 또는 `...@sha256:...` 에서 `<repo>` 만 뽑는다."""
+    ref = image.split("@", 1)[0]
+    last = ref.rsplit("/", 1)[-1]
+    return last.split(":", 1)[0]
 
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"}
 
@@ -333,7 +393,7 @@ def render_all(res: Result) -> dict[str, list[dict]]:
     return docs
 
 
-def check_site_overlays(res: Result) -> None:
+def check_site_overlays(res: Result) -> dict[str, list[dict]]:
     """사이트 분기 골격(0-1)이 살아 있나.
 
     왜 있는가 — 골격은 **쓰지 않는 쪽이 조용히 썩는다**. overlays/eks 는 ArgoCD 가 보지도
@@ -345,9 +405,13 @@ def check_site_overlays(res: Result) -> None:
       ② 있는 overlays/eks 는 렌더가 성공해야 한다 (= 골격이 안 썩었나)
       ③ eks 오버레이가 없는 트랙은 경고로 남긴다 — "AWS 에 안 올린다"는 판단일 수도 있어
          실패로 두지 않는다(예: services/cloudflared = C-5 로 온프렘 DR 전용).
+
+    반환값 = eks 렌더 결과(`<트랙>/overlays/eks` -> 문서 목록). 어차피 한 번 떠 본 것이라
+    두 번 렌더하지 않으려고 돌려준다 — check_registry_split() 가 이걸 받아 쓴다.
     """
     cmd = renderer()
     missing_eks = []
+    eks_docs: dict[str, list[dict]] = {}
     for base in sorted(REPO.rglob("base")):
         if not base.is_dir() or SCAN_EXCLUDE_PARTS & set(base.relative_to(REPO).parts):
             continue
@@ -363,9 +427,63 @@ def check_site_overlays(res: Result) -> None:
         p = subprocess.run(cmd + [str(eks)], capture_output=True, text=True)
         if p.returncode != 0:
             res.fail(f"[site] {rel}/overlays/eks 렌더 실패 — 골격이 썩었다\n{p.stderr.strip()[:400]}")
+            continue
+        try:
+            eks_docs[str(eks.relative_to(REPO))] = [x for x in yaml.safe_load_all(p.stdout) if x]
+        except yaml.YAMLError as e:
+            res.fail(f"[site] {rel}/overlays/eks 렌더 결과가 YAML 로 안 읽힌다: {e}")
     if missing_eks:
         res.warn("[site] eks 오버레이가 없는 트랙 — 의도(그 사이트에 안 올림)면 무시, 아니면 0-1 누락:\n  "
                  + "\n  ".join(missing_eks))
+    return eks_docs
+
+
+def check_registry_split(res: Result, docs: dict[str, list[dict]],
+                         eks_docs: dict[str, list[dict]]) -> None:
+    """레지스트리가 사이트별로 갈렸나 (0-9).
+
+    왜 있는가 — `overlays/eks` 는 ArgoCD 가 보지도 않고 다른 검사에서도 제외된다
+    (SKIP_KUSTOMIZE_RE). 즉 **레지스트리가 온프렘 Harbor 그대로여도 아무도 안 잡는다.**
+    실제로 0-1 직후 상태가 그랬다 — services 13종만 ECR 매핑이 있었고 pipelines·es·pgsync·
+    video 는 렌더가 `192.168.0.10/...` 을 그대로 가리켰다. 이관 당일에 ImagePullBackOff 로
+    발견되는 부류라 지금 기계가 잡는다.
+
+    보는 것 셋 (대상 = 우리가 CI 로 굽는 `mp-*` 이미지만. 3rd-party 는 이관 결정이 따로다):
+      ① eks 렌더에 온프렘 레지스트리(Harbor LAN IP)가 남아 있으면 실패
+      ② eks 렌더의 `mp-*` 이미지는 전부 sites.yaml `eks.registry` 접두사여야 한다
+         → 계정 ID 가 정해졌을 때 **덜 고친 오버레이를 전수로 열거**해 준다
+      ③ 온프렘 렌더의 `mp-*` 이미지는 전부 `onprem.registry` 여야 한다
+         (= 누가 base 에 ECR 주소를 박아 온프렘으로 새는 반대 방향 사고)
+
+    ⚠️ 한계 = **`platform/argocd` 는 못 본다.** Helm 소스 Application 12종의 값은 인라인
+       valuesObject 라 base/overlays 가 아직 없다(0-4 컷오버 선행). 그래서 `rollouts` 의
+       initContainer 이미지(`mp-rollouts-gatewayapi-plugin`)는 여기서 걸리지 않는다 — 0-9 잔여.
+    """
+    onprem_reg = str(SITES["onprem"]["registry"]).rstrip("/")
+    eks_reg = str(SITES["eks"]["registry"]).rstrip("/")
+
+    leaked, mismatched, onprem_wrong = [], [], []
+    for src, ds in eks_docs.items():
+        for image in {i for d in ds for i in iter_images(d)}:
+            if image.startswith(onprem_reg + "/"):
+                leaked.append(f"{src} -> {image}")
+            elif OUR_IMAGE_RE.match(image_repo_name(image)) and not image.startswith(eks_reg + "/"):
+                mismatched.append(f"{src} -> {image}")
+    for src, ds in docs.items():
+        for image in {i for d in ds for i in iter_images(d)}:
+            if OUR_IMAGE_RE.match(image_repo_name(image)) and not image.startswith(onprem_reg + "/"):
+                onprem_wrong.append(f"{src} -> {image}")
+
+    if leaked:
+        res.fail(f"[registry] eks 렌더가 온프렘 레지스트리({onprem_reg})를 가리킨다 — "
+                 "해당 overlays/eks 에 images 매핑을 넣을 것\n  " + "\n  ".join(sorted(leaked)))
+    if mismatched:
+        res.fail(f"[registry] eks 렌더의 mp-* 이미지가 sites.yaml eks.registry({eks_reg}) 와 다르다 — "
+                 "sites.yaml 을 바꿨으면 아래 오버레이도 같이 맞출 것\n  "
+                 + "\n  ".join(sorted(mismatched)))
+    if onprem_wrong:
+        res.fail(f"[registry] 온프렘 렌더의 mp-* 이미지가 {onprem_reg} 가 아니다 — "
+                 "base 에 사이트 전용 주소가 박혔을 수 있다\n  " + "\n  ".join(sorted(onprem_wrong)))
 
 
 # 온프렘 ESO 스토어의 이름. eks 렌더에 이게 남아 있으면 그 ExternalSecret 은 AWS 에서 NotReady 다.
@@ -551,9 +669,11 @@ def check_cnpg_failsafe_netpol(res: Result, docs: dict[str, list[dict]]) -> None
             "matchLabels": {"kubernetes.io/metadata.name": "cnpg-system"},
         },
     }
-    kubelet_peer = {
-        "ipBlock": {"cidr": "192.168.0.0/24"},
-    }
+    # 🔴 0-10(2026-08-10): 여기 `192.168.0.0/24` 가 리터럴로 박혀 있었다. 검증기가 한 사이트의
+    #    물리 주소를 알고 있으면 사이트가 늘 때 **매니페스트가 아니라 스크립트를** 고치게 된다.
+    #    이제 정본은 scripts/sites.yaml 이고, 선언된 전 사이트의 노드 대역이 허용된다.
+    #    (eks 는 VPC CIDR 미정이라 `node_cidrs: []` — 정해지면 거기만 채운다.)
+    kubelet_peers = node_cidr_peers()
     expected_intra_ports = [
         {"protocol": "TCP", "port": 5432},
         {"protocol": "TCP", "port": 8000},
@@ -731,7 +851,8 @@ def check_cnpg_failsafe_netpol(res: Result, docs: dict[str, list[dict]]) -> None
             allowed_peers = [instance_peer]
             if direction == "ingress":
                 # kubelet probe 는 노드 CIDR 에서 모든 파드 포트를 여는 기존의 명시적 예외다.
-                allowed_peers.extend([operator_peer, kubelet_peer])
+                allowed_peers.append(operator_peer)
+                allowed_peers.extend(kubelet_peers)
             for index, rule in enumerate(policy_spec.get(direction) or []):
                 if not allows_tcp_port(rule, 8000):
                     continue
@@ -1055,8 +1176,9 @@ def main() -> int:
             print(v)
         return 0
 
-    check_site_overlays(res)
+    eks_docs = check_site_overlays(res)
     check_eks_secret_store(res)
+    check_registry_split(res, docs, eks_docs)
     check_fqdn(res)
     check_image_tags(res, docs)
     check_tsc_duplicate_key(res, docs)

@@ -1,18 +1,31 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
+# ── EKS 사이트 오버레이 — 🔴 **골격이다. 아직 배포 대상이 아니다.** ────────────
+# 신설 = 0-1(2026-08-09). 0-9 로 레지스트리만 채웠다(2026-08-10) — 나머지는 아직 base 통과다.
 #
-# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
+# 🔴 validate.py 는 `overlays/eks` 를 정책 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
 #    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+#    ⚠️ 단 **레지스트리만은 예외** — check_eks_registry() 가 eks 렌더의 mp-* 이미지를 전수 본다.
 #
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
 #    - 0-9 이미지 → ECR · ✅ 0-2 secretStoreRef(2026-08-10) · 0-15 ES 계정 PoLP(pgsync 가 원본 시크릿을 직접 마운트)
+#    - 0-2 secretStoreRef · 0-15 ES 계정 PoLP(pgsync 가 원본 시크릿을 직접 마운트)
 #    - 🔴 schema/plugins ConfigMap 은 앱 레포 사본이다 — 사이트별로 갈라 놓으면 동기 대상이 둘이 된다.
 #      **가급적 base 에 두고 갈지 말 것.**
 resources:
   - ../../base
+
+
+# ── 0-9 레지스트리 = ECR ────────────────────────────────────────────────────
+# 호스트 정본 = scripts/sites.yaml `eks.registry`.
+# 🔴 mp-pgsync 는 **CI 로 우리가 빌드하는 커스텀 이미지**다(3rd-party 아님) — ECR 리포지터리가 필요하다.
+images:
+# ── 0-9 레지스트리 = ECR ────────────────────────────────────────────────────
+# 호스트 정본 = scripts/sites.yaml `eks.registry`.
+# 🔴 mp-pgsync 는 **CI 로 우리가 빌드하는 커스텀 이미지**다(3rd-party 아님) — ECR 리포지터리가 필요하다.
+  - name: 192.168.0.10/mealplanning/mp-pgsync
+    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-pgsync
+    newTag: "5b4e66c723bbee21bf41066d4736b72fa53aa994"
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
@@ -20,6 +33,11 @@ resources:
 #    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
 patches:
+# ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
+#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
   - target: {group: external-secrets.io, kind: ExternalSecret}
     patch: |-
       apiVersion: external-secrets.io/v1

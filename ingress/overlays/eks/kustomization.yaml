@@ -1,10 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
+# ── EKS 사이트 오버레이 — 🔴 **골격이다. 아직 배포 대상이 아니다.** ────────────
+# 신설 = 0-1(2026-08-09). 1-31 로 Harbor pull secret 만 걷었다(2026-08-10) — 나머지는 base 통과다.
 #
-# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
+# 🔴 validate.py 는 `overlays/eks` 를 정책 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
 #    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
 #
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
@@ -13,12 +12,15 @@ kind: Kustomization
 #    - ✅ 0-6 hard TSC — 2026-08-10 적용(아래). 🔴 **위 서술을 정정한다**: `zone` 축은 soft 가 아니라
 #         **DoNotSchedule 유지**다. soft 로 내리면 replica 2 가 같은 AZ 에 뜰 수 있어(D-rep) 이
 #         게이트웨이의 존재 이유(= 입구 SPOF 제거)가 무너진다. 완화하는 것은 `hostname` 축뿐이다.
+#      🔴 **아직 안 했다.** 지금 이 오버레이를 붙이면 MetalLB IP `.14` 가 EKS 로 샌다
+#    - 0-6 hard TSC → `hostname` 축은 ScheduleAnyway 로, `zone` 축은 soft 로 유지
 #    - 0-2 secretStoreRef (externalsecret-cloudflare.yaml)
 #    - 0-6 hard TSC → `hostname` 축은 ScheduleAnyway 로, `zone` 축은 soft 로 유지
 #    - ✅ 0-2 secretStoreRef → `mp-aws-ssm` (2026-08-10, 아래 patches — cloudflare·pullsecret 둘 다)
 #    - TLS 종단은 Istio Gateway 유지(C-26) — cert-manager Let's Encrypt DNS-01 그대로
 resources:
   - ../../base
+
 
 # ── 0-6 hard TSC 완화 (2026-08-10) ────────────────────────────────────────────
 #
@@ -44,6 +46,29 @@ resources:
 #   ⚠️ 온프렘 base 는 hard 유지 — zone 2 · 워커 4대라 1:1 이 아니고, 1차 실측(두 파드가 a1·a2 =
 #      노드는 갈렸는데 물리호스트는 같음)이 정확히 그 비대칭에서 났다.
 patches:
+# ── 0-6 hard TSC 완화 (2026-08-10) ────────────────────────────────────────────
+#
+# 🔴 이 트랙만 패치 모양이 다르다. `mp-gw-public-params` 의 `data.deployment` 는 **YAML 이 아니라
+#    문자열**이다(istiod 가 파싱해서 자기가 렌더한 Deployment 위에 얹는 오버레이 조각). kustomize 는
+#    문자열 안을 필드 단위로 못 고치므로 **값 전체를 교체**할 수밖에 없다.
+#    ⇒ 대가 = base 와 여기 두 곳에 같은 내용이 산다. **base 를 고치면 여기도 고쳐야 한다.**
+#       (base 의 4차에 걸친 실측 주석은 base 에만 둔다 — 여기는 결과값만.)
+#       교체 전 원본과의 동일성 확인법:
+#         kubectl kustomize ingress/overlays/onprem | \
+#           python3 -c "import sys,yaml;[print(yaml.dump(yaml.safe_load(d['data']['deployment']),sort_keys=False)) \
+#             for d in yaml.safe_load_all(sys.stdin) if d and d.get('kind')=='ConfigMap' and d['metadata']['name']=='mp-gw-public-params']"
+#
+# 바뀌는 것은 **한 필드뿐이다** — hostname 축 `whenUnsatisfiable: DoNotSchedule` → `ScheduleAnyway`.
+# replicas 2 · priorityClassName · zone 축 hard · nodeTaintsPolicy · matchLabelKeys · labelSelector 는 그대로.
+#
+# 근거: C-29 = `m7g.xlarge` × 3 · **AZ 당 1대** ⇒ zone 도메인과 hostname 도메인이 1:1 이라
+#   hostname 축이 EKS 에서 추가로 막아 주는 것이 없다. base 3차 주석이 hard 로 올린 이유("soft 는
+#   보장이 아니라 결과")는 **zone 축이 hard 로 남아 있으므로 그대로 지켜진다** — 서로 다른 AZ 를
+#   강제하는 것이 곧 서로 다른 노드를 강제하는 것이기 때문이다.
+#   반대로 hard 로 남기면 Karpenter 가 한 AZ 에 노드를 더 띄운 국면·C-27 BG 국면에서
+#   "자리는 있는데 그 노드가 아니라서" Pending 이 날 여지만 남는다. 입구가 Pending 이면 전면 장애다.
+#   ⚠️ 온프렘 base 는 hard 유지 — zone 2 · 워커 4대라 1:1 이 아니고, 1차 실측(두 파드가 a1·a2 =
+#      노드는 갈렸는데 물리호스트는 같음)이 정확히 그 비대칭에서 났다.
   - target:
       version: v1
       kind: ConfigMap
@@ -91,3 +116,20 @@ patches:
         secretStoreRef:
           kind: ClusterSecretStore
           name: mp-aws-ssm
+# ── 1-31 Harbor pull secret 제거 ────────────────────────────────────────────
+# 🔴 이 트랙의 pull secret 은 **cloudflared 이미지 전용**이다(GW 는 공개 이미지). 그런데
+#    C-5 로 cloudflared 는 **온프렘 DR 전용 존치**라 EKS 에는 그 워크로드 자체가 없다
+#    (`services/cloudflared` 에 eks 오버레이가 없는 것이 그 판정의 실물이다).
+#    → EKS 에서는 이 시크릿을 쓰는 파드가 0 개다. 남기면 ESO 만 상시 실패한다
+#    (온프렘 `fb-secrets` 의 `harbor-pull` 키가 EKS 스토어에 없다 — C-23 양 사이트 독립).
+# ⚠️ 나머지 반쪽(default SA 의 imagePullSecrets: harbor)은 **앱 레포 Ansible 소관**이다 — 1-31.
+  - target:
+      group: external-secrets.io
+      kind: ExternalSecret
+      name: mp-harbor-pull
+    patch: |
+      $patch: delete
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: mp-harbor-pull

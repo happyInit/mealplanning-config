@@ -91,12 +91,21 @@ MinIO 엔드포인트 · 물리계층 알림)은 **지우면 안 되고 `overlay
    (Application 의 destination `argo-rollouts` 가 채운다). 여기서 강제하면 렌더가 갈린다.
 4. **`overlays/eks` 는 `validate.py` 의 정책 검사 대상이 아니다**(`SKIP_KUSTOMIZE_RE`).
    렌더 성공 여부만 `check_site_overlays()` 가 본다. **초록 = 이관 준비 완료가 아니다.**
-   ⚠️ 예외 하나 — `check_eks_secret_store()` 는 eks 렌더의 **내용**을 본다(아래 6).
+   ⚠️ **예외 둘** — 이 두 축만은 eks 렌더의 **내용**을 보고, 초록이 실제 보증이 된다.
+   ① `check_eks_secret_store()` — ESO 백엔드(아래 6)
+   ② `check_registry_split()` — 레지스트리(0-9, 2026-08-10). eks 렌더의 `mp-*` 이미지를
+      전수 보고 Harbor LAN IP 가 남아 있으면 **실패**시킨다(아래 7).
 5. **eks 오버레이가 없는 트랙은 경고로 뜬다.** 지금은 `services/cloudflared` 하나 —
    C-5(cloudflared = 온프렘 DR 전용 존치)라 의도된 부재다. 새로 뜨면 0-1 누락이다.
 6. 🔴 **`ExternalSecret` 을 base 에 새로 추가하면 그 트랙 eks 오버레이에도 `secretStoreRef` 패치를 더한다.**
    안 하면 온프렘은 멀쩡히 돌아서 아무도 모르고, AWS 에서만 NotReady 가 된다.
    `validate.py check_eks_secret_store()` 가 실패로 잡는다(아래 §ESO).
+7. **이미지 레지스트리는 `scripts/sites.yaml` 이 정본이다.** 값 자체는 각 오버레이의
+   kustomize `images` 트랜스포머에 있지만(= CD 가 `newTag` 를 쓰는 자리라 거기 있어야 한다),
+   **불일치는 sites.yaml 기준으로 기계가 잡는다.** 계정 ID 가 정해지면 sites.yaml 한 줄을
+   고치고 `validate.py` 가 열거해 주는 오버레이 목록대로 맞춘다 — 손으로 세지 않는다.
+   🔴 Elasticsearch CR 의 `spec.image` 처럼 **CRD 필드는 `images` 트랜스포머가 못 건드린다**
+   (기본 fieldSpec 이 컨테이너 경로뿐이다). 그런 자리는 patch 로 직접 간다.
 
 ## §0-2 — ESO 비밀 백엔드의 사이트 분기
 
@@ -391,7 +400,7 @@ Helm 12개의 인라인 `valuesObject` 에 갇혀 있던 **사이트 결합 값 
 | **0-5** nodeSelector (`kubernetes.io/hostname`) | 5 | `loki` 1 · `kubecost` 4 |
 | **0-5** nodeSelector (`topology.kubernetes.io/zone: host-b`) | 1 | `tempo` 1 |
 | **0-8** storageClass (`openebs-lvm`) | 6 | `loki` 1 · `tempo` 1 · `kubecost` 4 |
-| **0-9** Harbor LAN IP (`192.168.0.10/…`) | 1 | `rollouts` initContainer 이미지 |
+| **0-9** Harbor LAN IP (`192.168.0.10/…`) | 1 | `rollouts` initContainer 이미지 — 🔴 **0-9 의 유일한 미해결분**(아래) |
 | MinIO 인클러스터 엔드포인트 | 2 | `loki` · `tempo` (S3 전환 대상) |
 
 🔴 **"열어준다"는 아직 미래형이다** (2026-08-10 확인). 위 설계는 **실증**됐지만
@@ -403,6 +412,66 @@ Helm 12개의 인라인 `valuesObject` 에 갇혀 있던 **사이트 결합 값 
 
 나머지 8개(`alloy` `keda` `descheduler` + 오퍼레이터 5)는 **사이트 결합 값이 0** 이라
 분기 자체가 필요 없다 — eks 오버레이에서 패치할 것이 없다.
+
+---
+
+# §0-9 / 0-10 — 레지스트리 분기 · 검증기 사이트화 (2026-08-10)
+
+## 한 것
+
+- **0-9** eks 렌더에서 Harbor LAN IP 를 없앴다. 0-1 직후 상태는 `services/*` 13종만 ECR 매핑이
+  있었고 나머지는 렌더가 `192.168.0.10/…` 을 그대로 가리켰다 — 채운 곳:
+  `services/video`(images 블록 자체가 비어 base 의 `:latest` 가 샜다) · `pipelines`(2종) ·
+  `platform/pgsync` · `platform/es`(pgsync + **Elasticsearch CR `spec.image` 는 patch**).
+- **1-31(config 레포 절반)** Harbor pull secret `ExternalSecret/mp-harbor-pull` 을 eks 에서 제거
+  (`common` · `ingress` · `pipelines` · `platform/rollouts` 4트랙).
+- **0-10** `validate.py` 에서 온프렘 LAN CIDR 리터럴을 걷고 `scripts/sites.yaml` 로 옮겼다
+  (+ `check_registry_split()` 신설).
+
+## 🔴 남은 1건 — `platform/argocd/rollouts.yaml` 의 initContainer
+
+Argo Rollouts 컨트롤러의 Gateway API 플러그인 initContainer 이미지가
+`192.168.0.10/mealplanning/mp-rollouts-gatewayapi-plugin:<sha>` 다.
+
+**여기서 못 고친다.** 그 값은 Helm 소스 Application 의 **인라인 `valuesObject`** 안에 있고,
+`platform/argocd/` 는 아직 `base/ + overlays/` 로 안 갈라져 있다(§0-4 컷오버 1~3단계가 선행).
+`check_registry_split()` 도 그래서 이걸 못 본다 — **의도된 사각지대이므로 여기 적어 둔다.**
+
+컷오버로 `platform/argocd/overlays/eks` 가 생기면 아래 패치 한 조각이면 된다:
+
+```yaml
+patches:
+  - target: {group: argoproj.io, kind: Application, name: rollouts}
+    patch: |
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: rollouts}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              controller:
+                initContainers:
+                  - name: vendored-gatewayapi-plugin
+                    image: <eks.registry>/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
+                    # …원본의 command·securityContext·resources·volumeMounts 전부 그대로 옮길 것
+```
+
+⚠️ `initContainers` 는 **리스트**라 JSON merge patch 가 통째로 교체한다 — 원본의 나머지 필드
+(`command`·`securityContext`·`resources`·`volumeMounts`)를 빠짐없이 옮겨 적어야 한다.
+§0-4 가 `loki` 에서 실증한 "필드 하나만 갈아끼우기"는 대상이 **맵**이라 성립했던 것이다.
+빠뜨리면 `readOnlyRootFilesystem`·`runAsUser: 999` 같은 하드닝이 조용히 증발한다.
+
+## ECR 쪽 전제 (이 레포 밖 · 사람 결정)
+
+- **리포지터리를 미리 만들어야 한다.** ECR 은 push 시 자동 생성되지 않는다 —
+  eks 렌더가 참조하는 **`mp-*` 리포지터리 17개**가 대상이다(실측 — Terraform 소관).
+  🔴 여기에 `mp-rollouts-gatewayapi-plugin`(위 미해결분) 과, EKS 로 안 가는 `mp-cloudflared`
+  (C-5 온프렘 DR 전용)는 **안 들어 있다.** 전자는 컷오버 뒤 18개가 된다.
+- **arm64.** 노드가 `m7g.xlarge`(Graviton)라 지금의 amd64 단일 이미지는 안 뜬다.
+  특히 우리가 굽는 `mp-elasticsearch-nori`·`mp-pgsync`·`mp-rollouts-gatewayapi-plugin` 은
+  멀티아키 빌드가 **앱 레포 CI 의 선행 과제**다.
+- **C-3 = Harbor 존치(ECR 미러).** 온프렘 오버레이는 계속 Harbor 를 가리킨다 — 지우는 게 아니다.
 
 ## 앱 레포(Ansible) 쪽에 필요한 변경 — 명세
 

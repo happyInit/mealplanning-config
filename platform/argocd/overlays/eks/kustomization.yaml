@@ -22,3 +22,24 @@ kind: Kustomization
 #    거기 EKS platform-root 의 path 가 `platform/argocd/overlays/eks` 다.
 resources:
   - ../../base
+
+# ── 0-9 레지스트리 분기 — rollouts 플러그인 이미지 (2026-08-10) ────────────────
+# 🔴 **`images:` 트랜스포머로는 못 잡는다.** 이 이미지는 컨테이너 spec 이 아니라 Application 의
+#    `spec.source.helm.valuesObject` **안에** 있다. kustomize 의 기본 fieldSpec 은 컨테이너 경로만
+#    보므로 여기는 patch 로 직접 간다(SITES.md 실무규칙 7 의 "CRD 필드" 와 같은 사정).
+#
+# 🔴 `op: test` 를 앞에 둔 이유 — 인덱스·경로 기반 replace 는 base 의 values 구조가 바뀌면
+#    **엉뚱한 값을 조용히 덮어쓴다.** test 가 깨지면 렌더가 죽어서 `validate.py` 가 잡는다.
+# ⚠️ 태그는 온프렘과 **같은 커밋 SHA** 를 유지한다. ECR 로 옮길 때 같은 다이제스트를 밀어 넣는
+#    전제이고, 태그가 갈리면 "같은 플러그인"이라는 보장이 사라진다.
+# 🔴 `PLACEHOLDER` = AWS 계정 ID 미정(`scripts/sites.yaml` eks.registry 와 같은 값이어야 한다).
+#    계정이 정해지면 sites.yaml 을 고치고 `validate.py` 가 열거하는 목록대로 맞춘다.
+patches:
+  - target: {group: argoproj.io, kind: Application, name: rollouts}
+    patch: |-
+      - op: test
+        path: /spec/source/helm/valuesObject/controller/initContainers/0/image
+        value: 192.168.0.10/mealplanning/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
+      - op: replace
+        path: /spec/source/helm/valuesObject/controller/initContainers/0/image
+        value: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08

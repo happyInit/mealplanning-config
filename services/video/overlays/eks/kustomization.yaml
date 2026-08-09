@@ -3,6 +3,18 @@ kind: Kustomization
 namespace: app
 resources:
   - ../../base
+
+# EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
+# 🔴 0-9(2026-08-10): 여기만 images 블록이 비어 있어 base 의 `:latest` 가 그대로 샜다.
+#    다른 서비스 13종과 같은 모양으로 맞춘다. 레지스트리 호스트의 정본 = scripts/sites.yaml.
+images:
+# EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
+# 🔴 0-9(2026-08-10): 여기만 images 블록이 비어 있어 base 의 `:latest` 가 그대로 샜다.
+#    다른 서비스 13종과 같은 모양으로 맞춘다. 레지스트리 호스트의 정본 = scripts/sites.yaml.
+  - name: 192.168.0.10/mealplanning/mp-video-service
+    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-video-service
+    newTag: "d22e2b704985181099b306bea3b0422b4accab96"
+
 # EKS 이식 오버레이(플랜 §8) — ECR 이미지·gp3 등 환경차만. 착수 시 다른 서비스 eks 오버레이 본떠 채운다.
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
@@ -11,6 +23,13 @@ resources:
 #    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
 patches:
+# EKS 이식 오버레이(플랜 §8) — ECR 이미지·gp3 등 환경차만. 착수 시 다른 서비스 eks 오버레이 본떠 채운다.
+
+# ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
+#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
   - target: {group: external-secrets.io, kind: ExternalSecret}
     patch: |-
       apiVersion: external-secrets.io/v1

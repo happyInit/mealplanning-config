@@ -32,6 +32,7 @@ monitoring/            PrometheusRule·ServiceMonitor·대시보드
 common/ gateway/ gateway-internal/ ingress/   공용·라우트·게이트웨이
 ops/                   🔴 ArgoCD 비대상 — 수동 migration/runbook 번들
 scripts/validate.py    푸시 전 관문 (아래 §검증)
+scripts/sites.yaml     🔴 사이트(온프렘/EKS) 결합 값의 단일 선언점 — validate.py 가 읽는다
 tests/                 validate.py 의 단위 테스트
 ```
 
@@ -80,6 +81,7 @@ python3 scripts/validate.py
 | `:latest` 금지 | ArgoCD 가 변경을 감지 못 함 |
 | `topologyKey` 중복 금지 | patchMergeKey 충돌로 제약 하나가 조용히 사라진다 |
 | CNPG failsafe 정책 | instance 간 `5432/8000` 비대칭과 K8s/Cilium additive `8000` 우회를 막는다 |
+| 사이트 레지스트리 분기 | `overlays/eks` 렌더가 Harbor LAN IP 를 가리키면 실패. eks 는 정책 검사에서 빠지므로(SKIP_KUSTOMIZE_RE) **이 검사만이 유일한 관문**이다 — 이관 당일 ImagePullBackOff 방지 |
 | securityContext 베이스라인 | JSON-Patch `op: add` 는 merge 가 아니라 replace 라 하드닝이 렌더에서 증발한다 |
 
 **`scripts/policy-baseline.txt` 는 알려진 위반을 얼려둔 목록**이고 **줄어들기만 해야 한다.**

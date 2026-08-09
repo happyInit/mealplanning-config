@@ -1,0 +1,38 @@
+# scripts/sites.yaml — 사이트(온프렘 / EKS) 결합 값의 **단일 선언점**
+#
+# 왜 있는가 (0-10)
+# ---------------
+# `validate.py` 안에 온프렘 LAN 값이 리터럴로 박혀 있었다 — CNPG failsafe 검사의
+# kubelet 예외 `192.168.0.0/24` 가 그것이다. 검증 스크립트가 한 사이트의 물리 주소를
+# 알고 있으면, 두 사이트를 검증하는 순간 **스크립트를 고쳐야 사이트가 늘어난다.**
+# 그래서 사이트 결합 값은 코드가 아니라 이 파일에 선언하고 스크립트는 읽기만 한다.
+#
+# 무엇이 여기 오나
+# ---------------
+# **"사이트가 달라지면 값이 달라지는데, 매니페스트가 아니라 검증 규칙이 알아야 하는 것"** 만.
+# 매니페스트가 쓰는 값(storageClass·nodeSelector 등)은 각 `overlays/<site>` 가 정본이다.
+# 여기에 중복으로 적지 말 것 — 두 정본은 반드시 갈린다.
+#
+# 🔴 registry 를 바꾸는 절차 (계정 ID 가 정해졌을 때)
+# ---------------------------------------------------
+#  1. 아래 `eks.registry` 를 실제 값으로 고친다.
+#  2. `python3 scripts/validate.py` — check_eks_registry 가 **아직 안 맞는 오버레이를 전부 열거**한다.
+#  3. 그 목록대로 각 `overlays/eks/kustomization.yaml` 의 `newName` 을 맞춘다.
+# 즉 값 자체는 오버레이에 있지만(= kustomize `images` 트랜스포머·CD 가 쓰는 자리),
+# **불일치는 이 파일 기준으로 기계가 잡는다.** 손으로 15곳을 세지 않는다.
+
+onprem:
+  # 이미지 레지스트리 접두사 — Harbor(호스트 C). C-3 으로 이관 후에도 **ECR 미러로 존치**한다.
+  registry: 192.168.0.10/mealplanning
+  # 노드가 사는 대역. CNPG failsafe(8000/tcp)에서 kubelet probe 예외로 허용되는 유일한 ipBlock.
+  node_cidrs:
+    - 192.168.0.0/24
+
+eks:
+  # 🔴 PLACEHOLDER = AWS 계정 ID 미정. C-? 로 계정은 3개이고 프로덕션 계정이 아직 안 정해졌다.
+  #    ECR 리포지터리는 평평하다 — Harbor 의 `mealplanning/` 같은 프로젝트 경로가 없다.
+  registry: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com
+  # 🔴 비어 있음 = VPC CIDR 미정(사람 결정). 정해지면 여기에 노드 서브넷을 적는다.
+  #    ⚠️ 온프렘 값을 그대로 복사하지 말 것 — 0-18 이 "LAN 전 포트 개방을 VPC CIDR 로
+  #    기계적 치환 금지" 라고 못박은 그 부채가 여기로 새는 경로다.
+  node_cidrs: []
