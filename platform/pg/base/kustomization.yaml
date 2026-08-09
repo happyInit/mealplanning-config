@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# PG(CloudNativePG) CR 본문. child app = platform/argocd/pg.yaml (수동 sync).
+# 🔴 디렉터리형 → kustomize 변환(0-1, 2026-08-09). 배경·주의는 platform/es/base/kustomization.yaml 머리말과 동일.
+# 🔴 sync 전 사람이 할 일은 ../README.md 를 먼저 읽을 것.
+resources:
+  - cluster.yaml         # Cluster CR — 🔴 SC 키가 둘이다(spec.storage.storageClass · spec.walStorage.storageClass, 0-8)
+  - bootstrap-role.yaml  # DatabaseRole(PARK 상태) — ops/pgsync-stable-alias 가 참조하는 정본
+  - custom-queries.yaml  # exporter 커스텀 쿼리
+  - externalsecrets.yaml # 복제원본·S3 백업·온사이트 MinIO 자격증명(ESO)
+  - objectstore.yaml     # barman-cloud ObjectStore(S3)
+  - scheduledbackup.yaml # mp-pg-daily
+  - onsite-backup.yaml   # 온사이트 덤프 CronJob → MinIO
+  - monitoring.yaml      # PodMonitor + PrometheusRule

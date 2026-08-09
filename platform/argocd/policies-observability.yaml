@@ -11,7 +11,7 @@
 #    관측 스택을 잘못 끊으면 **끊겼다는 사실을 알려줄 수단이 같이 죽는다** —
 #    Grafana 는 화면이 비고 타깃은 DOWN 이 되는데, 그 알람을 쏘는 게 바로 그 Prometheus 다.
 #    "머지 = 강제 적용"이 되면 안 되고, 리소스 하나씩 sync 하며 눈으로 확인한다.
-#    확인 절차 = platform/policies-observability/kustomization.yaml 머리말 ①②③.
+#    확인 절차 = platform/policies-observability/base/kustomization.yaml 머리말 ①②③.
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -25,7 +25,8 @@ spec:
   source:
     repoURL: git@github.com:happyInit/mealplanning-config.git
     targetRevision: main
-    path: platform/policies-observability
+    # 🔴 사이트 오버레이 경로 (0-1, 2026-08-09). 구 `platform/policies-observability` = base 직행. 렌더 결과는 동일(전 트랙 diff 0).
+    path: platform/policies-observability/overlays/onprem
   destination:
     server: https://kubernetes.default.svc
     namespace: observability

@@ -10,7 +10,7 @@
 #
 # 🔴 카나리 트래픽 분할 = Gateway API 플러그인(rollouts.yaml). stable/canary 두 Service 사이
 #    HTTPRoute(mp-recipe-route) 가중치를 플러그인이 조작한다. HTTPRoute 는 backendRefs 2개
-#    (recipe weight100 / recipe-canary weight0)로 미리 선언돼 있어야 한다(gateway/httproutes.yaml).
+#    (recipe weight100 / recipe-canary weight0)로 미리 선언돼 있어야 한다(gateway/base/httproutes.yaml).
 #    account·recipe 둘 다 HPA 라 replica-based 카나리는 %가 오염됨 → 트래픽라우터 필수(ADR §6.1).
 apiVersion: argoproj.io/v1alpha1
 kind: Rollout

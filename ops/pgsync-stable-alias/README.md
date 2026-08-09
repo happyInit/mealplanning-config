@@ -94,7 +94,7 @@ ops/pgsync-stable-alias/ops.sh cleanup
 ## 3. bounded rollback 종료와 legacy retirement
 
 `foodbudget_recipes_pgsync` slot은 소비자가 없으면 WAL을 무제한 붙잡는다. 롤백 종료 시각은
-`platform/pgsync/schema-configmap.yaml`의
+`platform/pgsync/base/schema-configmap.yaml`의
 `operations.mealplanning.io/legacy-slot-retire-after` annotation에 리뷰 가능한 Git 상태로 먼저
 기록한다. CLI 인자는 live annotation과 정확히 같아야 하고 그 시각 이전에는 명령이 실패한다.
 

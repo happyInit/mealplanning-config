@@ -170,7 +170,7 @@ class PgsyncEgressPolicyTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.validate = load_validate_module()
         cls.policy = yaml.safe_load(
-            (REPO / "platform" / "policies-data" / "netpol-pgsync.yaml").read_text()
+            (REPO / "platform" / "policies-data" / "base" / "netpol-pgsync.yaml").read_text()
         )
 
     def failures(self, policy: dict) -> list[str]:

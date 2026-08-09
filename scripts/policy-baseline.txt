@@ -11,7 +11,7 @@
 #
 # ── 왜 이만큼 깨져 있나 (2026-08-02 감사) ─────────────────────────────────────
 # pipeline/* (23개 컨테이너)
-#   pipelines/kustomization.yaml 의 RFC-6902 JSON-Patch `op: add` 가 기존 멤버에 대해
+#   pipelines/base/kustomization.yaml 의 RFC-6902 JSON-Patch `op: add` 가 기존 멤버에 대해
 #   merge 가 아니라 **replace** 로 동작한다. base 에 선언된 securityContext 가 패치 값으로
 #   통째로 갈아치워지면서 runAsNonRoot·readOnlyRootFilesystem 이 렌더 단계에서 증발했다.
 #   (allowPrivilegeEscalation·capabilities.drop 은 패치에 있어서 살아남았다 — 그래서 이 둘만

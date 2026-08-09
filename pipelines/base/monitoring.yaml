@@ -1,0 +1,228 @@
+# 파이프라인 관측 — `.11` 모니터링 컷오버 이식분 (2026-07-30 결정: P4 → 즉시).
+#
+# 구 .11 규칙과의 매핑:
+#   DataPollerLastRunFailed(fb_poller_last_run_success==0) → **이식 안 함** — kube-prometheus-stack
+#     기본 KubeJobFailed 가 이미 커버한다(실증: 2026-07-30 03:30 컬리 실패를 잡고 있었다.
+#     Slack 라우팅이 없어 안 보였을 뿐). fb_poller_* 는 .8 크론 래퍼(run-poller.sh)가 쓰던
+#     node-exporter textfile — K8s 크론잡엔 그 래퍼가 없고, kube-state-metrics 가 네이티브 대체다.
+#   DataPollerStale → MpPollerStale (kube_cronjob_status_last_successful_time 기반).
+#   KafkaConsumerLagGrowing / PipelineSinkWriteFailure → 동명 Mp* 로 직이식.
+#
+# 2026-07-31 개정 (P3 잔여부채 #1 — KEDA scale-to-zero 감시):
+#   MpKafkaConsumerLagGrowing → **MpConsumerBacklogStuck 으로 대체**(같은 사고에 두 번 울지 않도록).
+#   🔴 구 규칙의 `deriv(lag[10m:]) > 0`(= 아직 늘고 있을 때만) 절이 구멍이었다 — 우리 프로듀서는
+#      전부 CronJob 폴러라 **버스트 후 평평**이다. 크론이 3,000건 넣고 끝나면 deriv 가 0 이 되어
+#      백로그가 그대로 쌓인 채 알람이 스스로 해제된다. 잡으려던 상황이 바로 그 국면이라 절을 뺐다.
+---
+# 상주 consumer 4종 — metrics 포트는 열려 있는데 걷는 쪽이 없던 상태의 해소
+# (platform/redis/base/monitoring.yaml 과 같은 계열). Service 가 없으므로 PodMonitor.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: mp-pipeline-consumers
+  namespace: pipeline
+spec:
+  selector:
+    matchExpressions:
+      - { key: app, operator: In, values: [retail-refiner, deal-notifier, recipe-refiner, user-event-sink] }
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-pipeline
+  namespace: pipeline
+spec:
+  groups:
+    - name: mp-pipeline
+      rules:
+        # 구 DataPollerStale 임계의 K8s 크론잡 매핑. 구 oasis 16h(일2회 단일 폴러)는 dawn/noon
+        # 분리로 각자 일1회가 되어 30h 버킷으로 이동. deal-pruner(10분 주기)·user-data-pruner·
+        # chat-insights 는 구 규칙에 없던 신규 편입. 🔴 시리즈는 첫 성공 후에만 존재한다 —
+        # 한 번도 성공 못 한 크론잡은 이 규칙이 못 보고, 그 구간은 KubeJobFailed 가 잡는다.
+        - alert: MpPollerStale
+          expr: |
+            (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-price-matview|mp-deal-pruner"} > 10800)
+            or (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-kurly|mp-poller-oasis-dawn|mp-poller-oasis-noon|mp-poller-deal-timesale|mp-poller-deal-closesale|mp-user-data-pruner|mp-chat-insights"} > 108000)
+            or (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-recipe|mp-poller-es-recipes"} > 432000)
+          for: 5m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "{{ $labels.cronjob }} 성공이 예정 주기보다 오래 갱신되지 않음"
+            description: "마지막 성공 이후 임계(빈도별 3h/30h/120h)를 초과. 잡 자체가 실패 중이면 KubeJobFailed 가 동반 발화한다."
+
+        # ── 컬리 크롤의 "조용한 절단" 감지 (2026-08-04 실장애) ──────────────────────
+        # 🔴 위 MpPollerStale 로는 원리적으로 못 잡는 사고가 있었다. 컬리가 3,324건 대신
+        #    **96건**만 긁고도 exit 0 으로 끝나 lastSuccessfulTime 이 갱신됐다 —
+        #    알림 침묵 · ArgoCD 초록 · 그날 가격 97% 유실. 성공/실패 축으로는 안 보인다.
+        #    (원인 = 서치도메인 변조로 res.kurly.com 이 가짜 IP 로 풀려 컬리 JS 가 안 옴.
+        #     고침 = pipelines/base/kustomization.yaml 의 ndots:1. 이 규칙은 그게 풀렸을 때의 그물이다.)
+        #
+        # 그래서 성공 여부가 아니라 **소요시간**을 본다. 실측(kube_job, 2026-08-04):
+        #    정상 393초(08-01) · 472초(08-02) · 472초(ndots:1 고침 검증)  vs  절단 **26초**
+        #    → 임계 180초 = 정상 최저(393)의 절반 아래, 절단(26)의 7배 위.
+        #
+        # 🔴 컬리에만 건다 — 조용한 절단이 가능한 건 **브라우저로 JS 렌더 결과를 긁는 컬리뿐**이다.
+        #    oasis·recipe 는 requests 기반이라 차단당하면 예외로 죽는다(= MpPollerStale 이 잡는다).
+        #    deal-timesale/closesale 은 정상이 ~100초라 같은 임계를 공유하면 오탐이 된다.
+        # 🔴 job_name 정규식이 `[0-9]+` 인 건 **크론이 만든 잡만** 보기 위해서다. 손으로 만든
+        #    일회성 잡(디버그·재수집)은 짧아도 정상이라 여기 걸리면 안 된다.
+        - alert: MpKurlyCrawlTruncated
+          expr: |
+            (
+              kube_job_status_completion_time{namespace="pipeline", job_name=~"mp-poller-kurly-[0-9]+"}
+              - kube_job_status_start_time{namespace="pipeline", job_name=~"mp-poller-kurly-[0-9]+"}
+              < 180
+            )
+            and (
+              time() - kube_job_status_completion_time{namespace="pipeline", job_name=~"mp-poller-kurly-[0-9]+"} < 7200
+            )
+          for: 5m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "컬리 크롤이 {{ $value }}초 만에 끝남 — 조용한 절단 의심 (정상 6~8분)"
+            description: >-
+              exit 0 이라 MpPollerStale 은 울지 않는다. ① 파드 로그의 record_count 확인(정상 ~3,300).
+              ② 낮으면 res.kurly.com 이 가짜 IP 로 풀렸는지 본다 —
+              kubectl -n kube-system exec ds/cilium -c cilium-agent -- hubble observe --namespace pipeline --verdict DROPPED
+              ③ 파드에 dnsConfig ndots:1 이 살아 있는지 확인(pipelines/base/kustomization.yaml).
+
+        # ── 컨슈머 백로그·KEDA 감시 4종 (2026-07-31) ────────────────────────────────
+        # 🔴 감시 지표는 KEDA 가 아니라 **kafka-exporter**(data/mp-kafka-exporter) 를 본다 —
+        #    고장난 당사자의 자기 신고에 기대면 KEDA 가 멈춘 국면을 못 잡는다.
+        #    KEDA 지표는 "스케일러가 트리거를 못 읽는다"(MpKedaScalerErrors)에만 쓴다.
+        # 실측 기준선(2026-07-31, 보존기간 전체): lag 최댓값 = **1** — 정상은 0~1 이다.
+        # 정상 기동 시간: 콜드스타트 14s + KEDA 폴링 30s ≈ **45s** (아래 for: 값들의 근거).
+        # keda-operator·metrics-apiserver 의 다운은 스택 기본 TargetDown 이 이미 커버한다.
+        #
+        # 🔴 **`kafka_consumergroup_lag_sum` 을 쓰지 않는다 — 익스포터 결함 실측(2026-07-31)**:
+        #    kafka-exporter(업스트림 v1.9.0 정품, 리비전 8ec2407)가 **합계 시계열 하나만 조용히
+        #    누락한다**. 익스포터를 직접 반복 스크레이프해 원문 바이트를 대조한 결과, 결측 응답은
+        #    정상 응답과 763줄이 완전히 동일하고 `kafka_consumergroup_lag_sum{consumergroup=
+        #    "retail-refiner",topic="retail.crawl.raw"}` **한 줄만** 없다. 같은 응답 안에 그 값의
+        #    재료인 파티션별 `kafka_consumergroup_lag` 3개와, 소스상 lag_sum **바로 앞 줄에서
+        #    조건 없이 방출되는** `current_offset_sum` 은 멀쩡히 있다.
+        #    `scrape_samples_scraped` 도 결측 시 651 vs 정상 652 로 딱 1개 적다 → **Prometheus 가
+        #    아니라 익스포터가 안 낸 것**(중복샘플 카운터 0, 익스포터 로그 오류 0줄).
+        #    소스(kafka_exporter.go v1.9.0 683~688)상 두 지표는 조건 없이 연달아 방출되므로 코드만
+        #    봐선 불가능한 조합이다 — **기전 미규명**. 업스트림에 동일 보고 없음.
+        #
+        #    24시간 실측 비교(30초 초과 공백 횟수 / 최대 공백):
+        #      lag_sum                       retail 387회 · user-event 23회 · price-anomaly 27회 / 180초
+        #      sum(kafka_consumergroup_lag)  **전 그룹 0회** / 30초(= 스크레이프 간격)
+        #    두 값은 동시 존재 구간에서 완전히 일치한다(3시간 최대 절대오차 0).
+        #    → **파티션별을 우리가 합산**해 결함 시계열에 대한 의존을 없앤다. 결측 내성만 덧대는
+        #      것보다 낫다 — 감싸기는 증상을 가릴 뿐이고 그동안 값은 낡은 채로 쓰인다.
+        #
+        # 🔴 그래도 `max_over_time[2m]` 을 남긴 이유(이중 방어): 이 익스포터가 시계열을 **조용히**
+        #    떨어뜨린다는 게 실증됐고, Prometheus 는 스크레이프에서 사라진 시계열에 staleness 마커를
+        #    넣어 즉시 없는 것으로 만든다. instant 규칙은 샘플이 한 번만 빠져도 **`for:` 시계가
+        #    리셋**되므로 결측 한 번이 15분짜리 규칙을 통째로 무력화한다.
+        #    (lag_sum 을 감싸지 않고 썼다면: 과거 3시간 재생 기준 최장 연속 참 구간이 **14.5분**으로
+        #     `for: 15m` 에 미달 — retail-refiner 에 대해 한 번도 발화할 수 없는 규칙이었다.)
+        #    창 2m = 스크레이프 4회분. 대가 = 해제가 최대 2분 늦다(수용).
+
+        # "메시지는 쌓이는데 컨슈머가 0" — scale-to-zero 가 만들어낸 조용한 실패 그 자체.
+        # KEDA 활성화 임계는 기본 0 이라 **lag 가 1이라도 45초 안에 1대가 떠야** 정상이다.
+        # → 10분은 그 13배 마진. recipe-refiner 는 지금 min 1(시계열도 없음)이라 매칭되지
+        #   않지만, 부채 #2 로 min 0 이 되는 순간 자동으로 감시에 들어오도록 미리 넣어둔다.
+        # replica 쪽이 `max_over_time(...) == 0` 인 것은 **창 안에서 한 번도 0을 넘지 않았다**는
+        #   엄격한 뜻이다(min_over_time 이면 잠깐만 0이어도 참이 되어 스케일 도중을 오탐한다).
+        - alert: MpConsumerIdleWithBacklog
+          expr: |
+            (
+              sum by(consumergroup) (max_over_time(kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|user-event-sink|recipe-refiner"}[2m])) > 0
+            )
+            and on(consumergroup)
+            (
+              label_replace(
+                max_over_time(kube_deployment_status_replicas_available{namespace="pipeline", deployment=~"mp-(retail-refiner|deal-notifier|user-event-sink|recipe-refiner)"}[2m]) == 0,
+                "consumergroup", "$1", "deployment", "mp-(.*)"
+              )
+            )
+          for: 10m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "{{ $labels.consumergroup }} 백로그가 남았는데 컨슈머 replica 가 0 (10분 지속)"
+            description: "KEDA 가 0→1 로 깨우지 못하고 있다. 정상이면 45초 안에 1대가 뜬다. 확인 = kubectl get scaledobject -n pipeline · keda-operator 로그 · 외부 메트릭 API(v1beta1.external.metrics.k8s.io). 응급 되돌리기 = 해당 ScaledObject 의 minReplicaCount 를 1 로."
+
+        # 구 MpKafkaConsumerLagGrowing 의 대체(헤더 주석 참조). deriv 절을 빼서 **평평하게 밀린
+        # 백로그**도 잡는다. replica 수를 보지 않으므로 컨슈머가 떠 있는데 웨지·크래시루프인
+        # 경우(alloy 웨지·PGSync 크래시루프 계열)도 함께 커버한다.
+        # 임계 100/15m 은 정상 0~1 대비 보수적으로 잡은 출발값 — 일요일 만개레시피 크론
+        # (일·수 05:00) 실적을 보고 조인다.
+        - alert: MpConsumerBacklogStuck
+          expr: |
+            sum by(consumergroup, topic) (max_over_time(kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|recipe-refiner|user-event-sink|price-anomaly-notifier"}[2m])) > 100
+          for: 15m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "{{ $labels.consumergroup }}/{{ $labels.topic }} 백로그 100건 초과가 15분 지속"
+            description: "컨슈머가 백로그를 소진하지 못하고 있다(늘고 있든 평평하든). 컨슈머 파드가 떠 있다면 웨지·처리실패를, 0 이라면 MpConsumerIdleWithBacklog 동반 발화를 함께 본다."
+
+        # KEDA 가 Kafka 를 못 읽으면 스케일 결정을 **마지막 값으로 조용히 유지**한다 —
+        # 백로그가 쌓이기 전에 먼저 우는 선행 신호.
+        # 🔴 for(15m) > increase 창(10m) 인 것은 의도적이다 — 일회성 오류는 increase 가 10분만
+        #    참이라 15분을 못 채우고 사라진다. 매 폴링(30s)마다 실패하는 지속 오류만 발화한다.
+        - alert: MpKedaScalerErrors
+          expr: |
+            sum by(scaledObject) (increase(keda_scaler_detail_errors_total[10m])) > 0
+            or
+            sum by(scaledObject) (increase(keda_scaled_object_errors_total[10m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "KEDA 가 {{ $labels.scaledObject }} 의 트리거를 15분째 평가하지 못함"
+            description: "스케일러가 Kafka lag 을 못 읽어 스케일 결정이 마지막 값에 고착된다. 확인 = kubectl -n keda logs deploy/keda-operator · kubectl describe scaledobject -n pipeline {{ $labels.scaledObject }}."
+
+        # 위 두 규칙은 kafka-exporter 시계열의 **존재**를 전제로 한다 — 감시자가 눈먼 상태를 본다.
+        # 🔴 scale-to-zero 는 그룹의 유휴 상태를 상시화하는데, Kafka 는 활성 멤버가 없는 그룹의
+        #    커밋 오프셋을 offsets.retention.minutes(기본 7일) 후 만료시킨다. 만료되면 exporter 의
+        #    lag 시계열이 통째로 사라지고 두 규칙 다 침묵한다.
+        # ✅ **recipe-refiner 편입(2026-08-02)** — 위 예고대로다. 종전엔 커밋 오프셋이 없어
+        #    시계열 자체가 없었고(넣으면 첫날부터 상시 발화), min 1 이라 눈먼 위험도 낮아 뺐었다.
+        #    2026-08-02 05:00 KST 만개레시피 크론 첫 실행으로 **오프셋 407건이 커밋**되고
+        #    `minReplicaCount: 0` 으로 내려가면서 두 전제가 동시에 뒤집혔다:
+        #      ⑴ 시계열이 생겼다(part0 137·part1 129·part2 141, lag 0/0/0)
+        #      ⑵ 상시 컨슈머가 사라져 **이 규칙이 없으면 진짜 눈먼다**
+        #    🔴 이 컨슈머는 크롤 주기(일·수)가 **최대 4일 간격**이라 7일 retention 안에 들어오지만,
+        #       크롤이 7일 넘게 멈추면(suspend·장애·연휴) 오프셋이 만료돼 KEDA 가 영영 안 깨어난다.
+        #       그 상태를 잡는 게 정확히 이 규칙이다 — 다른 두 규칙은 시계열이 있어야 울린다.
+        # `absent` 가 아니라 `absent_over_time(...[10m])` 인 이유 = 헤더의 조용한 결측 실적.
+        #   파티션별 지표는 24시간 공백 0회지만, 이 익스포터가 시계열을 소리 없이 떨어뜨린다는 게
+        #   실증된 이상 단발 결측에 튀지 않게 둔다. for(1h)와 합치면 실질 기준은
+        #   "최근 70분간 샘플이 하나도 없음" 이다.
+        - alert: MpConsumerLagUnobserved
+          expr: |
+            absent_over_time(kafka_consumergroup_lag{consumergroup="retail-refiner"}[10m])
+            or absent_over_time(kafka_consumergroup_lag{consumergroup="deal-notifier"}[10m])
+            or absent_over_time(kafka_consumergroup_lag{consumergroup="user-event-sink"}[10m])
+            or absent_over_time(kafka_consumergroup_lag{consumergroup="recipe-refiner"}[10m])
+          for: 1h
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "{{ $labels.consumergroup }} 의 lag 시계열이 1시간 넘게 없음 — 백로그 감시가 눈먼 상태"
+            description: "커밋 오프셋 만료(offsets.retention.minutes)나 kafka-exporter 이상이 원인일 수 있다. 확인 = kubectl -n data exec kafka-combined-0 -- /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group {{ $labels.consumergroup }}."
+
+        - alert: MpPipelineSinkWriteFailure
+          expr: sum by(component, sink) (rate(fb_pipeline_sink_writes_total{result="failure"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            service: data-pipeline
+          annotations:
+            summary: "{{ $labels.component }}의 {{ $labels.sink }} 저장 실패 지속"

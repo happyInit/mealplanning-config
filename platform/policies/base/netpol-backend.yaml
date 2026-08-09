@@ -1,0 +1,143 @@
+# 보안 ③ NetworkPolicy — 티어 2: backend 공통 (default-deny 양방향). object_spec §10.3.
+#
+# tier=backend 파드 전체에 걸리는 공통 규칙. 서비스별 외부 egress(account→OAuth, ocr/chat→Gemini)는
+# CiliumNetworkPolicy(netpol-backend-fqdn.yaml)로, operations 의 cross-ns(observability)는
+# netpol-operations.yaml 로 분리한다 — 여기에 다 몰면 모든 backend 가 그 목적지로 나갈 수 있어(최소권한 위반).
+# NetworkPolicy 는 additive(합집합)라 operations 는 이 공통 + 자기 전용 규칙을 둘 다 받는다.
+#
+# 🔴 표준 NetworkPolicy(플랜 §6.1 — EKS 이식성). 포트 8001~8011 = 배포된 backend 컨테이너 포트 전 범위
+#    (recipe 8001 … ocr 8010 · operations 8011). 서비스가 이 범위를 벗어나면 endPort 갱신.
+# 🔴 셀렉터는 tier 라벨 — Cilium 이 무시하는 라벨로 고르면 정책이 조용히 무효(runbook §9-27).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-backend
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # 1) 공개 GW → backend API (/api/*). GW 파드는 app/tier 라벨이 없어 gateway-name 으로 고른다(frontend 와 동일).
+    #    🔴 ns 이전(#532 ③, 2026-08-06) — 게이트웨이가 mp-ingress 로 갔다. namespaceSelector 를
+    #       빠뜨리면 `podSelector` 가 **같은 ns(app)** 안에서만 찾아 0개 파드에 매칭되고,
+    #       **전 API 경로가 죽는다.** (netpol-frontend.yaml ingress 1 도 같은 수정.)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mp-ingress
+          podSelector:
+            matchLabels:
+              gateway.networking.k8s.io/gateway-name: mp-gw-public
+      ports:
+        - { protocol: TCP, port: 8001, endPort: 8011 }
+    # 2) 같은 ns backend ↔ backend (서비스 간 호출: mealplan→account/pantry/ranking · chat→account/pantry).
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: backend
+      ports:
+        - { protocol: TCP, port: 8001, endPort: 8011 }
+    # 3) kubelet probe — STRICT 하 probe 는 istio-proxy :15021 로 rewrite, 소스는 노드 IP(§10.2).
+    #    노드 서브넷 ipBlock(포트 무제한). 🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
+    - from:
+        - ipBlock:
+            cidr: 192.168.0.0/24
+    # 4) 🔴 Prometheus(observability) → :15020 Istio 병합 메트릭 스크레이프.
+    #    ServiceMonitor mp-app-services 가 podIP:15020/stats/prometheus 를 긁는다(STRICT 하 유일 경로 —
+    #    step① 메트릭 이전의 목적). 이 룰이 없으면 backend 9타깃이 전부 DOWN(메트릭 실명). frontend·ranking 은
+    #    ServiceMonitor 가 명시 제외라 스크레이프 대상 아님(그래서 mp-frontend 엔 불필요).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - { protocol: TCP, port: 15020 }
+  egress:
+    # 1) DNS (CoreDNS) — 없으면 이름 해석 전멸(§10.2)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) istiod XDS :15012 — 사이드카 설정 수신. 없으면 재시작 시 mTLS·라우팅 붕괴(§10.2)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+      ports:
+        - { protocol: TCP, port: 15012 }
+    # 3) data ns — PG(CNPG)·ES·Redis·Kafka. 모든 backend 의 DB/검색/캐시/큐 접근이 여기로.
+    #
+    # 🔴 **2026-08-03: 포트 무제한 → 5개로 좁힘.** 종전 근거는 "포트가 다양(5432/9200/6379/
+    #    26379/9092/9093)해서 ns 스코프가 경계" 였는데, 세어 보니 앱이 쓰는 건 **정확히 5개**다
+    #    (9093 은 애초에 존재하지도 않는 포트였다). 열거가 가능하므로 근거가 성립하지 않는다.
+    #
+    # 포트는 트래픽 관측이 아니라 **설정에서 뽑았다** — common/base/app-common.yaml + 서비스 오버레이:
+    #    PGHOST=pg-pooler.data.svc · PGPORT=5432  (+ ocr/ranking 은 pg-rw.data.svc 직결, 같은 5432)
+    #    ESHOST=es-es-http.data.svc               → 9200
+    #    REDIS_SENTINELS=...mp-redis-s-hl.data.svc:26379  → 26379
+    #    REDISHOST=mp-redis-master.data.svc · REDISPORT=6379 → 6379
+    #    KAFKA_BOOTSTRAP=kafka-kafka-bootstrap.data.svc:9092 → 9092
+    #    ⚠️ Hubble 로 뽑으면 안 된다 — PG·ES 연결은 풀링돼 상주하므로 짧은 관측창에는
+    #       6379 만 잡힌다(실측). 그걸 근거로 쓰면 5432·9200 을 빠뜨려 전면 장애가 난다.
+    #    🔴 Redis 는 26379(Sentinel 로 master 발견) + 6379(발견한 master 로 실제 접속) **둘 다** 필요하다.
+    #       Sentinel-aware 클라이언트(분기 C)의 동작이라 하나만 열면 조용히 실패한다.
+    #
+    # 이걸로 닫히는 것 = data ns 에 열려 있던 나머지 포트들. 앱이 쓸 일이 없다:
+    #    9300 ES transport  ← 🔴 노드로 **ES 클러스터에 합류**하는 경로
+    #    9091 Kafka 브로커 간 복제 · 9090 컨트롤플레인 · 8443 Strimzi 에이전트
+    #    9114 ES exporter · 9121 Redis exporter (메트릭) · 8000 CNPG 인스턴스매니저 failsafe
+    #
+    # ⚠️ 이건 **"어느 포트"만 좁힌 것이고 "어느 서비스가"는 그대로다.** 침해된 recipe 파드는
+    #    여전히 PG:5432 에 닿는다(감사 §7.2-3 의 지적). 그건 서비스별 정책이 필요한 별건이다.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: data
+      ports:
+        - { protocol: TCP, port: 5432 } # PG — pooler 경유 + ocr/ranking 직결
+        - { protocol: TCP, port: 6379 } # Redis master(Sentinel 이 알려준 곳)
+        - { protocol: TCP, port: 26379 } # Redis Sentinel — master 발견
+        - { protocol: TCP, port: 9200 } # Elasticsearch HTTP
+        - { protocol: TCP, port: 9092 } # Kafka clients(PLAINTEXT)
+    # 4) 같은 ns backend ↔ backend (서비스 간 호출 egress 쪽 — ingress 2)의 짝)
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: backend
+      ports:
+        - { protocol: TCP, port: 8001, endPort: 8011 }
+    # 5) 🔴 Tempo(observability) :4317 — OTLP 트레이스 전송 (2026-08-02 신설).
+    #    상단 머리말은 "observability cross-ns 는 netpol-operations.yaml 로 분리한다(최소권한)"
+    #    라고 적고 있는데, 이 규칙은 예외로 여기 둔다. 이유 두 가지:
+    #      · operations 한 서비스가 아니라 **backend 전부**가 트레이스를 보낸다. 서비스별 파일로
+    #        쪼개면 12개 파일에 같은 규칙이 복제되고, 새 서비스가 생길 때마다 빠뜨린다.
+    #      · 그런데도 최소권한은 유지된다 — `observability` **ns 전체가 아니라** tempo 파드 하나,
+    #        포트 하나(4317)만 연다. netpol-operations 의 Prometheus 규칙(ns 스코프 :9090)보다 좁다.
+    #    🔴 이 규칙이 없으면 common/base/app-common.yaml 의 OTEL_EXPORTER_OTLP_ENDPOINT 는 무의미하다.
+    #       Cilium 이 조용히 떨어뜨리고 앱 로그의 에러 문구만 바뀐다(refused → timeout).
+    #    포트 4317 = OTLP gRPC(Service tempo 의 grpc-tempo-otlp). 4318=HTTP 는 안 쓰므로 안 연다.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+      ports:
+        - { protocol: TCP, port: 4317 }

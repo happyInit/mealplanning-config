@@ -12,7 +12,7 @@
 #      (CRD 6·ClusterRole 4·ClusterRoleBinding 5·Validating 1·APIService 1) 중 유일한 누락분이었다.
 #      이게 빠지면 외부 메트릭 API 등록이 막혀 ScaledObject 가 lag 를 영영 못 읽는다.
 #
-# ScaledObject 본체는 여기 없다 — 워크로드 옆(`pipelines/scaledobjects.yaml`)에 산다.
+# ScaledObject 본체는 여기 없다 — 워크로드 옆(`pipelines/base/scaledobjects.yaml`)에 산다.
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application

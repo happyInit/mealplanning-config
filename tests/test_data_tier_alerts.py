@@ -16,7 +16,7 @@ def load_documents(path: pathlib.Path) -> list[dict]:
 class DataTierAlertContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        docs = load_documents(REPO / "monitoring" / "rules-data-tier.yaml")
+        docs = load_documents(REPO / "monitoring" / "base" / "rules-data-tier.yaml")
         cls.rule = next(doc for doc in docs if doc["kind"] == "PrometheusRule")
         cls.groups = {
             group["name"]: group["rules"] for group in cls.rule["spec"]["groups"]
@@ -77,7 +77,7 @@ class DataTierAlertContractTests(unittest.TestCase):
 
     def test_existing_pipeline_lag_alert_is_not_duplicated(self) -> None:
         self.assertNotIn("MpKafkaConsumerLagHigh", self.alerts)
-        pipeline = (REPO / "pipelines" / "monitoring.yaml").read_text(encoding="utf-8")
+        pipeline = (REPO / "pipelines" / "base" / "monitoring.yaml").read_text(encoding="utf-8")
         self.assertIn("alert: MpConsumerBacklogStuck", pipeline)
         self.assertIn("alert: MpConsumerIdleWithBacklog", pipeline)
 
@@ -102,7 +102,7 @@ class DataTierAlertContractTests(unittest.TestCase):
 class ElasticsearchExporterContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        docs = load_documents(REPO / "platform" / "es" / "monitoring.yaml")
+        docs = load_documents(REPO / "platform" / "es" / "base" / "monitoring.yaml")
         cls.by_kind = {doc["kind"]: doc for doc in docs}
         cls.deployment = cls.by_kind["Deployment"]
         cls.container = cls.deployment["spec"]["template"]["spec"]["containers"][0]
@@ -165,7 +165,7 @@ class ElasticsearchExporterContractTests(unittest.TestCase):
 
     def test_exporter_network_policy_is_least_privilege(self) -> None:
         policy = yaml.safe_load(
-            (REPO / "platform" / "policies-data" / "netpol-es-exporter.yaml").read_text()
+            (REPO / "platform" / "policies-data" / "base" / "netpol-es-exporter.yaml").read_text()
         )
         self.assertEqual(
             {"matchLabels": {"app": "elasticsearch-exporter"}},
@@ -175,7 +175,7 @@ class ElasticsearchExporterContractTests(unittest.TestCase):
         self.assertEqual(1, len(policy["spec"]["ingress"]))
         self.assertEqual(2, len(policy["spec"]["egress"]))
         bootstrap_docs = load_documents(
-            REPO / "platform" / "policies-data" / "netpol-es-exporter-bootstrap.yaml"
+            REPO / "platform" / "policies-data" / "base" / "netpol-es-exporter-bootstrap.yaml"
         )
         self.assertEqual(1, len(bootstrap_docs))
         bootstrap_policy = bootstrap_docs[0]

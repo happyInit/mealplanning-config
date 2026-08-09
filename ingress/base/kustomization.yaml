@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mp-ingress
+# 공개 진입점 묶음 (#532 ③, 2026-08-06). child app = argocd/applications/ingress.yaml (mp-ingress, 수동 sync).
+#
+# 🔴 왜 `gateway/` 에서 갈라졌나: 구 `gateway/base/kustomization.yaml` 은 `namespace: app` 을 강제해서
+#    Gateway 와 HTTPRoute 를 한 ns 에 묶어 버린다. 그런데 이번 이전의 요점이
+#    **"Gateway 는 mp-ingress 로, HTTPRoute 는 app 에 남긴다"** (라우트를 옮기면 backendRef 가
+#    cross-ns 가 돼 ReferenceGrant 12개가 생긴다)라, 한 kustomization 으로는 표현이 안 된다.
+#    → 여기(mp-ingress) = 게이트웨이 실체 / `gateway/`(app) = HTTPRoute 만.
+#
+# 🔴 이 묶음은 **같은 ns 전제 참조들의 집합**이다. 하나라도 다른 ns 에 남으면 조용히 깨진다:
+#    parametersRef(CM)·certificateRefs(Secret)·Issuer→CF토큰 Secret 이 전부 same-ns 규칙이다.
+resources:
+  - gateway.yaml                     # Gateway mp-gw-public (.14) — istiod 가 Envoy Deploy+LB Svc 를 파생
+  - gateway-params.yaml              # HA 파라미터(replica 2 + TSC) — Gateway parametersRef 대상
+  - pdb.yaml                         # mp-gw-public-pdb (minAvailable 1) — istiod 생성분 아님
+  - request-body-limit.yaml          # EnvoyFilter — Envoy 는 본문 크기 제한이 없다(무제한 업로드 차단)
+  - externalsecret-cloudflare.yaml   # CF API 토큰(ESO) — DNS-01 발급 크리덴셜
+  - issuer.yaml                      # Let's Encrypt ACME Issuer (staging/prod) — namespaced
+  - certificate.yaml                 # app.mealbong.cloud → Secret mp-gw-public-tls
+  - pullsecret.yaml                  # Harbor pull(ESO) — cloudflared 이미지 전용(GW 는 공개 이미지)

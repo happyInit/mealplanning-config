@@ -1,5 +1,5 @@
 # CloudNativePG 오퍼레이터 — 버전 핀 정본 = 런북 §1.1 (차트 0.29.0 = 오퍼레이터 1.30.0).
-# 🔴 PG 이미지 핀은 여기가 아니라 platform/pg/cluster.yaml 의 imageName —
+# 🔴 PG 이미지 핀은 여기가 아니라 platform/pg/base/cluster.yaml 의 imageName —
 #    차트/오퍼레이터 기본 이미지가 PG 18.4 라 안 박으면 18 이 선다(§1.1 함정).
 apiVersion: argoproj.io/v1alpha1
 kind: Application

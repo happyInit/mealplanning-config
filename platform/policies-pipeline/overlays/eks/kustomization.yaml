@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
+# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
+# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
+#
+# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
+#    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+#
+# 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
+#    - 크롤 FQDN(netpol-pipeline-fqdn-crawlers.yaml)은 C-3 으로 **온프렘 잔류**가 기본
+#    - netpol-pipeline-fqdn-ai.yaml(bedrock·gemini)은 AWS 쪽에서 VPC 엔드포인트 유무에 따라 갈린다
+resources:
+  - ../../base

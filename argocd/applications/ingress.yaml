@@ -1,7 +1,7 @@
 # child app — 공개 진입점 실체(Gateway .14 + 발급 배선 + Harbor pull). ns = mp-ingress (#532 ③).
 #
 # 🔴 `gateway` Application 과 짝이다. 그쪽은 이제 **HTTPRoute 만**(ns=app) 관리한다 —
-#    라우트를 app 에 남긴 이유(ReferenceGrant 12개 회피)는 `ingress/kustomization.yaml` 상단 참조.
+#    라우트를 app 에 남긴 이유(ReferenceGrant 12개 회피)는 `ingress/base/kustomization.yaml` 상단 참조.
 #    ⚠️ 그래서 HTTPRoute 관련 ignoreDifferences(카나리 weight 재작성)는 **여기가 아니라
 #       `gateway.yaml` 에 그대로 둔다.** 이 앱은 HTTPRoute 를 안 들고 있다.
 #
@@ -23,7 +23,8 @@ spec:
   source:
     repoURL: git@github.com:happyInit/mealplanning-config.git
     targetRevision: main
-    path: ingress
+    # 🔴 사이트 오버레이 경로 (0-1, 2026-08-09). 구 `ingress` = base 직행. 렌더 결과는 동일(전 트랙 diff 0).
+    path: ingress/overlays/onprem
   destination:
     server: https://kubernetes.default.svc
     namespace: mp-ingress

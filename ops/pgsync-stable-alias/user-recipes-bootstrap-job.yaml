@@ -15,7 +15,7 @@
 #
 # ── 왜 mp-pgsync-bootstrap 롤을 쓰지 않나 ────────────────────────────────────────────
 #
-# stock bootstrap 이 그 전용 롤을 쓰는 이유는 두 가지 권한 때문이다(platform/pg/bootstrap-role.yaml):
+# stock bootstrap 이 그 전용 롤을 쓰는 이유는 두 가지 권한 때문이다(platform/pg/base/bootstrap-role.yaml):
 #   · REPLICATION       — logical slot 생성/삭제
 #   · fbapp membership  — table owner (트리거 설치)
 # 그런데 2026-08-04 실측 결과 **평상시 `pgsync` 롤이 이미 `rolreplication = t`** 이고,
@@ -92,7 +92,7 @@ metadata:
     app: pgsync
     app.kubernetes.io/component: manual-bootstrap
 data:
-  # platform/pgsync/schema-configmap.yaml 의 2번째 문서와 **동일해야 한다**.
+  # platform/pgsync/base/schema-configmap.yaml 의 2번째 문서와 **동일해야 한다**.
   # (원본은 앱 레포 deploy/pgsync/schema.json — 정본이 두 레포에 갈라져 있다, AGENTS.md 참조)
   schema.json: |
     [

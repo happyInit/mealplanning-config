@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── 온프렘 사이트 오버레이 ─────────────────────────────────────────────────────
+# 🔴 지금은 **순수 통과(base 그대로)** 다. 신설 시점(0-1, 2026-08-09)의 안전 기준이
+#    "재구성 전후 렌더가 동일" 이라, 여기에 아무것도 얹지 않았다.
+#    검증 = `kubectl kustomize platform/policies-data/overlays/onprem` 결과가 재구성 전 렌더와 같음(전 트랙 확인).
+#
+# 🔴 여기에 넣을 것 = **온프렘에서만 참인 값**. AWS 이관(C-3)으로 온프렘은 DR 대기 사이트 +
+#    크롤 프로덕션으로 **계속 살아 있다** — 그래서 온프렘 전용 설정은 지우는 게 아니라
+#    base 에서 이쪽으로 내려야 한다:
+#    - 0-18 LAN ipBlock 7곳(실측 최다 트랙 중 하나) — 백업·apiserver·복제 경로
+resources:
+  - ../../base

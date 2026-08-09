@@ -17,7 +17,8 @@ spec:
   source:
     repoURL: git@github.com:happyInit/mealplanning-config.git
     targetRevision: main
-    path: platform/policies-pipeline
+    # 🔴 사이트 오버레이 경로 (0-1, 2026-08-09). 구 `platform/policies-pipeline` = base 직행. 렌더 결과는 동일(전 트랙 diff 0).
+    path: platform/policies-pipeline/overlays/onprem
   destination:
     server: https://kubernetes.default.svc
     namespace: pipeline
