@@ -1,0 +1,42 @@
+# 0-17 — **IMDS 차단**. 노드 IAM 롤 탈취 경로를 끊는다. (EKS 전용, 2026-08-10 신설)
+#
+# ── 무엇을 막나 ──────────────────────────────────────────────────────────────
+# `169.254.169.254` = EC2 인스턴스 메타데이터 서비스(IMDS). 여기에 닿는 파드는
+# **노드에 붙은 IAM 인스턴스 프로파일의 임시 자격증명**을 그대로 받아 갈 수 있다.
+# EKS 노드 롤은 최소한 ECR pull·CNI·EBS 권한을 갖고 있어서, 침해된 파드 하나가
+# 곧바로 계정 안에서 움직이는 발판이 된다. 온프렘엔 없던 위험이고, 이관으로 새로 생긴다.
+#
+# ── 🔴 왜 이게 C-30(IRSA)에서 공짜인가 ───────────────────────────────────────
+# IRSA 는 **투영된 SA 토큰 + STS** 로 신원을 얻는다 — 링크로컬 주소를 전혀 쓰지 않는다.
+# 반면 Pod Identity(미채택)였다면 에이전트가 `169.254.170.23` 을 쓰므로 링크로컬을
+# 통째로 막을 수 없어 규칙이 지저분해졌을 것이다. **C-30 덕분에 부수피해 0 으로 막힌다.**
+#
+# ── 🔴 `enableDefaultDeny` 를 빼면 전면 장애다 ───────────────────────────────
+# Cilium 에서 어떤 정책이 엔드포인트를 선택하면 **그 방향의 default-deny 가 켜진다.**
+# 즉 `egressDeny` 만 적고 `enableDefaultDeny.egress: false` 를 빼면, 이 ns 의 모든 파드가
+# "허용 규칙 0개 + deny 1개" 상태가 되어 **DNS 부터 전부 막힌다.**
+# 이 필드가 이 파일에서 가장 중요한 두 줄이다. 지우지 말 것.
+#
+# ── 층위 ─────────────────────────────────────────────────────────────────────
+# 이건 2차 방어선이다. 1차는 **AWS 쪽 IMDSv2 + hop limit 1**(Terraform `metadata_options`,
+# 이 레포 밖 · 0-17 핸드오프 항목)이고 그게 파드→IMDS 를 홉 수준에서 끊는다.
+# 그런데 hop limit 은 노드 그룹 설정이라 새 노드그룹·Karpenter NodePool(C-29)에서
+# 빠뜨리기 쉽다 — 클러스터 안에서 한 번 더 잠근다.
+#
+# ⚠️ app ns 는 이미 `mp-default-deny-egress` + FQDN 화이트리스트라 IMDS 가 이미 닿지 않는다.
+#    여기 넣는 이유는 **미래에 누가 넓은 egress 규칙을 추가해도 IMDS 만은 남지 않게** 하기 위함이다
+#    (Cilium 의 deny 는 allow 보다 항상 우선한다).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-deny-imds
+  namespace: app
+spec:
+  endpointSelector: {} # ns 전체
+  enableDefaultDeny:
+    egress: false # 🔴 위 머리말 참조. 빼면 ns 전체 egress 가 잠긴다
+    ingress: false
+  egressDeny:
+    - toCIDR:
+        - 169.254.169.254/32 # IMDS (IMDSv1·v2 공통 진입점)
+        - 169.254.170.2/32 # ECS task metadata — 우리는 안 쓴다. 열려 있을 이유가 없다

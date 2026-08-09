@@ -41,11 +41,9 @@ spec:
               tier: backend
       ports:
         - { protocol: TCP, port: 8001, endPort: 8011 }
-    # 3) kubelet probe — STRICT 하 probe 는 istio-proxy :15021 로 rewrite, 소스는 노드 IP(§10.2).
-    #    노드 서브넷 ipBlock(포트 무제한). 🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
-    - from:
-        - ipBlock:
-            cidr: 192.168.0.0/24
+    # 3) ── 🔴 **여기 있던 `ipBlock: 192.168.0.0/24` 는 사이트 결합 값이라 base 에서 내렸다** (0-18).
+    #    · 온프렘 = `overlays/onprem` 이 **같은 자리(ingress[2])에 그대로 되돌린다** → 렌더 동일·동작 무변화.
+    #    · EKS   = `overlays/eks` 의 `netpol-node-probe.yaml`(fromEntities: host → :15021)이 대체.
     # 4) 🔴 Prometheus(observability) → :15020 Istio 병합 메트릭 스크레이프.
     #    ServiceMonitor mp-app-services 가 podIP:15020/stats/prometheus 를 긁는다(STRICT 하 유일 경로 —
     #    step① 메트릭 이전의 목적). 이 룰이 없으면 backend 9타깃이 전부 DOWN(메트릭 실명). frontend·ranking 은

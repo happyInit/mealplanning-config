@@ -1,14 +1,88 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
+# ── EKS 사이트 오버레이 (pipeline ns) — 🔴 **아직 배포 대상이 아니다.** ──────
+# 골격 = 0-1(2026-08-09). 내용 = 0-17·0-18(2026-08-10, 이 커밋).
+# 🔴 validate.py 는 `overlays/eks` 를 정책 검사에서 건너뛴다. **초록 ≠ 이관 준비 완료.**
+#    적용 순서·검증 게이트는 `docs/netpol-eks-cutover.md`.
 #
-# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
-#    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+# ── 빼는 것 (C-3) ────────────────────────────────────────────────────────────
+# 크롤 FQDN 3종(`kurly`·`oasis`·`recipe`)은 **크롤이 온프렘 상시 프로덕션**이라 온프렘에만 산다.
+# 🔴 0-18 이 지적한 **와일드카드 SNI `*.kurly.com` 이 이 삭제로 EKS 에서 사라진다.**
+#    온프렘에서는 남는데, 거기선 정당하다 — 컬리는 상품 이미지·API 를 서브도메인에 흩뿌리고
+#    그 목록이 예고 없이 바뀐다. 열거하면 크롤이 조용히 절단된다(09037b4 와 같은 계열의 실패).
+#    ⚠️ 다만 온프렘에서도 이건 "필요악"이지 정답이 아니다 — 좁히려면 관측된 서브도메인을
+#       주기적으로 뽑아 열거로 바꾸는 별도 작업이 필요하다(이 브랜치 범위 밖).
+# ⚠️ **선행 의존**: 크롤 워크로드 자체가 EKS 매니페스트에서 빠져야 한다(`pipelines` 트랙, 다른 레인).
+#    정책만 빼고 파드가 남으면 그 파드는 egress default-deny 에 걸려 조용히 죽는다 — 순서가 있다.
 #
-# 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - 크롤 FQDN(netpol-pipeline-fqdn-crawlers.yaml)은 C-3 으로 **온프렘 잔류**가 기본
-#    - netpol-pipeline-fqdn-ai.yaml(bedrock·gemini)은 AWS 쪽에서 VPC 엔드포인트 유무에 따라 갈린다
+# ── 손대지 않은 것 (C-31 이 답을 줬다) ──────────────────────────────────────
+# `netpol-pipeline-fqdn-ai.yaml` 의 `bedrock-runtime.ap-northeast-2.amazonaws.com` 은 **그대로**다.
+# 0-1 이 이 파일 머리말에 "VPC 엔드포인트 유무에 따라 갈린다" 고 열어 뒀는데,
+# **C-31 이 Interface 엔드포인트 미채택으로 닫았다** — Bedrock 은 NAT 를 통해 공개 엔드포인트로
+# 나가므로 FQDN 문법·이름이 온프렘과 동일하다. 리전도 이미 ap-northeast-2 로 맞다.
 resources:
   - ../../base
+  - netpol-deny-imds.yaml
+patches:
+  # ── (C-3) 크롤 FQDN 3종 = 온프렘 전용 ──────────────────────────────────────
+  - patch: |-
+      apiVersion: cilium.io/v2
+      kind: CiliumNetworkPolicy
+      metadata:
+        name: mp-pipeline-fqdn-kurly
+        namespace: pipeline
+      $patch: delete
+  - patch: |-
+      apiVersion: cilium.io/v2
+      kind: CiliumNetworkPolicy
+      metadata:
+        name: mp-pipeline-fqdn-oasis
+        namespace: pipeline
+      $patch: delete
+  - patch: |-
+      apiVersion: cilium.io/v2
+      kind: CiliumNetworkPolicy
+      metadata:
+        name: mp-pipeline-fqdn-recipe
+        namespace: pipeline
+      $patch: delete
+  # ── (C-30 IRSA) Bedrock 소비자에 STS 를 연다 ──────────────────────────────
+  # 🔴 0-16 이 끝나면(정적 키 제거) 이 파드들의 자격증명은 **STS 왕복으로만** 생긴다.
+  #    지금은 env 의 정적 키가 체인에서 앞서 있어 STS 없이도 도는데, 0-16 을 적용하는 순간
+  #    이 규칙이 없으면 **Bedrock 호출이 통째로 실패**한다. 순서상 먼저 열어 두는 게 맞다
+  #    (여는 것 자체는 무해 — 열려 있어도 IRSA 설정 전에는 아무도 안 쓴다).
+  - target:
+      group: cilium.io
+      version: v2
+      kind: CiliumNetworkPolicy
+      name: mp-pipeline-fqdn-bedrock
+    patch: |-
+      - op: add
+        path: /spec/egress/1/toFQDNs/-
+        value:
+          matchName: sts.ap-northeast-2.amazonaws.com
+      - op: add
+        path: /spec/egress/1/toFQDNs/-
+        value:
+          matchName: sts.amazonaws.com
+  # ── (C-14) Redis 가 ElastiCache 로 나간다 ──────────────────────────────────
+  # base 의 `mp-pipeline-egress` egress[4] = data ns 의 redis 파드(6379·26379).
+  # 파드가 사라지므로 그 규칙은 죽고, 대신 VPC 안 관리형 엔드포인트를 **포트 1개**로 연다.
+  # 판단 근거·"VPC CIDR 기계적 치환과 무엇이 다른가"는
+  # `platform/policies/overlays/eks/kustomization.yaml` 의 같은 패치 주석에 적어 뒀다.
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: mp-pipeline-egress
+    patch: |-
+      - op: remove
+        path: /spec/egress/4
+      - op: add
+        path: /spec/egress/-
+        value:
+          to:
+            - ipBlock:
+                cidr: 10.10.0.0/16
+          ports:
+            - { protocol: TCP, port: 6379 }

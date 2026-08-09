@@ -1,0 +1,47 @@
+# C-18 귀결 — 온사이트 덤프 CronJob 의 목적지가 MinIO → S3 로 바뀐다. (EKS 전용, 2026-08-10)
+#
+# base 의 `netpol-pg-onsite.yaml` egress[2] 는 `observability/app=minio:9000` 인데,
+# C-18 로 **MinIO 는 삭제**된다. 그 규칙은 eks 오버레이에서 제거하고(kustomization 의 JSON6902),
+# 대신 이 CNP 가 S3 를 연다.
+#
+# 🔴 **버킷이 barman 과 달라야 한다** — C-18 의 명시 조건이다. 온사이트 덤프의 존재 이유가
+#    "barman 체인이 통째로 오염·삭제됐을 때의 독립 사본" 이라서, 같은 버킷·같은 계정에 두면
+#    방어 대상과 장애 도메인을 공유하게 된다(체크리스트의 원칙 그대로).
+#    ⚠️ **그 버킷 이름은 아직 안 정해졌다.** 아래는 `s3.<리전>` 엔드포인트만 열어 둔 상태이고,
+#       virtual-hosted 스타일(`<버킷>.s3.<리전>.amazonaws.com`)로 붙는 SDK 라면 버킷 이름이
+#       확정되는 즉시 `matchName` 을 한 줄 추가해야 한다. 미결 = 산출 §결정필요.
+#
+# 🔴 STS 가 같이 열려 있어야 한다 — C-30(IRSA). 파드는 투영된 SA 토큰으로
+#    `AssumeRoleWithWebIdentity` 를 STS 에 먼저 치고, 그 결과로 받은 임시 키로 S3 에 간다.
+#    STS 가 막히면 **S3 규칙이 아무리 맞아도** 자격증명 자체를 못 얻는다.
+#    (EKS 파드 identity webhook 이 `AWS_STS_REGIONAL_ENDPOINTS=regional` 을 주입하므로 리전 엔드포인트가
+#     기본이지만, SDK/버전에 따라 글로벌로 가는 경우가 있어 둘 다 연다.)
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pg-onsite-egress-fqdn
+  namespace: data
+spec:
+  endpointSelector:
+    matchLabels:
+      app: mp-pg-onsite
+  egress:
+    # DNS L7 — toFQDNs 학습의 전제(없으면 아래 규칙이 영원히 IP 를 못 얻는다)
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "s3.ap-northeast-2.amazonaws.com"
+        - matchName: "sts.ap-northeast-2.amazonaws.com"
+        - matchName: "sts.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

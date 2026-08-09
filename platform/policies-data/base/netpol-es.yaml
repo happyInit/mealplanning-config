@@ -63,10 +63,8 @@ spec:
         - podSelector: { matchLabels: { app: es-users-provision } }
       ports:
         - { protocol: TCP, port: 9200 }
-    # 7) kubelet probe — data ns=메시 밖이라 파드 포트로 직접(소스=노드 IP). 포트 무제한.
-    #    🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
-    - from:
-        - ipBlock: { cidr: 192.168.0.0/24 }
+    # 7) ── 🔴 kubelet probe 용 `ipBlock: 192.168.0.0/24` 를 base 에서 내렸다 (0-18).
+    #    onprem 오버레이가 ingress[7](= 마지막)로 복원, eks 는 `netpol-node-probe.yaml` 이 대체.
   egress:
     # 1) DNS (CoreDNS) — 노드 디스커버리가 파드 호스트네임 해석.
     - to:

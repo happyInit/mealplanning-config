@@ -1,15 +1,70 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
+# ── EKS 사이트 오버레이 (data ns) — 🔴 **아직 배포 대상이 아니다.** ───────────
+# 골격 = 0-1(2026-08-09). 내용 = 0-17·0-18(2026-08-10, 이 커밋).
+# 🔴 validate.py 는 `overlays/eks` 를 정책 검사에서 건너뛴다. **초록 ≠ 이관 준비 완료.**
+#    적용 순서·검증 게이트는 `docs/netpol-eks-cutover.md`.
 #
-# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
-#    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+# ── 더하는 것 ────────────────────────────────────────────────────────────────
+# · (0-18) `netpol-node-probe.yaml`  — base 에서 내려간 LAN ipBlock 4건의 대체물(fromEntities: host)
+# · (0-17) `netpol-kafka-egress.yaml` — **egress 무제한 3 워크로드**(브로커·entity-operator·exporter) 잠금
+# · (0-17) `netpol-deny-imds.yaml`    — ns 전체 IMDS deny(하한선)
+# · (C-18) `netpol-pg-onsite-s3.yaml` — 온사이트 덤프 목적지 MinIO → S3(+STS)
 #
-# 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - 🔴 0-18 재작성. S3 백업 FQDN(netpol-pg-egress-fqdn.yaml)은 리전이 바뀐다
-#    - C-14 로 Redis 가 ElastiCache 가 되면 netpol-redis*.yaml 은 **보안그룹으로 대체**된다
-#    - 0-17 egress 무제한 워크로드 닫기 — AWS 에선 IMDS 경유 노드 IAM 롤 탈취 경로다
+# ── 빼는 것 ──────────────────────────────────────────────────────────────────
+# · (C-14) `mp-redis` — Redis 가 ElastiCache for Valkey 로 나가면 **파드가 없어진다.**
+#          네트워크 경계도 netpol 이 아니라 **보안그룹**으로 옮겨간다. 남겨두면 0개 파드에
+#          매칭되는 죽은 규칙이고, 더 나쁘게는 "Redis 는 잠겨 있다"는 착시를 준다.
+#   🔴 **`mp-redis-pgsync` 는 남긴다.** C-14 의 대상은 앱 캐시용 Redis 이고, 그 원가 근거는
+#      `cache.t4g.micro` **2노드 한 벌**이다. PGSync 전용 브로커까지 ElastiCache 로 옮기는 결정은
+#      어디에도 없다 → 인클러스터 잔류로 읽는다. 이게 틀리면 이 파일 한 줄이 더 늘어난다.
+#      (미결로 산출 §결정필요에 올렸다.)
+#
+# ── 손대지 않은 것 ───────────────────────────────────────────────────────────
+# · `mp-es`·`mp-pg-*` 의 클라이언트 규칙(app/pipeline ns 유입)은 사이트 결합이 아니다.
+# · `netpol-pg-egress-fqdn.yaml` 의 `toFQDNs: s3.ap-northeast-2.amazonaws.com` 은 **리전이 그대로**다
+#   (C-8① ap-northeast-2). 바뀌는 건 버킷 안의 **경로**(0-23: `pg-prod`/`pg-dr`)라 netpol 무관.
+#   추가되는 것은 STS 뿐 — 아래 패치.
 resources:
   - ../../base
+  - netpol-node-probe.yaml
+  - netpol-kafka-egress.yaml
+  - netpol-deny-imds.yaml
+  - netpol-pg-onsite-s3.yaml
+patches:
+  # ── (C-14) Redis 파드 소멸 → 정책 삭제 ─────────────────────────────────────
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: mp-redis
+        namespace: data
+      $patch: delete
+  # ── (C-30 IRSA) PG instance 가 STS 를 못 치면 S3 백업이 자격증명부터 실패한다 ──
+  #    🔴 이건 "있으면 좋은" 규칙이 아니다. IRSA 는 STS 왕복이 **전제**다.
+  #       빠지면 barman 이 401/403 도 아니고 **연결 타임아웃**으로 죽고, 증상이
+  #       "WAL 아카이빙이 조용히 밀린다" 라 발견이 늦다.
+  - target:
+      group: cilium.io
+      version: v2
+      kind: CiliumNetworkPolicy
+      name: mp-pg-instance-egress
+    patch: |-
+      - op: add
+        path: /spec/egress/1/toFQDNs/-
+        value:
+          matchName: sts.ap-northeast-2.amazonaws.com
+      - op: add
+        path: /spec/egress/1/toFQDNs/-
+        value:
+          matchName: sts.amazonaws.com
+  # ── (C-18) 온사이트 덤프 → MinIO 규칙 제거. S3 는 netpol-pg-onsite-s3.yaml 이 연다 ──
+  #    egress[2] = observability/app=minio:9000. MinIO 는 EKS 에 없다.
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: mp-pg-onsite
+    patch: |-
+      - op: remove
+        path: /spec/egress/2

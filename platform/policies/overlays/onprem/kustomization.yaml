@@ -1,13 +1,52 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # ── 온프렘 사이트 오버레이 ─────────────────────────────────────────────────────
-# 🔴 지금은 **순수 통과(base 그대로)** 다. 신설 시점(0-1, 2026-08-09)의 안전 기준이
-#    "재구성 전후 렌더가 동일" 이라, 여기에 아무것도 얹지 않았다.
-#    검증 = `kubectl kustomize platform/policies/overlays/onprem` 결과가 재구성 전 렌더와 같음(전 트랙 확인).
-#
 # 🔴 여기에 넣을 것 = **온프렘에서만 참인 값**. AWS 이관(C-3)으로 온프렘은 DR 대기 사이트 +
 #    크롤 프로덕션으로 **계속 살아 있다** — 그래서 온프렘 전용 설정은 지우는 게 아니라
-#    base 에서 이쪽으로 내려야 한다:
-#    - 0-18 LAN `192.168.0.0/24` ipBlock (netpol-backend-fqdn.yaml 등 4곳 실측)
+#    base 에서 이쪽으로 내린다.
+#
+# ── 0-18 (2026-08-10): LAN 노드 서브넷 ipBlock 을 base 에서 여기로 내렸다 ─────
+# base 에서 뺀 것 = `netpol-frontend.yaml` ingress[1] · `netpol-backend.yaml` ingress[2].
+# 여기서 **같은 인덱스에 같은 값**으로 되돌린다 → `kubectl kustomize .../overlays/onprem` 렌더가
+# 이전과 **바이트 단위로 동일**하다. 즉 이 커밋은 온프렘 라이브를 1비트도 건드리지 않는다.
+#
+# 🔴 왜 append(`/spec/ingress/-`)가 아니라 명시 인덱스인가:
+#    ingress 는 순서 있는 배열이라 위치가 바뀌면 렌더 diff 가 0 이 아니게 된다(의미는 같아도).
+#    "차이 0" 이 이 재구성의 유일한 안전 근거이므로 위치까지 고정한다.
+#
+# ⚠️ base 의 ingress 배열에 규칙을 **추가·삭제하면 여기 인덱스도 같이 고쳐야 한다.**
+#    빗나가면 kustomize 가 조용히 다른 자리에 끼워 넣는다(에러가 아니다).
+#    확인은 `kubectl kustomize` 렌더를 이전 커밋과 diff 하는 것 하나뿐이다.
+#
+# ⚠️ 이 규칙들이 **kubelet probe 를 실제로 통과시키고 있는 것은 아니다** — 근거는
+#    `../eks/netpol-node-probe.yaml` 머리말(실측: `policy-cidr-match-mode` 빈 값).
+#    온프렘에서 이걸 걷어내는 것은 라이브 검증이 필요한 별건이라 이 브랜치는 손대지 않는다.
 resources:
   - ../../base
+patches:
+  # mp-frontend ingress[1] — 노드 서브넷(포트 무제한)
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: mp-frontend
+    patch: |-
+      - op: add
+        path: /spec/ingress/1
+        value:
+          from:
+            - ipBlock:
+                cidr: 192.168.0.0/24
+  # mp-backend ingress[2] — GW·intra-backend 다음, Prometheus 앞
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: mp-backend
+    patch: |-
+      - op: add
+        path: /spec/ingress/2
+        value:
+          from:
+            - ipBlock:
+                cidr: 192.168.0.0/24

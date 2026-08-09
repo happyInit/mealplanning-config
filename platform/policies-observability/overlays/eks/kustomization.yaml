@@ -1,15 +1,78 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
+# ── EKS 사이트 오버레이 (observability ns) — 🔴 **아직 배포 대상이 아니다.** ──
+# 골격 = 0-1(2026-08-09). 내용 = 0-17·0-18(2026-08-10, 이 커밋).
+# 🔴 validate.py 는 `overlays/eks` 를 정책 검사에서 건너뛴다. **초록 ≠ 이관 준비 완료.**
+#    적용 순서·검증 게이트는 `docs/netpol-eks-cutover.md`.
 #
-# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
-#    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+# ── 더하는 것 ────────────────────────────────────────────────────────────────
+# · (0-17) `netpol-observability-egress.yaml` — **egress 무제한 8 워크로드** 잠금
+# · (0-17) `netpol-deny-imds.yaml`            — IMDS deny 하한선
 #
-# 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - 🔴 netpol-observability-gateway.yaml 의 전면 개방은 **온프렘 사고(2026-08-03) 대응**이다.
-#      EKS 로 그대로 옮기면 개방만 이식된다 — 0-18 에서 다시 좁힐 것
-#    - C-18 로 MinIO 가 사라지면 netpol-minio-egress.yaml 은 S3 FQDN 으로 대체
+# ── 안 되돌리는 것 (0-18) ────────────────────────────────────────────────────
+# base 에서 내려간 `mp-observability-baseline-allow` ingress[1] (`ipBlock: 192.168.0.0/24`) 을
+# **여기서는 복원하지 않는다.** onprem 오버레이만 복원한다.
+# 🔴 이건 다른 6건과 달리 kubelet probe 명목이 아니라 **"LAN 이면 신뢰"** 자체다.
+#    VPC 에는 그 전제가 없고(C-9 로 내부 도구는 공개 진입점 자체가 없다), 기계적으로
+#    `10.10.0.0/16` 으로 바꾸면 **VPC 안 임의 리소스 → 관측 스택 전 파드, 포트 무제한**이 된다.
+#    probe·apiserver webhook 은 `netpol-observability-entities.yaml`(CNP, fromEntities)이
+#    이미 담당하므로 여기서 잃는 경로가 없다.
+#
+# ── 빼는 것 (C-18: MinIO 삭제 → S3) ─────────────────────────────────────────
+# · `mp-minio-egress`              — 파드가 없어지므로 정책도 없어진다
+# · `mp-observability-minio-backup` — data ns 온사이트 백업잡의 MinIO 유입 허용. 짝이 되는
+#                                     egress 규칙도 policies-data eks 에서 같이 뺐다.
+#
+# ── 다시 쓰는 것 (0-18: 내부 게이트웨이 전면 개방) ──────────────────────────
+# 아래 패치 참조.
 resources:
   - ../../base
+  - netpol-observability-egress.yaml
+  - netpol-deny-imds.yaml
+patches:
+  # ── (C-18) MinIO 소멸 ──────────────────────────────────────────────────────
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: mp-minio-egress
+        namespace: observability
+      $patch: delete
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: mp-observability-minio-backup
+        namespace: observability
+      $patch: delete
+  # ── (0-18) 내부 게이트웨이 `ingress: [- {}]` → **포트로 자른다** ───────────
+  #
+  # 🔴 먼저: 그 전면 개방은 **막연한 방치가 아니라 2026-08-03 사고의 원복**이었다.
+  #    원인은 MetalLB L2 로 들어온 LoadBalancer 트래픽을 Cilium 이 노드 라우터 IP 로 SNAT 해
+  #    소스가 `world` + 파드 CIDR 로 찍힌 것이었고, 그래서 `ipBlock` 이 절대 안 걸렸다.
+  #    → **그 원인이 EKS 에는 없다.** MetalLB 는 이관 결정에서 소멸한다(NLB·C-26).
+  #      즉 "소스 신원을 못 믿으니 통째로 연다" 는 근거가 EKS 에서는 성립하지 않는다.
+  #
+  # 그런데 **대체 소스가 무엇인지도 아직 확정이 아니다.** C-9 는 "내부 도구 6종은 진입점 없이
+  # Tailscale 로만" 이라고만 정했고, Tailscale 이 노드에 붙는지(→ host/remote-node) 클러스터 안
+  # 프록시 파드로 붙는지(→ 엔드포인트 신원)는 C-6 범위 밖이다(C-6 = 복제 전용 최소 구성).
+  # → 소스를 지금 찍으면 틀릴 확률이 높다. **소스는 열어 두고 포트만 자른다.**
+  #
+  # 얻는 것: `- {}` 는 **모든 포트**를 열었다 — istio-proxy 의 `:15020`(메트릭)·`:15090`(envoy
+  # admin prom)·`:15021`(status) 까지 아무나 닿았다. 이제 `:443`·`:80` 만 남는다.
+  # 잃는 것: 없다. probe(:15021)는 `netpol-observability-entities.yaml` 의
+  #          `fromEntities: [host, remote-node]` 가 이미 담당한다(포트 무제한, 소스는 노드로 한정).
+  #
+  # ⚠️ 소스 좁히기는 Tailscale 유입 방식이 정해진 뒤 **별건**으로. 그때가 이 규칙의 완성이다.
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: mp-observability-gateway-ingress
+    patch: |-
+      - op: replace
+        path: /spec/ingress
+        value:
+          - ports:
+              - { protocol: TCP, port: 443 }
+              - { protocol: TCP, port: 80 }

@@ -58,10 +58,8 @@ spec:
           podSelector: { matchLabels: { app.kubernetes.io/name: prometheus } }
       ports:
         - { protocol: TCP, port: 9121 }
-    # 6) kubelet probe — data ns=메시 밖이라 파드 포트로 직접(소스=노드 IP). 포트 무제한(probe 포트 변동 대비).
-    #    🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
-    - from:
-        - ipBlock: { cidr: 192.168.0.0/24 }
+    # 6) ── 🔴 kubelet probe 용 `ipBlock: 192.168.0.0/24` 를 base 에서 내렸다 (0-18).
+    #    onprem 오버레이가 ingress[5](= 마지막)로 복원, eks 는 `netpol-node-probe.yaml` 이 대체.
   egress:
     # 1) DNS (CoreDNS) — Sentinel/복제가 파드 호스트네임을 해석. 없으면 이름 해석 전멸.
     - to:

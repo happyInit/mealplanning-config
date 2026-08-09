@@ -1,13 +1,34 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # ── 온프렘 사이트 오버레이 ─────────────────────────────────────────────────────
-# 🔴 지금은 **순수 통과(base 그대로)** 다. 신설 시점(0-1, 2026-08-09)의 안전 기준이
-#    "재구성 전후 렌더가 동일" 이라, 여기에 아무것도 얹지 않았다.
-#    검증 = `kubectl kustomize platform/policies-observability/overlays/onprem` 결과가 재구성 전 렌더와 같음(전 트랙 확인).
+# 🔴 여기에 넣을 것 = **온프렘에서만 참인 값**. 온프렘은 C-3 으로 계속 산다(DR + 크롤 프로덕션).
 #
-# 🔴 여기에 넣을 것 = **온프렘에서만 참인 값**. AWS 이관(C-3)으로 온프렘은 DR 대기 사이트 +
-#    크롤 프로덕션으로 **계속 살아 있다** — 그래서 온프렘 전용 설정은 지우는 게 아니라
-#    base 에서 이쪽으로 내려야 한다:
-#    - 0-18 LAN ipBlock 5곳 · 내부 게이트웨이 전면 개방(`ingress: [{}]`) — 의도적 원복분
+# ── 0-18 (2026-08-10) ─────────────────────────────────────────────────────────
+# base 에서 뺀 것 = `netpol-observability-baseline.yaml` 의 `mp-observability-baseline-allow`
+# ingress[1] (`ipBlock: 192.168.0.0/24`). 여기서 같은 자리로 되돌린다 → 온프렘 렌더 동일.
+#
+# 🔴 이 한 건은 다른 6건과 성격이 다르다. 나머지는 "kubelet probe" 명목인데 이건 **LAN 직결 신뢰** 자체다:
+#    내부 도구 6종을 LAN PC 에서 `https://<이름>.mealbong.cloud`(내부 GW `.15`)로 쓰는 구조가
+#    온프렘의 실제 운영 방식이라, 온프렘에서는 **의도적으로 유지**한다.
+#    EKS 에는 복원하지 않는다(C-9 — 내부 도구는 진입점 없이 Tailscale 로만).
+#
+# ⚠️ 그래도 온프렘에서 이건 넓다 — "LAN 의 임의 장비 → observability ns 전 파드, 포트 무제한" 이다.
+#    좁히려면 GW 파드만 남기고 나머지를 빼면 되는데(내부 도구 유입은 전부 GW 를 거친다),
+#    2026-08-03 v1 사고가 정확히 그 지점에서 났다 → **라이브 검증이 필요한 별건**이다.
+#    이 브랜치는 온프렘 동작을 바꾸지 않는다.
 resources:
   - ../../base
+patches:
+  # mp-observability-baseline-allow ingress[1] — ns 내부 허용(0) 다음(= 마지막)
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: mp-observability-baseline-allow
+    patch: |-
+      - op: add
+        path: /spec/ingress/1
+        value:
+          from:
+            - ipBlock:
+                cidr: 192.168.0.0/24

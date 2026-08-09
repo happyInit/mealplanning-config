@@ -1,0 +1,23 @@
+# 0-17 — **IMDS 차단** (pipeline ns). 근거·함정은
+# `platform/policies/overlays/eks/netpol-deny-imds.yaml` 머리말.
+#
+# 🔴 **이 ns 가 IMDS 로 가장 아픈 곳이다.** 이유 두 가지:
+#  ① 워크로드 22개가 `envFrom.secretRef` 로 **정적 AWS 키**를 통째로 받고 있다(0-16 미완).
+#     즉 침해 시 이미 자격증명이 하나 있고, 거기에 노드 롤까지 더해지면 권한이 합집합이 된다.
+#  ② 이 ns 는 **외부 인터넷으로 나가는 유일한 워크로드 묶음**이다(크롤·Bedrock·Gemini).
+#     `toFQDNs` 로 목적지를 좁혀 뒀지만, FQDN 정책은 DNS 응답에서 학습한 IP 를 허용하는 방식이라
+#     "허용된 대역"이 시간에 따라 움직인다. deny 는 그 위에 고정으로 얹힌다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-deny-imds
+  namespace: pipeline
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    egress: false # 🔴 빼면 pipeline ns 전체 egress 가 잠긴다(크롤·컨슈머 전멸)
+    ingress: false
+  egressDeny:
+    - toCIDR:
+        - 169.254.169.254/32
+        - 169.254.170.2/32

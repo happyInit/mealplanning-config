@@ -1,14 +1,66 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
+# ── EKS 사이트 오버레이 (app ns) — 🔴 **아직 배포 대상이 아니다.** ────────────
+# 골격 = 0-1(2026-08-09). 내용 = 0-17·0-18(2026-08-10, 이 커밋).
 #
-# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
-#    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+# 🔴 validate.py 는 `overlays/eks` 를 정책 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE) — 렌더 성공만 본다.
+#    **초록 = 이관 준비 완료가 아니다.** 적용 순서·검증은 `docs/netpol-eks-cutover.md`.
 #
-# 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - 🔴 0-18 **VPC CIDR 로 기계적 치환 금지.** LAN 전 포트 개방을 그대로 옮기면 그게 곧 부채 이식이다
-#    - toFQDNs(CiliumNetworkPolicy)는 C-7(cluster-pool 유지)이라 문법 그대로 산다
+# ── 이 오버레이가 base 와 달라지는 것 ────────────────────────────────────────
+# 1. (0-18) LAN ipBlock 미복원 — base 에서 내려간 2건을 **여기서는 되돌리지 않는다.**
+#    대신 `netpol-node-probe.yaml`(fromEntities: host → :15021)이 그 자리를 대신한다.
+#    🔴 VPC CIDR 로 치환하지 않은 근거는 그 파일 머리말(실측 `policy-cidr-match-mode` 빈 값).
+# 2. (0-17) `netpol-deny-imds.yaml` — ns 전체 IMDS egress deny(2차 방어선).
+#
+# ── 바꾸지 않은 것과 그 근거 ─────────────────────────────────────────────────
+# · `netpol-backend-fqdn.yaml` 의 FQDN 4종(kakao·google OAuth · Gemini · Vertex · youtube)은
+#   사이트 결합이 아니다 — AWS 에서도 같은 외부 API 를 그대로 부른다. **손대지 않는다.**
+# · 그 안의 `rules.dns: matchPattern "*"` 는 **egress 허용이 아니라 DNS L7 가시성**이다.
+#   toFQDNs 가 IP 를 학습하려면 Cilium DNS 프록시가 응답을 봐야 하고, 그 통로가 이 규칙이다.
+#   좁히면 그 파드의 **다른 모든 이름 해석이 막힌다** — 0-18 의 "와일드카드 SNI" 지적 대상이 아니다.
+#   (실제 지적 대상 = `*.kurly.com`·`*.argotunnel.com` → policies-pipeline·policies-ingress 쪽)
+# · app ns 서비스는 AWS SDK 를 쓰지 않아 **STS(IRSA) egress 가 필요 없다.**
+#   🔴 앞으로 app ns 서비스 하나라도 AWS 를 부르면 `sts.ap-northeast-2.amazonaws.com:443` 을
+#      그 서비스의 CNP 에 **반드시 추가**해야 한다. IRSA 는 STS 왕복이 전제다(C-30).
 resources:
   - ../../base
+  - netpol-node-probe.yaml
+  - netpol-deny-imds.yaml
+patches:
+  # ── (C-14) Redis 가 클러스터를 떠난다 → backend 의 캐시 경로를 다시 그린다 ──
+  # base 의 `mp-backend` egress[2] 는 "data ns 로 5432·6379·26379·9200·9092" 다.
+  # ElastiCache 로 가면 그중 Redis 두 포트는 **data ns 가 아니라 VPC 안의 관리형 엔드포인트**로 간다.
+  # 🔴 이 패치가 없으면 app ns 의 `mp-default-deny-egress` 가 그대로 캐시를 끊는다 —
+  #    "6379 는 열려 있는데" 라고 읽히지만 **목적지 셀렉터(data ns)가 안 맞아** 매칭이 0 이다.
+  #    증상은 전 서비스 캐시 미스가 아니라 **연결 타임아웃**이라 지연으로 먼저 나타난다.
+  #
+  # ① 26379(Sentinel) 는 **사라진다.** ElastiCache 는 Sentinel 이 없다(엔드포인트 DNS 가
+  #    페일오버를 흡수한다). 남겨두면 죽은 규칙이고, 클라이언트 쪽 Sentinel-aware 설정도
+  #    같이 걷혀야 한다(그건 앱 설정 = 별건, 산출 §결정필요).
+  # ② 목적지를 `ipBlock: 10.10.0.0/16` + **포트 6379 한 개**로 쓴다.
+  #    🔴 이건 0-18 이 금지한 "VPC CIDR 기계적 치환"과 다르다. 금지 대상은 *포트 무제한으로
+  #       대역 전체를 신뢰하는* 규칙이고, 여기는 **관리형 서비스 한 포트**다. 그리고 이 자리는
+  #       CIDR 이 실제로 동작하는 몇 안 되는 자리이기도 하다 — ElastiCache ENI 는 클러스터
+  #       엔드포인트가 아니라 Cilium 신원이 `world` 이고, 그때는 CIDR 셀렉터가 정상 매칭된다
+  #       (노드 신원에 CIDR 이 안 걸리는 것과 정반대 — netpol-node-probe.yaml 머리말 대조).
+  #    ⚠️ 더 좁힐 여지 = ElastiCache 전용 서브넷 CIDR. 서브넷 배치가 확정되면 그걸로 교체할 것.
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: mp-backend
+    patch: |-
+      - op: replace
+        path: /spec/egress/2/ports
+        value:
+          - { protocol: TCP, port: 5432 }
+          - { protocol: TCP, port: 9200 }
+          - { protocol: TCP, port: 9092 }
+      - op: add
+        path: /spec/egress/-
+        value:
+          to:
+            - ipBlock:
+                cidr: 10.10.0.0/16
+          ports:
+            - { protocol: TCP, port: 6379 }

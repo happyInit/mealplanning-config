@@ -1,0 +1,23 @@
+# 0-17 — **IMDS 차단** (data ns). 근거·함정은 `platform/policies/overlays/eks/netpol-deny-imds.yaml` 머리말.
+#
+# 🔴 **data ns 가 이 규칙이 가장 급한 곳이다.** 0-17 이 세는 "egress 무제한 11 워크로드" 중
+#    3개가 여기 산다 — Kafka 브로커 3 파드·entity-operator·kafka-exporter 는 지금 egress 정책이
+#    **하나도 없다**(base/kustomization.yaml: "Kafka 는 Strimzi 소유라 제외"). 즉 그 파드 중
+#    하나만 털려도 노드 IAM 롤을 그대로 가져간다.
+#    같은 파일 묶음의 `netpol-kafka-egress.yaml` 이 화이트리스트를 씌우고, 이 파일은
+#    **그 화이트리스트가 틀리거나 나중에 넓어져도 IMDS 만은 안 열리게** 하는 하한선이다
+#    (Cilium 의 deny 는 allow 보다 항상 우선).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-deny-imds
+  namespace: data
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    egress: false # 🔴 빼면 data ns 전체 egress 가 잠긴다(PG 복제·ES transport 포함)
+    ingress: false
+  egressDeny:
+    - toCIDR:
+        - 169.254.169.254/32
+        - 169.254.170.2/32

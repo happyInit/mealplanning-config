@@ -70,9 +70,8 @@ spec:
           podSelector: { matchLabels: { app.kubernetes.io/name: prometheus } }
       ports:
         - { protocol: TCP, port: 9187 }
-    # 8) kubelet probe — data ns=메시 밖, 파드 포트로 직접. 🔴 노드 서브넷 변경 시 갱신(현재 192.168.0.x).
-    - from:
-        - ipBlock: { cidr: 192.168.0.0/24 }
+    # 8) ── 🔴 `ipBlock: 192.168.0.0/24` 를 base 에서 내렸다 (0-18). onprem 오버레이가 ingress[7] 로 복원,
+    #    eks 오버레이는 `netpol-node-probe.yaml`(fromEntities: host)로 대체.
     # 9) 온사이트 백업 CronJob(mp-pg-onsite-dump) → pg-rw :5432 로 pg_dump. (2026-08-03 추가)
     #    🔴 이 규칙이 없으면 CronJob 이 **조용히 타임아웃**한다. 위 1)~8) 중 어디에도 안 걸리기 때문이다
     #       (data ns 파드지만 pooler·instance·pgsync 라벨이 아니고, app/pipeline ns 도 아니다).
@@ -117,9 +116,8 @@ spec:
           podSelector: { matchLabels: { tier: backend } }
       ports:
         - { protocol: TCP, port: 5432 }
-    # 2) kubelet probe (노드 IP 직접, 메시 밖)
-    - from:
-        - ipBlock: { cidr: 192.168.0.0/24 }
+    # 2) ── 🔴 kubelet probe 용 `ipBlock: 192.168.0.0/24` 를 base 에서 내렸다 (0-18).
+    #    onprem 오버레이가 ingress[1] 로 복원, eks 는 `netpol-node-probe.yaml` 이 대체.
   egress:
     # 1) DNS
     - to:

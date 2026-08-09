@@ -1,0 +1,47 @@
+# 0-18 — LAN ipBlock 을 대체하는 **노드 신원** 기반 probe 허용. (EKS 전용, 2026-08-10 신설)
+#
+# ── 이 파일이 대체하는 것 ────────────────────────────────────────────────────
+# base 의 `netpol-frontend.yaml` ingress[1] · `netpol-backend.yaml` ingress[2] 에 있던
+#   `- from: [ipBlock: {cidr: 192.168.0.0/24}]`   (포트 무제한)
+# 두 규칙. 온프렘 오버레이는 그대로 복원하고, EKS 는 이 파일로 간다.
+#
+# ── 🔴 왜 VPC CIDR(10.10.0.0/16)로 바꿔 쓰면 안 되나 ─────────────────────────
+# ① **그 CIDR 규칙은 지금도 probe 를 통과시키고 있지 않다.** 실측:
+#      kube-system/cilium-config → `policy-cidr-match-mode = ` (빈 값)
+#    Cilium 은 패킷을 IP 가 아니라 신원(identity)으로 판정하고, CIDR 셀렉터는
+#    `policy-cidr-match-mode: nodes` 를 켜야만 노드 신원(`host`/`remote-node`)에 매칭된다.
+#    지금은 꺼져 있으므로 `ipBlock: 192.168.0.0/24` 는 **`world` 신원 중 그 대역** 에만 걸린다.
+#    (같은 사실을 팀이 이미 `netpol-observability-entities.yaml` 머리말에 적어 뒀다 —
+#     2026-08-03 사고의 원인이 정확히 이것이었다.)
+#    → 즉 그 규칙의 실효는 "kubelet 통과"가 아니라 **"LAN 의 임의 장비 → 이 파드, 포트 무제한"** 이다.
+#      probe 가 실제로 통과하는 이유는 Cilium 의 `allow-localhost: auto`(기본값) 다.
+# ② 그래서 VPC CIDR 로 치환하면 **얻는 것 0, 잃는 것은 VPC 안 임의 리소스에게 전 포트 개방**이다.
+#    VPC 에는 우리 노드 말고도 NLB ENI·NAT·(향후) EC2 가 산다 — "같은 랜이면 신뢰"의 전제가 없다.
+#
+# ── 그래서 무엇으로 쓰나: 신원으로 쓴다 ─────────────────────────────────────
+# `fromEntities: [host]` = **파드가 떠 있는 그 노드**. kubelet 은 자기 노드 파드만 찌르므로
+# `remote-node` 는 필요 없다(공개 GW 정책이 같은 근거로 host 만 쓰고 실측까지 끝냈다 —
+#  policies-ingress/base/netpol-gateway-ingress.yaml 규칙 3).
+#
+# 포트도 좁힌다. app ns 는 **메시 안**이고 PeerAuthentication STRICT 라 probe 가
+# istio-proxy 의 status-port `:15021` 로 rewrite 된다 — 원래 포트로는 오지 않는다.
+# (data ns 는 메시 밖이라 사정이 다르다 → policies-data 쪽 같은 이름의 파일은 포트를 안 좁힌다.)
+#
+# ⚠️ 컷오버 전 확인 = 이 파드들이 EKS 에서도 15021 로만 probe 받는지. 사이드카 주입이 빠진
+#    워크로드가 하나라도 있으면 그 파드는 원래 포트로 probe 를 받고 여기서 막힌다
+#    (증상 = NotReady → 엔드포인트 이탈). 확인 절차는 `docs/netpol-eks-cutover.md` §3.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-app-node-probe
+  namespace: app
+spec:
+  endpointSelector:
+    matchExpressions:
+      - { key: tier, operator: In, values: [frontend, backend] }
+  ingress:
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - { port: "15021", protocol: TCP }

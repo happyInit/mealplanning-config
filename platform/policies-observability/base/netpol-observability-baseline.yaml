@@ -43,11 +43,10 @@ spec:
     #       다른 ns 는 이 규칙으로 못 들어온다.
     - from:
         - podSelector: {}
-    # 2) 노드 서브넷 — 소스 IP 가 **보존되는** 경로용(LAN 클라이언트 직결 등).
-    #    🔴 이것만으로는 부족하다는 걸 2026-08-03 장애로 배웠다 — 아래 주석 참조.
-    #       인프라 계열 유입(kubelet probe · apiserver webhook · LB 경유 외부 유입)은
-    #       `netpol-observability-entities.yaml`(CiliumNetworkPolicy)이 담당한다.
-    #    🔴 노드 서브넷이 바뀌면 여기와 netpol-backend.yaml 을 같이 고쳐야 한다.
-    - from:
-        - ipBlock:
-            cidr: 192.168.0.0/24
+    # 2) ── 🔴 **여기 있던 `ipBlock: 192.168.0.0/24` 는 사이트 결합 값이라 base 에서 내렸다** (0-18).
+    #    이 규칙은 다른 6건과 성격이 다르다 — kubelet probe 가 아니라 **"LAN 이면 신뢰"** 그 자체다.
+    #    실효는 "우리 LAN 의 임의 장비(=Cilium 신원 `world`) → observability ns 전 파드, 포트 무제한".
+    #    인프라 계열 유입(probe·apiserver webhook)은 `netpol-observability-entities.yaml` 이 이미 담당한다.
+    #    · 온프렘 = `overlays/onprem` 이 ingress[1] 로 그대로 복원한다(내부 도구 LAN 직결이 살아 있으므로).
+    #    · EKS   = **복원하지 않는다.** C-9 로 내부 도구는 공개 진입점이 없고 Tailscale 로만 닿는다 —
+    #             "같은 랜이면 신뢰" 라는 전제 자체가 VPC 에서 성립하지 않는다(0-18 의 금지 조항).

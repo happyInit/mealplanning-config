@@ -1,0 +1,210 @@
+# 0-17 — observability ns egress 잠금. **"무제한 11" 중 8개가 여기다.** (EKS 전용, 2026-08-10 신설)
+#
+# ── 무엇이 열려 있었나 ──────────────────────────────────────────────────────
+# `base/netpol-observability-baseline.yaml` 은 policyTypes 에 **Ingress 만** 넣었고, 그 이유를
+# 이렇게 적어 뒀다: *"Prometheus 는 전 ns·전 노드를 스크레이프하고 Alertmanager 는 app ns 로
+# webhook 을 쏜다 — egress 잠금은 별건으로 간다."* 그래서 MinIO 하나를 빼면 이 ns 의
+# **8 워크로드가 egress 무제한**이다:
+#   prometheus · alertmanager · grafana · kube-state-metrics · prometheus-operator ·
+#   loki · tempo · mp-gw-internal-istio
+# 온프렘에선 "인터넷에 나갈 수 있다" 였는데, AWS 에선 **IMDS → 노드 IAM 롤**이 붙는다(0-17).
+#
+# ── 🔴 설계: 목적지를 나열하지 않고 **`world` 를 뺀다** ──────────────────────
+# Prometheus 의 목적지를 화이트리스트로 세는 건 사실상 불가능하고(설계상 전부를 긁는다),
+# 억지로 세면 새 컴포넌트가 들어올 때마다 **스크레이프 타깃이 조용히 DOWN** 된다.
+# 그래서 축을 바꾼다 — "어디로 가는가" 대신 **"클러스터 밖으로 나갈 수 있는가"** 로 자른다.
+#
+#   toEntities: [cluster, kube-apiserver]   ← 클러스터 안 전부 + 컨트롤플레인. `world` 없음.
+#
+# 이것만으로 0-17 의 목표가 달성된다: IMDS(169.254.169.254)도, 임의 인터넷 유출도 `world` 라
+# 전부 막힌다. 반대로 스크레이프·질의는 하나도 안 깨진다.
+# ⚠️ "클러스터 안 아무 파드나" 는 여전히 넓다. 그런데 그 넓이는 **받는 쪽에서 이미 좁혀져 있다** —
+#    data ns 는 Prometheus 를 `:9187`·`:9121`·`:9114` 로만 받고, app ns 는 `:15020` 으로만 받는다.
+#    즉 실효 권한은 두 정책의 **교집합**이라 여기서 더 좁힐 실익이 작다.
+# 🔴 `kube-apiserver` 를 따로 적는 이유: EKS 는 컨트롤플레인이 **관리형**이라 클러스터 엔드포인트가
+#    아니다. `cluster` 에 안 들어간다. 빠뜨리면 kube-state-metrics·prometheus-operator 가 즉사한다.
+#
+# ── 🔴 toFQDNs 를 쓰는 3개는 이 규칙에서 **뺐다** (중요) ────────────────────
+# alertmanager(Slack)·loki(S3)·tempo(S3) 는 아래에서 따로 쓴다. 합쳐 쓰면 안 되는 이유:
+#   `toEntities: cluster` 는 **kube-dns:53 도 L7 없이** 허용한다. Cilium 의 규칙 병합에서
+#   "L7 없는 허용"과 "L7 있는 허용"이 같은 목적지에 겹치면 **느슨한 쪽이 이긴다** →
+#   DNS 프록시가 안 붙고, toFQDNs 가 IP 를 **영원히 학습하지 못한다.**
+#   증상 = 정책은 초록인데 S3 업로드·Slack 알림만 조용히 안 된다.
+#   ⚠️ 이 병합 동작은 문서 기반 판단이다. 컷오버 전 `docs/netpol-eks-cutover.md` §5 의
+#      DNS 프록시 확인(`cilium-dbg fqdn cache list`)으로 **반드시 실증할 것.**
+---
+# ── ① 넓은 그룹 A: prometheus · grafana · kube-state-metrics ────────────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-observability-egress-core
+  namespace: observability
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [prometheus, grafana, kube-state-metrics]
+  egress:
+    - toEntities:
+        - cluster
+        - kube-apiserver
+---
+# ── ② 넓은 그룹 B: prometheus-operator ──────────────────────────────────────
+# 라벨 규약이 달라 셀렉터를 따로 쓴다(`app: kube-prometheus-stack-operator`, 실측).
+# apiserver 가 특히 중요하다 — ServiceMonitor/PrometheusRule 을 watch 하고
+# admission webhook 인증서를 갱신한다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-observability-egress-operator
+  namespace: observability
+spec:
+  endpointSelector:
+    matchLabels:
+      app: kube-prometheus-stack-operator
+  egress:
+    - toEntities:
+        - cluster
+        - kube-apiserver
+---
+# ── ③ 내부 게이트웨이(mp-gw-internal) ───────────────────────────────────────
+# istiod(15012 · SDS 인증서 포함)와 백엔드 도구들이 전부 클러스터 안이므로 `cluster` 로 충분하다.
+# 🔴 **온프렘과 결정적으로 다른 점**: 온프렘에서 이 게이트웨이는 호스트 C(`192.168.0.10`)의
+#    Harbor·Jenkins·SonarQube 로도 프록시했다. AWS 에는 그 셋이 없다(C-2 로 CI 는 EC2 의 GitLab).
+#    만약 이 게이트웨이가 **EC2 로 프록시하게 되면**(GitLab · C-19 kubecost) 그건 VPC 안이지만
+#    클러스터 엔드포인트가 아니라 Cilium 신원이 `world` 다 — 여기서 막힌다.
+#    지금은 **일부러 안 연다**. 막혀도 죽는 것은 내부 도구 접근이지 프로덕션이 아니고,
+#    "무엇을 위해 여는가"가 정해지기 전에 VPC 를 여는 것이 0-18 이 금지한 바로 그 행동이다.
+#    → 미결(산출 §결정필요): 내부 도구를 GW 로 볼 것인가, Tailscale 로 직접 볼 것인가.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-observability-egress-gw-internal
+  namespace: observability
+spec:
+  endpointSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: mp-gw-internal
+  egress:
+    - toEntities:
+        - cluster
+---
+# ── ④ Alertmanager — 유일하게 **밖으로 먼저 거는** 관측 컴포넌트 ────────────
+# 🔴 알림 채널이 클러스터 밖이라 `world` 가 필요하다. 그래서 `toEntities: cluster` 대신
+#    "클러스터 안은 엔드포인트로 + 밖은 FQDN 으로" 를 쓴다(위 DNS L7 병합 함정 회피).
+# ⚠️ **수신자 목록의 정본이 이 레포에 없다.** kube-prometheus-stack 의 alertmanager 설정은
+#    Helm values(앱 레포 Ansible)가 만든 Secret 이고, AlertmanagerConfig CR 은 0개다(실측).
+#    지금 열어 둔 것은 Slack 하나 — 다른 채널(webhook·SMTP·SNS)이 설정돼 있으면 **여기서 막힌다.**
+#    컷오버 전 확인 절차 = `docs/netpol-eks-cutover.md` §6.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-observability-egress-alertmanager
+  namespace: observability
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  egress:
+    # DNS L7 — toFQDNs 학습 전제
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    # 클러스터 피어 gossip(:9094) — 지금 replicas=1 이라 안 쓰지만, HA 로 올리는 날
+    # 이게 없으면 **알림이 중복 발송**된다(피어끼리 dedup 을 못 해서). 미리 열어 둔다.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: alertmanager
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - { port: "9094", protocol: TCP }
+            - { port: "9094", protocol: UDP }
+    # Slack 웹훅
+    - toFQDNs:
+        - matchName: "hooks.slack.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+# ── ⑤ Loki — 청크 저장소가 MinIO → S3 (C-18) ────────────────────────────────
+# 🔴 netpol 만 고쳐서는 안 된다. `platform/argocd/loki.yaml` 의 인라인 valuesObject 에
+#    MinIO 엔드포인트가 박혀 있고 **그건 0-4 트랙(Helm Application 오버레이)의 일**이다.
+#    여기만 고치면 "정책은 S3 를 여는데 앱은 MinIO 로 간다" 가 된다 — 둘은 한 묶음으로 나가야 한다.
+# 🔴 STS 는 선택이 아니다 — C-30(IRSA)에서 자격증명 획득 자체가 STS 왕복이다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-observability-egress-loki
+  namespace: observability
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    # memberlist(:7946) — single-binary 라도 링 상태를 자기 자신과 주고받는다
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/part-of: memberlist
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - { port: "7946", protocol: TCP }
+    - toFQDNs:
+        - matchName: "s3.ap-northeast-2.amazonaws.com"
+        - matchName: "sts.ap-northeast-2.amazonaws.com"
+        - matchName: "sts.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+# ── ⑥ Tempo — 같은 이유로 S3 (C-18) ─────────────────────────────────────────
+# Tempo 는 받기만 하는 컴포넌트라 in-cluster egress 가 없다. DNS + S3/STS 가 전부다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-observability-egress-tempo
+  namespace: observability
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "s3.ap-northeast-2.amazonaws.com"
+        - matchName: "sts.ap-northeast-2.amazonaws.com"
+        - matchName: "sts.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

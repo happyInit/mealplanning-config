@@ -1,0 +1,21 @@
+# 0-17 — **IMDS 차단** (observability ns). 근거·함정은
+# `platform/policies/overlays/eks/netpol-deny-imds.yaml` 머리말.
+#
+# 🔴 여기서는 `netpol-observability-egress.yaml` 이 이미 `world` 를 안 열어 IMDS 가 닿지 않는다.
+#    그런데도 명시 deny 를 두는 이유는 **이 ns 가 앞으로 `world` 를 다시 열 가능성이 가장 높은 곳**이라서다 —
+#    Slack·S3 처럼 밖으로 나가는 목적지가 계속 추가되고, 그때 누군가 toFQDNs 대신
+#    `toEntities: world` 로 질러 버리면 IMDS 가 같이 열린다. deny 는 allow 를 항상 이긴다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-deny-imds
+  namespace: observability
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    egress: false # 🔴 빼면 observability ns 전체 egress 가 잠긴다(= 스크레이프 전멸)
+    ingress: false
+  egressDeny:
+    - toCIDR:
+        - 169.254.169.254/32
+        - 169.254.170.2/32

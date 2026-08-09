@@ -1,0 +1,20 @@
+# 0-17 — **IMDS 차단** (mp-ingress ns). 근거·함정은
+# `platform/policies/overlays/eks/netpol-deny-imds.yaml` 머리말.
+#
+# 🔴 이 ns 의 파드는 **인터넷에서 온 임의의 HTTP 를 직접 파싱하는 Envoy** 다.
+#    SSRF 계열 취약점의 1순위 표적이 IMDS 다(공개된 EC2 사고의 정석 경로). 이미
+#    `mp-default-deny-egress` + 화이트리스트라 닿지 않지만, 여기야말로 하한선이 필요한 자리다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-deny-imds
+  namespace: mp-ingress
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    egress: false # 🔴 빼면 게이트웨이 egress 가 전부 잠겨 사이트가 죽는다
+    ingress: false
+  egressDeny:
+    - toCIDR:
+        - 169.254.169.254/32
+        - 169.254.170.2/32

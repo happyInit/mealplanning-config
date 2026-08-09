@@ -1,0 +1,122 @@
+# 0-17 — Kafka(Strimzi) egress 잠금. **data ns 의 "무제한 3"**. (EKS 전용, 2026-08-10 신설)
+#
+# ── 왜 지금까지 비어 있었나 ─────────────────────────────────────────────────
+# `base/kustomization.yaml` 은 *"Kafka 는 Strimzi 소유라 제외"* 라고 적고 스토어별 잠금에서 뺐다.
+# 소유가 오퍼레이터라는 건 **파드 스펙**의 얘기지 **정책**의 얘기가 아니다 — netpol 은 라벨로 걸리고
+# 그 라벨(`strimzi.io/*`)은 안정적이다. 온프렘에선 방치의 대가가 "LAN 안" 이었지만,
+# AWS 에선 **IMDS → 노드 IAM 롤**이라 성격이 다르다(0-17).
+#
+# ── 🔴 이 파일은 default-deny 를 켠다 ────────────────────────────────────────
+# 아래 세 정책은 각각 egress 규칙을 갖고 있으므로, 선택된 파드의 **egress 가 화이트리스트로 전환**된다.
+# 목록이 하나라도 빠지면 그 경로는 **조용히 드롭**된다(RST 아님 → 로그도 안 남는다).
+# 컷오버 전에 `docs/netpol-eks-cutover.md` §4 의 실측 게이트를 반드시 통과시킬 것.
+#
+# ── 포트 근거 (Strimzi 리스너 규약) ─────────────────────────────────────────
+#   9090 controller (KRaft 정족수 — 우리는 combined 노드풀)
+#   9091 replication (브로커 간 복제 · entity-operator 의 내부 리스너)
+#   9092 clients PLAINTEXT (앱·파이프라인·exporter)
+#   9093 clients TLS (현재 미사용이나 Strimzi 가 켜면 여기로 온다)
+#   9404 metrics (Prometheus 가 **들어오는** 쪽이라 egress 아님 — 여기 없다)
+# ⚠️ 브로커 간 트래픽 목적지를 `strimzi.io/cluster: kafka` 로 잡는다. Cilium 라벨 셀렉터이므로
+#    파드 이름·ordinal 에 의존하지 않는다(스케일아웃해도 안 깨진다).
+---
+# ── ① 브로커 (kafka-combined-0..2) ───────────────────────────────────────────
+# 나가는 곳 = DNS + 다른 브로커. 그게 전부다. 외부·apiserver 어디에도 안 건다.
+# 🔴 combined 노드(브로커+컨트롤러)라 9090 이 필수다. 빠지면 KRaft 정족수가 깨져
+#    클러스터가 통째로 unavailable 이 된다 — 가장 비싼 누락이다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-kafka-broker-egress
+  namespace: data
+spec:
+  endpointSelector:
+    matchLabels:
+      strimzi.io/cluster: kafka
+      strimzi.io/component-type: kafka
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    - toEndpoints:
+        - matchLabels:
+            strimzi.io/cluster: kafka
+      toPorts:
+        - ports:
+            - { port: "9090", protocol: TCP }
+            - { port: "9091", protocol: TCP }
+            - { port: "9092", protocol: TCP }
+            - { port: "9093", protocol: TCP }
+---
+# ── ② entity-operator (topic-operator + user-operator) ──────────────────────
+# 🔴 여기만 **kube-apiserver 가 필요하다** — KafkaTopic·KafkaUser CR 을 watch/patch 한다.
+#    막히면 토픽·유저 선언이 클러스터에 반영되지 않는데, 증상이 "아무 일도 안 일어남" 이라
+#    한참 뒤에 발견된다. apiserver 는 Cilium 예약 엔티티로 연다(EKS 에선 관리형 컨트롤플레인이라
+#    ENI IP 가 VPC 안이지만 클러스터 엔드포인트는 아니다 — `toEntities: kube-apiserver` 가 정답).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-kafka-entity-operator-egress
+  namespace: data
+spec:
+  endpointSelector:
+    matchLabels:
+      strimzi.io/cluster: kafka
+      strimzi.io/component-type: entity-operator
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    - toEndpoints:
+        - matchLabels:
+            strimzi.io/cluster: kafka
+      toPorts:
+        - ports:
+            - { port: "9091", protocol: TCP }
+            - { port: "9092", protocol: TCP }
+            - { port: "9093", protocol: TCP }
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+            - { port: "6443", protocol: TCP }
+---
+# ── ③ kafka-exporter ────────────────────────────────────────────────────────
+# Admin API 로 컨슈머 랙을 읽는다. DNS + 브로커 클라이언트 리스너가 전부.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-kafka-exporter-egress
+  namespace: data
+spec:
+  endpointSelector:
+    matchLabels:
+      strimzi.io/cluster: kafka
+      strimzi.io/component-type: kafka-exporter
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    - toEndpoints:
+        - matchLabels:
+            strimzi.io/cluster: kafka
+      toPorts:
+        - ports:
+            - { port: "9092", protocol: TCP }
+            - { port: "9093", protocol: TCP }
