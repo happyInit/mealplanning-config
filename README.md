@@ -15,9 +15,11 @@ ArgoCD가 그 경로를 watch해서 클러스터를 여기 맞춘다. **앱 소�
 자세한 규칙·경계는 **[`SITES.md`](SITES.md)**.
 
 ```
-argocd/applications/     # 서비스별 child Application (app-of-apps). 서비스 추가 = 파일 하나 추가
-                         # 🔴 여기와 platform/argocd/ 만 base/overlays 가 없다 — ArgoCD "뿌리"라
-                         #    뿌리 Application 2개가 IaC 밖이다(체크리스트 0-4). 사이트 분기는 그 항목 소관.
+argocd/                  # 앱 child Application (app-of-apps 뿌리). 서비스 추가 = base 에 파일 + resources 등록
+platform/argocd/         # 플랫폼 child Application
+                         # 🔴 이 둘도 2026-08-10(0-4 컷오버)부터 base/overlays 다 — 예외 없다.
+                         #    뿌리 Application 2개가 IaC 밖이던 것이 원인이었는데, 앱 레포 Ansible 이
+                         #    관리하게 되면서(0-4 2단계) 해소됐다.
 <트랙>/
   base/                  # 매니페스트 본문 (사이트 공통)
   overlays/
@@ -39,8 +41,8 @@ platform/                # 🔵 인프라 담당 소관 — 앱 트랙과 뿌리
 ops/                     # 🔴 Argo 비대상 수동 migration/runbook — suspended template + gated runner
 ```
 
-- **뿌리가 둘이다** — `mealplanning-root`(앱, `argocd/applications/`) · `platform-root`(플랫폼,
-  `platform/argocd/`). 서로 남의 디렉토리를 보지 않으므로 한쪽 실수가 다른 트랙으로 안 번진다.
+- **뿌리가 둘이다** — `mealplanning-root`(앱, `argocd/overlays/<site>`) · `platform-root`(플랫폼,
+  `platform/argocd/overlays/<site>`). 서로 남의 디렉토리를 보지 않으므로 한쪽 실수가 다른 트랙으로 안 번진다.
   프로젝트도 분리(`mealplanning` / `platform`)라 배포 가능한 ns 도 다르다.
 - **AppProject·root Application·repo 자격증명은 여기 없다** — `food-budget-app`의 `k8s_argocd`
   Ansible 롤이 부트스트랩한다(master 전용). 여기는 root가 읽는 child app + 매니페스트만.

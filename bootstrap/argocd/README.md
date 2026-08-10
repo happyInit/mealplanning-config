@@ -5,7 +5,7 @@
 
 ## 🔴 이 디렉터리는 ArgoCD 가 읽지 않는다
 
-두 뿌리(`mealplanning-root` = `argocd/applications` · `platform-root` = `platform/argocd`)의
+두 뿌리(`mealplanning-root` = `argocd/overlays/<site>` · `platform-root` = `platform/argocd/overlays/<site>`)의
 감시 범위 **밖**이다. 일부러 그렇게 뒀다 — 여기 있는 것은 **뿌리 자신**이라, 뿌리가 읽으면
 자기를 자기가 관리하는 순환이 된다(그 선택지의 위험은 `SITES.md §0-4` C안).
 

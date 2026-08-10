@@ -1,11 +1,12 @@
 # root Application 2종 (app-of-apps 뿌리).
 #
-# 🔴 라이브 실측(2026-08-09)의 정확한 재현이다. `path` 만 site 오버레이가 갈아끼운다.
+# 🔴 라이브 실측(2026-08-10, 0-4 컷오버 2단계 적용 후)의 정확한 재현이다.
+#    `path` 만 site 오버레이가 갈아끼운다.
 #
-# 🔴 **`mealplanning-root` Application 은 지금 어떤 IaC 에도 없다** — 손으로 apply 된 뒤
-#    손으로 patch 까지 됐다(실측: last-applied 의 `project: mealplanning` vs 라이브
-#    `project: mealplanning-root`). 이 파일이 그 유일한 기록이다.
-#    `platform-root` Application 은 반대로 Ansible `k8s_argocd` 가 이미 만들고 있다.
+# ✅ **두 뿌리 모두 이제 Ansible `k8s_argocd` 가 만든다**(2026-08-10, 앱 레포 #581).
+#    그전까지 `mealplanning-root` 는 어떤 IaC 에도 없었다 — 손으로 apply 된 뒤 손으로 patch 까지
+#    돼 있었다(실측: last-applied 의 `project: mealplanning` vs 라이브 `project: mealplanning-root`).
+#    이 파일은 이제 **기록**이고 정본은 Ansible 템플릿이다. 둘이 갈리지 않게 하는 것이 관건이다.
 #
 # 알려진 불일치 (실측 — 고치는 것은 사람 결정, ⑤):
 #   · **finalizer 비대칭** — `platform-root` 에만 `resources-finalizer` 가 있고
@@ -14,8 +15,10 @@
 #     여기서는 **라이브 그대로**(없음) 둔다 — 붙이는 것은 삭제 의미론을 바꾸는 별건이다.
 #   · **prune 비대칭** — 앱 뿌리 `prune: true` / 플랫폼 뿌리 `prune: false`.
 #     플랫폼 쪽은 의도된 것이다(child 가 PG·ES·Kafka CR 이라 git 실수 하나가 데이터 삭제로 번진다).
-#     앱 뿌리의 `prune: true` 는 **0-4 컷오버에서 가장 위험한 값**이다 — 감시 디렉터리가
-#     비면 child 23개가 통째로 프룬된다. 컷오버 절차(SITES.md §0-4)를 반드시 따를 것.
+#     앱 뿌리의 `prune: true` 는 **0-4 컷오버에서 가장 위험한 값**이었다 — 감시 디렉터리가
+#     비면 child 23개가 통째로 프룬된다. 컷오버는 3단계 절차로 완료됐고(SITES.md §0-4),
+#     🔴 이 값 자체는 그대로다. 앞으로도 `path` 를 바꿀 때는 **새 경로가 main 에 실재하는지**
+#     먼저 확인할 것.
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -28,9 +31,12 @@ spec:
   source:
     repoURL: git@github.com:happyInit/mealplanning-config.git
     targetRevision: main
-    path: argocd/applications
-    directory:
-      recurse: true
+    path: argocd/overlays/onprem
+    # 🔴 `directory:` 를 다시 넣지 말 것 (0-4 컷오버 2단계, 2026-08-10 제거).
+    #    ArgoCD 는 `spec.source.directory` 가 있으면 그것만으로 Directory 모드를 확정하고
+    #    kustomize 자동판별을 하지 않는다(라이브 46개 전수 실측). 지금 path 는 kustomize
+    #    오버레이라, 남겨 두면 뿌리가 `kustomization.yaml` 을 매니페스트로 읽어 유효 리소스가
+    #    0 이 된다 — 그런데 이 뿌리는 `prune: true` 다.
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
@@ -54,11 +60,11 @@ spec:
   source:
     repoURL: git@github.com:happyInit/mealplanning-config.git
     targetRevision: main
-    path: platform/argocd
-    directory:
-      # child 는 이 디렉터리 바로 아래 평면으로 둔다. recurse=true 로 하면
-      # `platform/pg/` 같은 본문 디렉터리까지 빨아들여 렌더가 깨진다.
-      include: "*.yaml"
+    path: platform/argocd/overlays/onprem
+    # 🔴 `directory:` 제거 — 위와 같은 이유(0-4 컷오버 2단계).
+    #    구 주석의 취지("child 는 평면으로 — recurse 면 `platform/pg/` 같은 본문까지 빨아들인다")는
+    #    `base/kustomization.yaml` 의 `resources` 목록이 승계한다. 이제 무엇이 child 인지는
+    #    탐색 규칙이 아니라 **명시 목록**이 정한다.
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

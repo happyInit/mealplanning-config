@@ -47,14 +47,20 @@ MinIO 엔드포인트 · 물리계층 알림)은 **지우면 안 되고 `overlay
 > ArgoCD 자신을 세우는 부트스트랩이고, 두 뿌리의 감시 범위 밖이다(§0-4).
 > 다만 kustomize 디렉터리이긴 해서 `validate.py` 집계에는 잡힌다(32 → 33).
 
-## 🔴 경계 — 여기 없는 것 둘
+## 경계 — 여기 없던 것 둘 (✅ 둘 다 해소, 2026-08-10)
 
-### ① ArgoCD 뿌리 2개 (`argocd/applications/` · `platform/argocd/`)
+### ① ArgoCD 뿌리 2개 — ✅ **해소됨**
 
-**의도적으로 재구성하지 않았다.** 이 두 디렉터리를 보는 root Application
-(`mealplanning-root` · `platform-root`)이 **git 밖**에 있기 때문이다(체크리스트 **0-4**).
+> **지금 모양** = `argocd/{base,overlays/{onprem,eks}}` · `platform/argocd/{base,overlays/{onprem,eks}}`.
+> 두 뿌리가 `…/overlays/{{ argocd_site }}` 를 본다. **전 트랙이 예외 없이 같은 모양이 됐다.**
+> 아래는 왜 한동안 예외였는지의 기록이다.
+
+0-1 시점에는 **의도적으로 재구성하지 않았다.** 이 두 디렉터리를 보는 root Application
+(`mealplanning-root` · `platform-root`)이 **git 밖**에 있었기 때문이다(체크리스트 **0-4**).
 경로를 바꿔도 config 레포 커밋으로 root 의 `source.path` 를 따라 바꿀 수단이 없어,
-머지하는 순간 두 뿌리가 빈 디렉터리를 보게 된다.
+머지하는 순간 두 뿌리가 빈 디렉터리를 보게 됐다.
+→ 0-4 가 3단계 컷오버로 풀었다(아래 §0-4 "컷오버 절차"). 앱 레포 Ansible 이 두 뿌리를
+관리하게 되면서 `path` 가 변수 하나로 표현된다.
 
 → **사이트 분기는 0-4 와 함께** 한다. 설계 후보 둘:
 
@@ -243,16 +249,16 @@ diff -r before after
         ┌────────────────────────┼─────────────────────────┐
         ▼                        ▼                         ▼
   AppProject 4종           repo 자격증명            root Application 2
-  mealplanning ⚠drift      fb-secrets Secret        platform-root      ✅IaC
-  mealplanning-root        └ESO→ argocd ns          mealplanning-root  ❌IaC 밖
-  platform                                             (손 apply + 손 patch)
+  mealplanning ✅IaC       fb-secrets Secret        platform-root      ✅IaC
+  mealplanning-root        └ESO→ argocd ns          mealplanning-root  ✅IaC(#581)
+  platform                                             (✅ 2026-08-10 IaC 편입 · 앱 #581)
   platform-root
                                  │
      ┌───────────────────────────┴────────────────────────────┐
      ▼                                                        ▼
  mealplanning-root                                       platform-root
- path: argocd/applications                               path: platform/argocd
- directory.recurse=true                                  directory.include=*.yaml
+ path: argocd/overlays/onprem                            path: platform/argocd/overlays/onprem
+ directory 없음(=Kustomize 모드)                          directory 없음(=Kustomize 모드)
  automated{prune:TRUE, selfHeal}                         automated{prune:false, selfHeal}
  finalizer 없음                                           finalizer 있음
      │                                                        │
@@ -381,15 +387,32 @@ base 로 **실제 이동**이 필요하다. 그런데 이동하는 순간 라이
    kubectl -n argocd get applications -o custom-columns=NAME:.metadata.name,PATH:.spec.source.path,SYNC:.status.sync.status
    ```
    **child 44개가 그대로 있고 전부 Synced** 여야 한다. 하나라도 사라지면 즉시 되돌린다.
-3. **(config PR) 옛 경로 삭제** — 2 가 안정된 것을 확인한 뒤에만.
+3. **(config PR) 옛 경로 삭제** — ✅ **실행 완료 2026-08-10** (`feat/argocd-roots-cutover-3`).
+   `argocd/applications/*.yaml`(23) · `platform/argocd/*.yaml`(21) 삭제.
+   **삭제 전후 렌더 차이 0**(뿌리가 보는 경로에서 각각 Application 23 · 21 그대로).
+   같이 정합시킨 것 = `validate.py` 의 `DIRECTORY_APPS` 에서 두 뿌리 제거(이제 kustomize 트랙이다)
+   · `bootstrap/argocd/base/roots.yaml` 을 라이브 실물로 갱신 · README·AGENTS 의 구조 서술.
 
-🔴 1↔3 사이에 **정본이 두 곳**이다. 그 창에서 child 를 수정하면 **양쪽 다** 고쳐야 한다.
-창을 짧게 가져가는 것이 이 절차의 유일한 비용이다.
+✅ **1↔3 사이의 "정본이 두 곳" 창은 닫혔다**(2026-08-10 같은 날). 그 창에서 child 를 수정하면
+양쪽 다 고쳐야 했는데, 이제 정본은 `argocd/base` · `platform/argocd/base` 하나씩이다.
 
-🔴 **`kustomization.yaml` 을 지금 감시 중인 디렉터리(`argocd/applications/`·`platform/argocd/`)에
-넣지 말 것.** ArgoCD 가 directory 모드를 유지하면 그 파일을 매니페스트로 취급해 sync 가 깨지고,
-kustomize 모드로 전환되면 `resources` 에 없는 child 가 프룬된다. **어느 쪽인지 확인하지 않았고,
-위 절차는 그 질문 자체를 회피한다** — 새 디렉터리에만 kustomization 을 둔다.
+### 🔴 실측된 답 — `directory` 가 있으면 kustomize 자동판별이 없다
+
+2단계 직전에 라이브 Application **46개를 전수 조회**해 확정했다(2026-08-10):
+
+| 조건 | `status.sourceType` | 예외 |
+|---|---|---:|
+| `spec.source.directory` **있음** | `Directory` | 0 |
+| `directory` 없음 + `kustomization.yaml` 있음 | `Kustomize` | 0 |
+| `directory` 없음 + kustomization 없음 | `Directory`(자동판별) | 0 |
+
+→ **2단계는 `path` 만 바꿔선 안 되고 `directory:` 블록을 같이 걷어내야 한다.** 남겨 두면 뿌리가
+`kustomization.yaml` 을 매니페스트로 읽어 유효 리소스가 0 이 되고, 앱 뿌리는 `prune: true` 다.
+앱 레포 #582 가 그 처리를 포함했고, 적용 후 두 뿌리의 `sourceType` 이 **`Kustomize`** 로 전환된 것을
+확인했다(child 44개 생존 · 전부 Synced).
+
+⚠️ 그래도 **감시 중인 디렉터리 최상단에 `kustomization.yaml` 을 두지 않는다**는 원칙은 유효하다 —
+지금은 뿌리가 `overlays/onprem` 을 보고 그 아래에만 kustomization 이 있다.
 
 ## 이 구조가 열어주는 것 (Wave B)
 

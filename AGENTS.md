@@ -23,8 +23,8 @@ ArgoCD 가 여기를 watch 해서 클러스터를 이 내용에 맞춘다 — �
 <트랙>/overlays/eks/       EKS 골격 — 🔴 Wave B 에서 채운다. 렌더 검사 대상에서 제외
 ```
 ```
-argocd/applications/   앱 child Application (mealplanning-root 가 집는다) — 🔴 뿌리라 base/overlays 없음
-platform/argocd/       플랫폼 child Application (platform-root)      — 🔴 같은 이유로 없음
+argocd/                앱 child Application (mealplanning-root 가 집는다) — base/overlays 있음
+platform/argocd/       플랫폼 child Application (platform-root)      — 같은 모양
 services/<svc>/        앱 서비스 13 + cloudflared. overlays/onprem 의 images.newTag = Jenkins 자리
 platform/              인프라 소관 — pg pooler es kafka redis pgsync rollouts policies*
 pipelines/             컨슈머 + CronJob.  🔴 pipelines/jobs/ 는 트랙 밖(1회성 kubectl)
@@ -40,8 +40,8 @@ tests/                 validate.py 의 단위 테스트
 `platform/{es,kafka,pg,pgsync,pooler,redis,rollouts}` 는 2026-08-09 전까지 "디렉터리형"이라
 파일만 두면 배포됐다. 이제는 아니다 — **등록 안 하면 조용히 배포되지 않는다.**
 
-**뿌리가 둘이다** — `mealplanning-root`(앱, `argocd/applications/`) · `platform-root`(플랫폼,
-`platform/argocd/`). 서로 남의 디렉터리를 보지 않는다. 새 매니페스트를 추가하면 **해당 뿌리 밑
+**뿌리가 둘이다** — `mealplanning-root`(앱, `argocd/overlays/<site>`) · `platform-root`(플랫폼,
+`platform/argocd/overlays/<site>`). 서로 남의 디렉터리를 보지 않는다. 새 매니페스트를 추가하면 **해당 뿌리 밑
 child Application 에 배선돼 있는지** 확인할 것. 파일만 만들면 ArgoCD 는 그것을 모른다.
 
 ## 🔴 절대 규칙
