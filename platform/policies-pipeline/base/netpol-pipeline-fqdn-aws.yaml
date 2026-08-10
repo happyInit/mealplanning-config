@@ -1,0 +1,88 @@
+# C-44 크롤 운반(S3·SQS) egress — netpol-pipeline-fqdn-crawlers.yaml 의 짝.
+#
+# 🔴 이게 없으면 업로드가 **조용히 막힌다.** pipeline ns 는 egress default-deny 이고
+#    외부 목적지는 toFQDNs 화이트리스트로만 열린다(netpol-pipeline-egress.yaml 헤더).
+#    현재 허용된 외부 이름은 bedrock-runtime · generativelanguage · kurly · oasis · 10000recipe
+#    **다섯뿐이고 S3·SQS 는 없다.** 그리고 Cilium 은 미허용 목적지에 RST 를 주지 않고 SYN 을
+#    드롭한다 — 빠른 에러가 아니라 무한 대기다(2026-08-03 컬리 97% 유실이 같은 양식이었다).
+#
+# 권한은 두 층으로 갈린다 — netpol(어디로 나갈 수 있나)과 IAM(무엇을 할 수 있나)이 별개다:
+#    업로더 6종  S3 만       (PutObject on incoming/*)
+#    리파이너 3종 S3 + SQS   (GetObject on incoming/* · PutObject on failed/* · 큐 소비)
+#    IAM 쪽 정본 = 앱 레포 infra/terraform/aws/iam.tf
+---
+# ── 크롤 업로더 (CronJob 6종) ────────────────────────────────────────────────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pipeline-fqdn-s3-upload
+  namespace: pipeline
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - poller-kurly
+          - poller-oasis-dawn
+          - poller-oasis-noon
+          - poller-deal-timesale
+          - poller-deal-closesale
+          - poller-recipe
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    # boto3 는 기본이 virtual-hosted 스타일이라 실제로 나가는 이름은
+    # `mp-crawl-ap2.s3.ap-northeast-2.amazonaws.com` 이다. 바깥 이름도 같이 연다(리전 리다이렉트 대비).
+    - toFQDNs:
+        - matchName: "s3.ap-northeast-2.amazonaws.com"
+        - matchPattern: "*.s3.ap-northeast-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+# ── 리파이너 (S3/SQS 컨슈머 3종) ─────────────────────────────────────────────────
+# ⚠️ 지금은 `-s3` 접미사 워크로드만 여기 걸린다. Kafka 컨슈머(retail-refiner 등)는 그대로 두어
+#    전환기에 둘이 나란히 돈다 — 되돌리기가 "Deployment 를 되돌린다" 한 단계로 끝난다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-pipeline-fqdn-aws-consume
+  namespace: pipeline
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - retail-refiner-s3
+          - deal-notifier-s3
+          - recipe-refiner-s3
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "s3.ap-northeast-2.amazonaws.com"
+        - matchPattern: "*.s3.ap-northeast-2.amazonaws.com"
+        - matchName: "sqs.ap-northeast-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

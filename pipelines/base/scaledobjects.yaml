@@ -42,6 +42,51 @@ spec:
         topic: retail.crawl.raw
         lagThreshold: "10"
 ---
+# ── C-44 카나리: SQS 스케일러 (retail) ─────────────────────────────────────────────
+# KEDA 2.20.1 은 aws-sqs-queue 스케일러를 지원한다(실측).
+#
+# 🔴 스케일 단위가 Kafka 와 다르다:
+#      Kafka  lagThreshold=10  "파티션당 10건 밀리면 1대"  · max 는 파티션 수(3)가 천장
+#      SQS    queueLength=1    "메시지(=크롤 1회분) 1건이면 1대" · 파티션 개념이 없다
+#    메시지 하나가 곧 객체 하나(레코드 수천 건)라 1건만 와도 파드가 떠야 한다.
+#
+# maxReplicaCount 3 의 근거 = **retail 스트림의 일일 객체 수**(kurly 03:30 · oasis-dawn 04:10 ·
+#   oasis-noon 13:10). 평시 동시성은 1이지만(시각이 흩어져 있다) 리파이너가 하루 멈춰 밀렸을 때
+#   그날치를 병렬로 빼낼 수 있는 상한이다. 적재가 전부 멱등이라 병렬이 안전하다.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: mp-crawl-aws
+spec:
+  secretTargetRef:
+    - parameter: awsAccessKeyID
+      name: mp-crawl-refiner
+      key: AWS_ACCESS_KEY_ID
+    - parameter: awsSecretAccessKey
+      name: mp-crawl-refiner
+      key: AWS_SECRET_ACCESS_KEY
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: mp-retail-refiner-s3
+spec:
+  scaleTargetRef:
+    name: mp-retail-refiner-s3
+  minReplicaCount: 0
+  maxReplicaCount: 3
+  pollingInterval: 30 # 큐 3개 × 30초 = 월 약 26만 요청 → SQS 무료한도(100만)의 26%
+  cooldownPeriod: 300
+  triggers:
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: mp-crawl-aws
+      metadata:
+        # 🔴 apply 후 `terraform output queue_urls` 값으로 채운다 (consumers.yaml 과 같은 자리)
+        queueURL: "https://sqs.ap-northeast-2.amazonaws.com/REPLACE_WITH_AWS_ACCOUNT_ID/mp-crawl-retail"
+        queueLength: "1"
+        awsRegion: "ap-northeast-2"
+---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:

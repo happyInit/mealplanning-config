@@ -32,3 +32,12 @@ data:
   REDIS_MASTER_GROUP: mymaster
   # 폴백 전용. Sentinel 모드가 켜지면 안 쓰인다
   REDIS_URL: redis://mp-redis-master.data.svc:6379/0
+  # ── C-44 크롤 운반(S3·SQS) ────────────────────────────────────────────────────
+  # 🔴 KAFKA_BOOTSTRAP 은 아직 지우지 않는다 — 전환기에는 두 경로가 나란히 돈다.
+  #    철거는 크롤 6종이 전부 S3 로 넘어가고 안정된 뒤(런북 5단계).
+  # 버킷·리전은 비밀이 아니다. **자격증명은 여기 없다** — 워크로드의 명시 env 로 들어간다
+  #    (mp-crawl-uploader / mp-crawl-refiner Secret · externalsecret.yaml).
+  MP_CRAWL_BUCKET: mp-crawl-ap2
+  # 이미 리뷰 AI CronJob 2종이 같은 값을 자기 env 로 박고 있다(pollers.yaml) — env 가
+  # envFrom 보다 우선하므로 그쪽 동작은 그대로고, 여기 값은 크롤러·리파이너에 닿는다.
+  AWS_REGION: ap-northeast-2

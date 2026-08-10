@@ -11,3 +11,4 @@ resources:
   - netpol-pipeline-egress.yaml          # egress default-deny + DNS·Kafka·PG·ES·Redis — 4-2
   - netpol-pipeline-fqdn-crawlers.yaml   # 외부 FQDN: kurly·oasis·10000recipe (CiliumNetworkPolicy) — 4-2
   - netpol-pipeline-fqdn-ai.yaml         # 외부 FQDN: bedrock·gemini (CiliumNetworkPolicy) — 4-2
+  - netpol-pipeline-fqdn-aws.yaml        # 외부 FQDN: S3(업로더 6)·SQS(리파이너 3) — C-44 크롤 운반
