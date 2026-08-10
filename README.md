@@ -11,23 +11,31 @@ ArgoCD가 그 경로를 watch해서 클러스터를 여기 맞춘다. **앱 소�
 
 ## 구조
 
+🔴 **2026-08-09(AWS 이관 0-1)부터 ArgoCD 대상 트랙은 전부 같은 모양이다** — `base/` + `overlays/{onprem,eks}`.
+자세한 규칙·경계는 **[`SITES.md`](SITES.md)**.
+
 ```
 argocd/applications/     # 서비스별 child Application (app-of-apps). 서비스 추가 = 파일 하나 추가
-services/<svc>/
-  base/                  # Deployment·Service·HTTPRoute·NetworkPolicy·ExternalSecret (환경 공통)
+                         # 🔴 여기와 platform/argocd/ 만 base/overlays 가 없다 — ArgoCD "뿌리"라
+                         #    뿌리 Application 2개가 IaC 밖이다(체크리스트 0-4). 사이트 분기는 그 항목 소관.
+<트랙>/
+  base/                  # 매니페스트 본문 (사이트 공통)
   overlays/
-    onprem/              # 온프렘 — 이미지 :sha 핀(Jenkins가 커밋), openebs-lvm SC
-    eks/                 # EKS 이식 오버레이 (플랜 §8) — ECR·gp3 등 다른 것만
+    onprem/              # 온프렘 — ArgoCD Application 의 source.path 가 가리키는 곳
+    eks/                 # EKS 골격 (🔴 Wave B 에서 채운다. 지금은 base 통과 = 온프렘 값 그대로)
 
-platform/                # 🔵 인프라 담당 소관 (2026-07-29 신설) — 앱 트랙과 뿌리가 다르다
-  argocd/                #    플랫폼 child Application. `platform-root` 가 이 디렉토리를 집는다
-                         #    오퍼레이터 5(automated) + 데이터 CR 5·pipelines(🔴 manual sync — 런북 Q8)
+services/<svc>/          # 앱 서비스 13 + cloudflared. overlays/onprem 의 images.newTag = Jenkins 가 커밋
+common/ gateway/         # 공용 ConfigMap · HTTPRoute
+gateway-internal/        # 내부 도구 6종 게이트웨이(.15) — 🔴 온프렘 색이 가장 짙은 트랙
+ingress/                 # 공개 진입점(mp-ingress ns · MetalLB .14)
+monitoring/              # PrometheusRule·ServiceMonitor·대시보드 (rules-physical = 온프렘 전용)
+pipelines/               # 🔵 인프라 소관 — 컨슈머 + CronJob.  jobs/ 는 트랙 밖(1회성 kubectl)
+platform/                # 🔵 인프라 담당 소관 — 앱 트랙과 뿌리가 다르다
+  argocd/                #    플랫폼 child Application. `platform-root` 가 이 디렉터리를 집는다
   pg/ pooler/ es/        #    데이터 CR 본문 (P2 — 정본 런북 = food-budget-app/docs/mp_k8s_p2_data_runbook.md)
-  kafka/ pgsync/
-  redis/                 #    🔴 의도적으로 비어 있음 — Q3 실물 검증 분기 대기 (README 참조)
-  policies/              #    🔴 NetworkPolicy 연기 메모 — default-deny 베이스라인과 함께 별건
-
-pipelines/               # 🔵 인프라 소관·project=mealplanning — 컨슈머 4 + CronJob 11 (dark-deploy)
+  kafka/ pgsync/ redis/
+  rollouts/              #    Argo Rollouts ns 의 Harbor pull secret
+  policies*/             #    NetworkPolicy (app · data · ingress · observability · pipeline)
 ops/                     # 🔴 Argo 비대상 수동 migration/runbook — suspended template + gated runner
 ```
 

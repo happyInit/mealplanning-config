@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── 온프렘 사이트: platform-root 의 감시 대상 ───────────────────────────────────
+# 🔴 지금은 **순수 통과(base 그대로)** 다. 컷오버 1단계(SITES.md §0-4)의 안전 기준이
+#    "옛 경로(platform/argocd/*.yaml)의 directory 렌더와 전 필드 동일" 이라, 여기에 아무것도 얹지 않았다.
+#    검증 = `kubectl kustomize platform/argocd/overlays/onprem` 을 (apiVersion,kind,namespace,name) 정렬 +
+#    키 정렬 JSON 으로 덤프해 옛 렌더와 비교 → 문서 21개·차이 0.
+#
+# 🔴 사이트 결합 값(nodeSelector·storageClass·Harbor IP 15건)은 **여기가 아니라 base 에 그대로 둔다.**
+#    온프렘이 현행 정본이고, 가르는 쪽은 eks 다 — 옮기면 라이브가 흔들린다.
+#    (트랙 오버레이의 관례 "온프렘 전용을 onprem 으로 내린다"와 반대인 이유 = 여기 base 는
+#     매니페스트가 아니라 **Application 정의**고, 그 정의의 현재 값이 곧 라이브다.)
+resources:
+  - ../../base

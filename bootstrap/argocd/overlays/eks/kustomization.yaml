@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# EKS 사이트의 뿌리. 🔴 지금은 **path 만** 갈아끼운다 —
+# 그 앞의 `argocd/**/overlays/eks` · `platform/argocd/**/overlays/eks` 디렉터리는
+# 아직 없다(0-4 컷오버 뒤에 생긴다). 그전에 이 오버레이를 적용하면 뿌리가 빈 곳을 본다.
+#
+# 남은 분기 대상(사이트가 실제로 갈릴 때 여기서):
+#   · repoURL — 같은 레포를 쓸지(C-23 = 양 사이트 자체 유지) 확인 필요
+#   · targetRevision — 사이트별 브랜치를 쓸지 여부. 지금은 둘 다 main 가정
+resources:
+  - ../../base
+patches:
+  - target: {group: argoproj.io, kind: Application, name: mealplanning-root}
+    patch: |
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: mealplanning-root}
+      spec:
+        source:
+          path: argocd/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: platform-root}
+    patch: |
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: platform-root}
+      spec:
+        source:
+          path: platform/argocd/overlays/eks

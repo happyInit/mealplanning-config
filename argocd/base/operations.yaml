@@ -1,0 +1,29 @@
+# child Application — root app-of-apps가 mp-operations를 배포한다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mp-operations
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: services/operations/overlays/onprem
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  # 🔴 이 블록이 **누락돼 있었다** (2026-07-31 규명). 형제 앱 10종은 전부 갖고 있는데
+  #    operations 만 없어서 auto-sync 가 아예 안 걸렸다 — git 을 고쳐도 반영되지 않고
+  #    수동 sync 할 때만 따라온다. "mp-operations 코스메틱 OutOfSync · 원인 미규명" 으로
+  #    P3 잔여부채에 올라 있던 것의 정체이며, 실제로 백엔드 topologySpreadConstraints
+  #    적용에서 11종 중 이것만 누락시켰다.
+  #    ⚠️ OutOfSync 를 볼 때 드리프트부터 의심하지 말고 **syncPolicy 유무를 먼저** 볼 것.
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+    syncOptions:
+      - CreateNamespace=false

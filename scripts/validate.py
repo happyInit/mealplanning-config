@@ -6,7 +6,7 @@
 이 레포에는 CI 가 없었고 13개 Application 이 automated sync 다. 즉 잘못된 매니페스트가
 아무 관문 없이 클러스터에 도달했다. 2026-08-02 감사에서 실제로 그렇게 새어나간 것 3부류:
 
-  1. pipelines/kustomization.yaml 의 JSON-Patch `op: add` 가 merge 가 아니라 **replace** 라
+  1. pipelines/base/kustomization.yaml 의 JSON-Patch `op: add` 가 merge 가 아니라 **replace** 라
      base 에 선언된 runAsNonRoot·readOnlyRootFilesystem 이 렌더 단계에서 증발했다.
      git 만 읽으면 7개 워크로드가 하드닝된 것으로 보이지만 라이브는 uid=0(root) 였다.
   2. 4-dot FQDN(`<svc>.<ns>.svc.cluster.local`)이 파드 search 의 `local` 때문에 ISP 로 새어
@@ -46,10 +46,21 @@ BASELINE = REPO / "scripts" / "policy-baseline.txt"
 SKIP_KUSTOMIZE_RE = re.compile(r"/(base|overlays/eks)$")
 
 # kustomization 없이 매니페스트를 그대로 두는 디렉터리형 ArgoCD 앱
+#
+# 🔴 2026-08-09(0-1) 로 6개가 여기서 빠졌다 — platform/{es,kafka,pg,pgsync,pooler,redis} 는
+#    사이트 분기(base/ + overlays/{onprem,eks})를 받으면서 kustomize 트랙이 됐다.
+#    이제 그 매니페스트는 kustomize_dirs() 의 `<트랙>/overlays/onprem` 렌더로 들어온다.
+#    남은 셋은 성격이 다르다:
+#      argocd/applications · platform/argocd = **ArgoCD 뿌리**. 뿌리 Application 2개가 IaC 밖이라
+#        (체크리스트 0-4) 경로를 config 레포 커밋으로 못 바꾼다 → 재구성 대상에서 의도적으로 뺐다.
+#      pipelines/jobs = ArgoCD 비대상(1회성 kubectl). desired state 가 아니라 분기할 것도 없다.
 DIRECTORY_APPS = [
-    "argocd/applications", "pipelines/jobs", "platform/argocd", "platform/es",
-    "platform/kafka", "platform/pg", "platform/pgsync", "platform/pooler", "platform/redis",
+    "argocd/applications", "pipelines/jobs", "platform/argocd",
 ]
+
+# 사이트 분기 골격(0-1). ArgoCD 가 실제로 쓰는 것은 overlays/onprem 뿐이고,
+# overlays/eks 는 Wave B 에서 채운다 — 다만 **렌더는 지금부터 깨지지 않아야** 한다.
+SITE_OVERLAYS = ("onprem", "eks")
 
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"}
 
@@ -320,6 +331,41 @@ def render_all(res: Result) -> dict[str, list[dict]]:
         docs[rel] = collected
 
     return docs
+
+
+def check_site_overlays(res: Result) -> None:
+    """사이트 분기 골격(0-1)이 살아 있나.
+
+    왜 있는가 — 골격은 **쓰지 않는 쪽이 조용히 썩는다**. overlays/eks 는 ArgoCD 가 보지도
+    않고 다른 검사에서도 제외(SKIP_KUSTOMIZE_RE)되므로, 누가 base 의 파일명을 바꾸면
+    eks 오버레이만 렌더 불능이 되고 **아무도 모른 채 이관 당일에 발견**된다.
+
+    보는 것 셋:
+      ① base/ 가 있으면 overlays/onprem 도 있어야 한다 (= 배포 경로가 실재하나)
+      ② 있는 overlays/eks 는 렌더가 성공해야 한다 (= 골격이 안 썩었나)
+      ③ eks 오버레이가 없는 트랙은 경고로 남긴다 — "AWS 에 안 올린다"는 판단일 수도 있어
+         실패로 두지 않는다(예: services/cloudflared = C-5 로 온프렘 DR 전용).
+    """
+    cmd = renderer()
+    missing_eks = []
+    for base in sorted(REPO.rglob("base")):
+        if not base.is_dir() or SCAN_EXCLUDE_PARTS & set(base.relative_to(REPO).parts):
+            continue
+        track = base.parent
+        rel = str(track.relative_to(REPO))
+        onprem = track / "overlays" / "onprem" / "kustomization.yaml"
+        if not onprem.is_file():
+            res.fail(f"[site] {rel}: base/ 는 있는데 overlays/onprem 이 없다 — 배포 경로가 사라진다")
+        eks = track / "overlays" / "eks"
+        if not (eks / "kustomization.yaml").is_file():
+            missing_eks.append(rel)
+            continue
+        p = subprocess.run(cmd + [str(eks)], capture_output=True, text=True)
+        if p.returncode != 0:
+            res.fail(f"[site] {rel}/overlays/eks 렌더 실패 — 골격이 썩었다\n{p.stderr.strip()[:400]}")
+    if missing_eks:
+        res.warn("[site] eks 오버레이가 없는 트랙 — 의도(그 사이트에 안 올림)면 무시, 아니면 0-1 누락:\n  "
+                 + "\n  ".join(missing_eks))
 
 
 def iter_workloads(docs: dict[str, list[dict]]):
@@ -724,11 +770,13 @@ def check_es_maintenance_job(res: Result, job: dict) -> None:
 
 def check_pgsync_stable_alias(res: Result, docs: dict[str, list[dict]]) -> None:
     """T-3 lifecycle 불변조건: Git은 PARK, 수동 Job은 inert, runtime은 stable alias."""
-    role_path = REPO / "platform/pg/bootstrap-role.yaml"
-    schema_path = REPO / "platform/pgsync/schema-configmap.yaml"
+    # 🔴 경로에 `base/` 가 들어간 것은 0-1(2026-08-09) 사이트 분기 골격 때문이다.
+    #    파일 내용은 그대로고 자리만 <트랙>/ → <트랙>/base/ 로 내려갔다.
+    role_path = REPO / "platform/pg/base/bootstrap-role.yaml"
+    schema_path = REPO / "platform/pgsync/base/schema-configmap.yaml"
     rollout_path = REPO / "services/recipe/base/rollout.yaml"
-    pgsync_netpol_path = REPO / "platform/policies-data/netpol-pgsync.yaml"
-    policies_kustomization_path = REPO / "platform/policies-data/kustomization.yaml"
+    pgsync_netpol_path = REPO / "platform/policies-data/base/netpol-pgsync.yaml"
+    policies_kustomization_path = REPO / "platform/policies-data/base/kustomization.yaml"
     ops_dir = REPO / "ops/pgsync-stable-alias"
     required = [
         ops_dir / "README.md", ops_dir / "ops.sh", ops_dir / "maintenance.py",
@@ -962,6 +1010,7 @@ def main() -> int:
             print(v)
         return 0
 
+    check_site_overlays(res)
     check_fqdn(res)
     check_image_tags(res, docs)
     check_tsc_duplicate_key(res, docs)

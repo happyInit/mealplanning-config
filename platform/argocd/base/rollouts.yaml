@@ -1,0 +1,138 @@
+# Argo Rollouts — 플랫폼 child Application (정본 = 이 파일). 배포전략 카나리 (ADR-0001, 2026-08-03).
+#
+# 무엇: account·recipe 를 카나리(10→50→100% + Prometheus 자동분석·자동롤백)로 배포하기 위한
+#   프로그레시브 딜리버리 컨트롤러. 나머지 7개 서비스는 롤링 유지(§ADR-0001 §5).
+#   ⚠️ ArgoCD 와 다른 툴이다 — ArgoCD 는 git→클러스터 "배달", Rollouts 는 새 버전을 트래픽
+#      비중으로 "점진 진열". 손발 관계: platform-root(ArgoCD)가 이 파일을 집어 Rollouts 를 설치하고,
+#      이후 config 레포에 새 :sha 가 들어오면 ArgoCD 가 배달 → Rollouts 가 카나리 전개.
+#
+# 🔴 플러그인 전달 = **vendoring(`file://`) 완료**(ADR-0001 §6.2). 컨트롤러는 플러그인 바이너리가
+#    없으면 **아예 기동하지 않으므로**, 그 바이너리를 어디서 얻느냐가 곧 배포 게이트의 가용성이다.
+#    구 배선(`https://` GitHub 직다운로드)은 HA 각 pod 가 재기동마다(노드 드레인·페일오버·OOM·
+#    차트 업그레이드) 공중망을 타서, GitHub blip 시 **장애 중 픽스를 배포하려는 그 순간 게이트가
+#    죽는** 구조였다. 이제 이미 모든 배포의 하드 의존인 **Harbor** 에서 온다(새 실패 도메인 0개).
+#
+# 🔴 선행조건(app 레포 k8s_argocd 롤 — 없으면 이 Application sync 가 조용히 거부된다, KEDA 와 동일 함정):
+#   ① argocd_platform_source_repos 에  https://argoproj.github.io/argo-helm  (차트 소스)
+#   ② k8s_operator_namespaces 에  argo-rollouts  (destinations + ns 생성 — 한쪽만 고치면 거부)
+#   ③ clusterResourceWhitelist 는 **추가 불요** — Rollouts 차트의 클러스터 스코프는 CRD 5(Rollout·
+#      AnalysisTemplate·AnalysisRun·ClusterAnalysisTemplate·Experiment)·ClusterRole·ClusterRoleBinding
+#      뿐이고 셋 다 이미 화이트리스트에 있다.
+#   → 적용 순서: ansible(k8s.yml --tags argocd + ns 롤) **먼저** → 그다음 이 파일 머지.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rollouts
+  namespace: argocd
+  # 🔴 없으면 Application 삭제 시 CRD 가 고아로 남는다(status §4.2, KEDA 와 동일).
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    targetRevision: "2.41.1" # appVersion v1.9.1 (Argo Rollouts). 버전핀(:latest 금지, CLAUDE.md).
+    helm:
+      valuesObject:
+        installCRDs: true
+        # 🔴 vendoring(§6.2) 이후 컨트롤러는 **Harbor 이미지**를 당긴다(아래 initContainer).
+        #    플랫폼 ns 는 원래 공개 레지스트리만 썼어서 풀 시크릿이 없었고, 이게 빠지면
+        #    새 pod 가 `Init:ErrImagePull`(no basic auth credentials)로 멈춘다 — 2026-08-03 실측.
+        #    시크릿 `harbor` 공급 = `rollouts-pullsecret` Application(platform/rollouts/).
+        imagePullSecrets:
+          - name: harbor
+        controller:
+          # 4노드 학생 예산 — 컨트롤러는 경량(KEDA operator 급). limit CPU 는 안 건다(CFS 스로틀 회피, §13.7).
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          # 관측: kps 가 라벨 무관 수집(serviceMonitorSelectorNilUsesHelmValues=false) — ServiceMonitor 만 켜면 잡힌다.
+          metrics:
+            enabled: true
+            serviceMonitor:
+              enabled: true
+          # Gateway API 트래픽 라우터 플러그인 — 카나리 %를 HTTPRoute 가중치로 조작(ADR-0001 §6.1).
+          #   컨트롤러가 이 값을 argo-rollouts-config ConfigMap 으로 렌더 → 기동 시 로드. 못 받으면 컨트롤러가 안 뜬다.
+          #
+          # 🔴 `location` 은 **실행 경로가 아니라 다운로더 입력**이다(v1.9.1 `utils/plugin/` 실측).
+          #    컨트롤러는 항상 `plugin-bin/<dir>/<file>` 에서 실행하고(GetPluginInfo 는 location 을 안 본다),
+          #    `file://` 은 "거기서 실행"이 아니라 **"거기서 plugin-bin 으로 복사해 온다"** 는 뜻이다.
+          #
+          # 🔴 그래서 소스와 목적지가 달라야 한다 — 아래 마운트를 차트 기본 `plugin-bin` emptyDir 과
+          #    같은 경로로 두면 copyFile 이 `os.Create`(truncate)로 **자기 자신을 0바이트로 만든다.**
+          #    별도 emptyDir(`vendored-plugin` @ /vendored-plugin)을 쓰는 이유가 이것이다.
+          #
+          # 🔴 sha256 을 여기 적지 않는다 — **`file://` 분기엔 sha256 검증이 없다**(checkShaOfPlugin
+          #    호출은 http(s) 분기 안에만 존재). 적어도 조용히 무시돼 "검증되는 줄 아는" 착각만 남는다.
+          #    무결성 게이트는 **이미지 빌드타임**에 있다(app 레포 Dockerfile 의 `sha256sum -c` — 실패 시
+          #    이미지가 아예 안 나오므로 런타임 검증보다 강하다). ADR §6.2 의 "file:// + sha256" 서술은
+          #    이 점에서 부정확 — 정정 대상.
+          trafficRouterPlugins:
+            - name: "argoproj-labs/gatewayAPI"
+              location: "file:///vendored-plugin/gatewayapi-plugin"
+          # vendored 바이너리를 emptyDir 로 넘기는 운반책. 이 이미지는 busybox + 플러그인뿐이다.
+          #   🔴 `runAsUser` 필수 — pod securityContext 가 `runAsNonRoot: true` 라 busybox 기본(root)이면
+          #      kubelet 이 pod 를 거부한다("container has runAsNonRoot and image will run as root").
+          #   🔴 이미지 핀은 `:sha`(CLAUDE.md — `:latest` 금지: ArgoCD 가 변경을 감지 못하고 롤백 불가).
+          #   ⚠️ 이 `:sha` 는 **app 레포 `314b898`** 다. 커밋 메시지는 "CIS 벤치마크"(PR #495)인데
+          #      플러그인 이미지 태그가 거기 붙은 게 이상해 보일 수 있다 — 이유: vendoring PR(#493)의
+          #      Dockerfile·Jenkinsfile 이 #495 브랜치에 실려 **먼저** main 에 들어갔고(2026-08-03 13:42),
+          #      그래서 그 커밋 빌드가 이미지를 만들었다. 뒤늦게 머지된 #493(`472fae9`)은 **빈 커밋**이다.
+          #      `git show 314b898:infra/images/rollouts-gatewayapi-plugin/Dockerfile` 로 현행 main 과
+          #      **바이트 동일** 확인함(소스빌드본 — golang:1.25.12 · grpc v1.79.3 · 커밋핀).
+          initContainers:
+            - name: vendored-gatewayapi-plugin
+              image: 192.168.0.10/mealplanning/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
+              command: ["/bin/sh", "-c", "cp /plugin/gatewayapi-plugin /vendored-plugin/gatewayapi-plugin && chmod 0755 /vendored-plugin/gatewayapi-plugin"]
+              securityContext:
+                runAsUser: 999
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+              resources:
+                requests: { cpu: 10m, memory: 16Mi }
+                limits: { memory: 64Mi }
+              volumeMounts:
+                - name: vendored-plugin
+                  mountPath: /vendored-plugin
+          volumes:
+            - name: vendored-plugin
+              emptyDir: {}
+          volumeMounts:
+            - name: vendored-plugin
+              mountPath: /vendored-plugin
+        # 카나리 진행(지금 몇 %·분석 통과 여부) 시각화 — 캡스톤 데모용(ADR-0001 §5 근거1).
+        #   메모리 빡빡하면 제일 먼저 끌 대상(enabled:false) — 컨트롤러 동작엔 무관한 편의 UI다.
+        dashboard:
+          enabled: true
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 128Mi }
+        # 🔴 플러그인이 HTTPRoute 가중치를 편집하려면 컨트롤러 SA 에 httproutes 권한 필요.
+        #   차트 기본 ClusterRole 엔 Gateway API 권한이 없다 → providerRBAC.additionalRules 로 추가(ADR-0001 §6.3).
+        providerRBAC:
+          additionalRules:
+            - apiGroups: ["gateway.networking.k8s.io"]
+              resources: ["httproutes"]
+              verbs: ["get", "list", "watch", "update", "patch"]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo-rollouts
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # CRD 가 큰 편이라 client-side apply last-applied 어노테이션 한도(256KB)에 닿을 수 있다(KEDA·대시보드CM 함정 계열).
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

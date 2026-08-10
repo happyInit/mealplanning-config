@@ -1,0 +1,131 @@
+# AppProject 4종 — ArgoCD 가 자기 자신을 제약하는 울타리.
+#
+# 🔴 이 파일은 **라이브 실측(2026-08-09)의 정확한 재현**이다. 값을 "개선"하지 말 것 —
+#    0-4 의 검증 기준이 "git 화 전후 spec 동일"이라서, 여기서 손대면 그 증명이 깨진다.
+#    바꾸고 싶은 것은 아래 "알려진 불일치" 를 읽고 별건으로 올린다.
+#
+# 알려진 불일치 (실측 — 고치는 것은 사람 결정, ⑤):
+#   · `mealplanning` 의 `mp-ingress` destination 은 **라이브에만 있다**. Ansible
+#     `k8s_argocd/defaults/main.yml` 의 `argocd_allowed_namespaces` 는 app·data·pipeline 3개뿐이라
+#     지금 `--tags argocd` 를 돌리면 **mp-ingress 가 지워지고 mp-ingress Application 이 배포 거부**된다.
+#     (같은 사고가 descheduler 에서 이미 한 번 났다 — defaults/main.yml 주석 참조.)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mealplanning
+  namespace: argocd
+spec:
+  description: food-budget-app 앱 계층 (기반 스택은 Ansible 소관이라 제외)
+  sourceRepos:
+    - git@github.com:happyInit/mealplanning-config.git
+  destinations:
+    - namespace: app
+      server: https://kubernetes.default.svc
+    - namespace: data
+      server: https://kubernetes.default.svc
+    - namespace: pipeline
+      server: https://kubernetes.default.svc
+    # 🔴 라이브에만 있는 항목 — Ansible 미반영(위 "알려진 불일치").
+    - namespace: mp-ingress
+      server: https://kubernetes.default.svc
+  # 클러스터 스코프 생성 금지 — ns·CRD·ClusterRole 은 Ansible 소관.
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+# root 전용 울타리 — argocd ns 에 Application "오브젝트"만 만들 수 있다.
+# mealplanning 프로젝트에 argocd ns 를 더하는 대신 이걸 판 이유: 그쪽은
+# namespaceResourceWhitelist 가 전역(*/*)이라 **모든 앱 child 가 argocd ns 에 무엇이든**
+# 만들 수 있게 된다.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mealplanning-root
+  namespace: argocd
+spec:
+  description: app-of-apps root 전용 — argocd ns 에 Application 오브젝트만 생성 가능
+  sourceRepos:
+    - git@github.com:happyInit/mealplanning-config.git
+  destinations:
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: Application
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: 플랫폼 스택 (관측·데이터 오퍼레이터·데이터 CR) — child 정본은 config 레포 platform/argocd/
+  # 🔴 차트 레포가 하나라도 빠지면 그 Application 이 InvalidSpecError("repo is not permitted")로
+  #    조용히 정지한다. descheduler 가 실제로 이 방식으로 죽어 있었다(2026-08-03).
+  sourceRepos:
+    - https://grafana.github.io/helm-charts
+    - https://cloudnative-pg.github.io/charts
+    - https://helm.elastic.co
+    - https://strimzi.io/charts/
+    - https://ot-container-kit.github.io/helm-charts/
+    - https://kedacore.github.io/charts
+    - https://argoproj.github.io/argo-helm
+    - https://kubernetes-sigs.github.io/descheduler/
+    - git@github.com:happyInit/mealplanning-config.git
+  destinations:
+    - namespace: observability
+      server: https://kubernetes.default.svc
+    - namespace: kube-system
+      server: https://kubernetes.default.svc
+    - namespace: data
+      server: https://kubernetes.default.svc
+    - namespace: cnpg-system
+      server: https://kubernetes.default.svc
+    - namespace: elastic-system
+      server: https://kubernetes.default.svc
+    - namespace: strimzi-system
+      server: https://kubernetes.default.svc
+    - namespace: redis-operator-system
+      server: https://kubernetes.default.svc
+    - namespace: keda
+      server: https://kubernetes.default.svc
+    - namespace: argo-rollouts
+      server: https://kubernetes.default.svc
+  # 차트 실렌더링으로 확정된 목록. 🔴 CRD 를 빼면 오퍼레이터 sync 가 통째로 막히고,
+  # APIService 를 빼면 KEDA 외부 메트릭 API 등록이 막혀 ScaledObject 가 lag 를 못 읽는다.
+  clusterResourceWhitelist:
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+    - group: apiregistration.k8s.io
+      kind: APIService
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform-root
+  namespace: argocd
+spec:
+  description: 플랫폼 app-of-apps root 전용 — argocd ns 에 Application 오브젝트만 생성 가능
+  sourceRepos:
+    - git@github.com:happyInit/mealplanning-config.git
+  destinations:
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: Application

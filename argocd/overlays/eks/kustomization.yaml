@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── EKS 사이트: mealplanning-root 의 감시 대상 ──────────────────────────────────
+# 🔴 지금은 base 통과다 = child 23개의 source.path 가 아직 **온프렘 오버레이를 가리킨다**.
+#    이 오버레이의 일이 그걸 `<트랙>/overlays/eks` 로 돌리는 것이다. 아직 안 했다 —
+#    이관 실작업(Wave B)에서 아래 체크리스트대로 채운다. **초록 = 이관 준비 완료가 아니다.**
+#
+# 여기서 갈라야 하는 것:
+#   · 전 child 23개 `spec.source.path` — `…/overlays/onprem` → `…/overlays/eks`
+#   · `spec.destination.server` — 사이트 클러스터가 갈리면(지금은 둘 다 in-cluster 가정)
+#   · **C-5 온프렘 존치 트랙 제외** — `cloudflared` 는 온프렘 DR 전용이라 eks 목록에서 뺀다.
+#     (빼는 방법 = 여기서 base 를 통과시키지 말고 resources 를 직접 나열하거나, `$patch: delete`)
+#   · 온프렘에만 있는 정책 트랙(`policies-ingress` 등)이 EKS 에서 이름·대상이 달라지는지 — 0-17/0-18 확인 후
+#
+# 🔴 이 디렉터리는 **부트스트랩(bootstrap/argocd/overlays/eks)이 이미 참조하도록 적혀 있다.**
+#    거기 EKS root 의 path 가 `argocd/overlays/eks` 다 — 즉 이 파일이 EKS 사이트의 앱 목록 정본이 된다.
+resources:
+  - ../../base

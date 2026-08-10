@@ -1,5 +1,5 @@
 # B1 durability — 모델(ranker.pkl)을 emptyDir 대신 PVC에 두어 **파드 재시작에도 유지**.
-#   openebs-lvm(RWO·WaitForFirstConsumer) → 첫 마운트 노드에 고정(단일 replica라 무해, pipelines/pvc.yaml과 동일 패턴).
+#   openebs-lvm(RWO·WaitForFirstConsumer) → 첫 마운트 노드에 고정(단일 replica라 무해, pipelines/base/pvc.yaml과 동일 패턴).
 #   모델은 재학습으로 재생성 가능 → Delete 정책(기본)으로 충분. 크기<100MB지만 여유로 1Gi.
 apiVersion: v1
 kind: PersistentVolumeClaim

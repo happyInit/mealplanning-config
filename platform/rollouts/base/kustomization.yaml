@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Argo Rollouts 컨트롤러 ns 의 Harbor pull secret(ESO). child app = platform/argocd/rollouts-pullsecret.yaml.
+# 🔴 디렉터리형 → kustomize 변환(0-1, 2026-08-09). 배경·주의는 platform/es/base/kustomization.yaml 머리말과 동일.
+# 🔴 `namespace:` 를 넣으면 **여기서 특히 깨진다** — 이 ExternalSecret 에는 metadata.namespace 가 없고
+#    Application 의 destination(argo-rollouts)이 채운다. kustomization 에서 ns 를 박으면
+#    "렌더 무변경" 기준이 무너진다.
+resources:
+  - pullsecret.yaml

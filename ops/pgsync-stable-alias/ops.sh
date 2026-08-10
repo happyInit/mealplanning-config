@@ -258,7 +258,7 @@ wait_role_applied() {
 }
 
 assert_local_role_parked() {
-  python3 - "$REPO_ROOT/platform/pg/bootstrap-role.yaml" <<'PY'
+  python3 - "$REPO_ROOT/platform/pg/base/bootstrap-role.yaml" <<'PY'
 import sys, yaml
 doc = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 s = doc["spec"]
@@ -281,7 +281,7 @@ park_role() {
   kubectl -n "$NAMESPACE" patch databaserole "$ROLE" --type merge -p \
     '{"spec":{"login":false,"replication":false,"connectionLimit":1,"inRoles":[],"disablePassword":true,"passwordSecret":null,"validUntil":null}}' >/dev/null
   assert_lock_owned
-  kubectl apply -f "$REPO_ROOT/platform/pg/bootstrap-role.yaml" >/dev/null
+  kubectl apply -f "$REPO_ROOT/platform/pg/base/bootstrap-role.yaml" >/dev/null
   wait_role_applied
 }
 
@@ -676,7 +676,7 @@ resume_acl_lifecycle() {
 assert_retire_deadline() {
   local deadline="$1" local_deadline live_deadline deadline_epoch
   assert_lock_owned
-  local_deadline="$(python3 - "$REPO_ROOT/platform/pgsync/schema-configmap.yaml" <<'PY'
+  local_deadline="$(python3 - "$REPO_ROOT/platform/pgsync/base/schema-configmap.yaml" <<'PY'
 import sys, yaml
 doc = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 print(doc["metadata"]["annotations"]["operations.mealplanning.io/legacy-slot-retire-after"])

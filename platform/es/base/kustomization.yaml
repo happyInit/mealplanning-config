@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ES(ECK) CR 본문. child app = platform/argocd/es.yaml (수동 sync).
+#
+# 🔴 이 파일은 2026-08-09(0-1)에 **신설**됐다. 그전까지 이 트랙은 kustomization 이 없는
+#    "디렉터리형 앱"이라 ArgoCD 가 *.yaml 을 그냥 전부 집었다. 사이트 분기(onprem/eks)를
+#    하려면 오버레이가 필요하고, 오버레이는 kustomize 여야 한다 — 그래서 변환했다.
+#
+# 🔴 성격이 하나 바뀐다: **여기 등록하지 않은 새 yaml 은 배포되지 않는다.**
+#    디렉터리형일 때는 파일만 두면 알아서 나갔다. 파일 추가 = resources 등록까지 한 묶음이다.
+#
+# 🔴 `namespace:` 를 **의도적으로 안 넣었다.** 전 매니페스트가 metadata.namespace 를 직접
+#    갖고 있고(전수 확인), 여기서 강제하면 재구성 전 렌더와 결과가 갈린다.
+#    0-1 의 안전 기준은 "온프렘 렌더가 전과 동일" 이다.
+resources:
+  - elasticsearch.yaml   # Elasticsearch CR(es) + 롤 Secret
+  - es-users-job.yaml    # per-role 계정 프로비저닝 Job(멱등)
+  - externalsecrets.yaml # 서비스 계정 비밀(ESO)
+  - monitoring.yaml      # exporter + ServiceMonitor + 부트스트랩 Job

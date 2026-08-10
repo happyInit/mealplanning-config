@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── mealplanning-root 가 배포하는 child Application 23개 (사이트 공통 본문) ──
+# 🔴 namespace: 를 넣지 말 것 — 매니페스트가 metadata.namespace(argocd) 를 직접 갖고 있다.
+# 🔴 child 를 새로 추가하면 반드시 아래 resources 에 등록한다. 등록하지 않으면 조용히 배포되지 않는다
+#    — 구 directory 모드(recurse=true)는 파일만 두면 됐다. 그 습관이 여기서 깨진다.
+resources:
+  - account.yaml
+  - app-common.yaml
+  - chat.yaml
+  - cloudflared.yaml
+  - frontend.yaml
+  - gateway-internal.yaml
+  - gateway.yaml
+  - ingress.yaml
+  - mealplan.yaml
+  - monitoring.yaml
+  - notify.yaml
+  - ocr.yaml
+  - operations.yaml
+  - pantry.yaml
+  - policies-data.yaml
+  - policies-ingress.yaml
+  - policies-pipeline.yaml
+  - policies.yaml
+  - price.yaml
+  - ranking-serving.yaml
+  - recipe.yaml
+  - recipebook.yaml
+  - video.yaml

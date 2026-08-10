@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: app
+# 보안 정책 묶음. child app = argocd/applications/policies.yaml (mp-policies, 수동 sync).
+# README.md 는 kustomize 가 무시(리소스 아님).
+resources:
+  - peerauthentication.yaml
+  # 보안 ③ NetworkPolicy default-deny — frontend→backend→data→pipeline 순(계획). 티어별로 파일 추가·sync·Hubble 검증.
+  - netpol-frontend.yaml            # 티어 1: frontend (default-deny, ingress=GW+probe / egress=DNS+istiod)
+  - netpol-backend.yaml             # 티어 2: backend 공통 (GW+intra-app+probe / data+DNS+istiod+intra-app)
+  - netpol-operations.yaml          # 티어 2 부록: operations cross-ns ↔ observability(Alertmanager/Prometheus)
+  - netpol-backend-fqdn.yaml        # 티어 2 부록: account→OAuth · ocr/chat→Gemini FQDN (CiliumNetworkPolicy)
+  # 🔴 티어 0 진입점 정책 4종(netpol-gateway{,-ingress}·netpol-cloudflared{,-ingress})은
+  #    **여기 없다** — 2026-08-06 `platform/policies-ingress/`(ns=mp-ingress)로 이전했다(#532 ③).
+  #    게이트웨이·cloudflared 가 app 을 떠났기 때문이다(근거 = ingress/base/kustomization.yaml 상단).
+  #    ⚠️ 그 파일들의 함정 메모(특히 netpol-cloudflared.yaml 의 toFQDNs 학습 타이밍 →
+  #       apply 와 rollout restart 를 한 묶음으로)도 그쪽 kustomization 으로 따라갔다.
+  #    ⚠️ 이 ns 에 남은 정책들은 이제 게이트웨이를 **cross-ns 로** 참조한다 —
+  #       netpol-frontend/backend 의 ingress 1) 에 namespaceSelector(mp-ingress)가 붙어 있고,
+  #       그게 빠지면 셀렉터가 app 안에서만 찾아 0개에 매칭돼 사이트가 통째로 죽는다.
+  # 🔴 베이스라인은 **반드시 마지막**이다(podSelector:{} 라 앞의 정책이 먼저 살아 있어야 한다).
+  - netpol-default-deny-ingress.yaml # app ns ingress default-deny (미래·미분류 파드 잠금)
+  # 🔴 egress 베이스라인은 ingress 보다 뒤다. 유입은 막혀도 "그 기능만" 죽지만 egress 가 막히면
+  #    DNS 부터 죽어 파드가 아무것도 못 한다. 적용 전 `cilium-dbg endpoint list` 로 app ns 파드
+  #    19개가 전부 enforcement=both 임을 확인했다(= 도는 파드는 이미 egress 잠김, 실물 변화 0).
+  - netpol-default-deny-egress.yaml  # app ns egress default-deny (미래·미분류 파드 잠금)
+  # 티어 3 data → 티어 4 pipeline 이 순서대로 추가된다.
+  # 🔴 data·pipeline 대상 netpol 은 그 ns 로 가야 하므로(이 kustomization 은 namespace:app 강제) 그때 별도 배치.

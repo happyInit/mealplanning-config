@@ -15,23 +15,29 @@ ArgoCD 가 여기를 watch 해서 클러스터를 이 내용에 맞춘다 — �
 🔴 **앱 소스 코드는 여기 없다.** Python 서비스·Dockerfile·파이프라인은 전부 `happyInit/food-budget-app`.
 여기서 애플리케이션 로직을 고치려 하지 말 것 — 레포를 잘못 찾은 것이다.
 
+🔴 **모든 ArgoCD 트랙이 같은 모양이다** (2026-08-09, AWS 이관 0-1) — 정본 = [`SITES.md`](SITES.md).
+
 ```
-argocd/applications/   앱 child Application (mealplanning-root 가 집는다)
-services/<svc>/
-  base/                Deployment·Service·HTTPRoute·NetworkPolicy·ExternalSecret
-  overlays/onprem/     이미지 :sha 핀(Jenkins 가 커밋) · openebs-lvm SC
-  overlays/eks/        EKS 이식용 (미사용, 렌더 검사 대상에서 제외)
-platform/              인프라 소관 — platform-root 가 집는다
-  argocd/              플랫폼 child Application
-  pg/ pooler/ es/ kafka/ redis/ pgsync/    데이터 CR 본문
-  policies*/           NetworkPolicy
-pipelines/             컨슈머 + CronJob (dark-deploy)
+<트랙>/base/               매니페스트 본문 (사이트 공통)
+<트랙>/overlays/onprem/    ArgoCD Application 의 source.path 가 가리키는 곳
+<트랙>/overlays/eks/       EKS 골격 — 🔴 Wave B 에서 채운다. 렌더 검사 대상에서 제외
+```
+```
+argocd/applications/   앱 child Application (mealplanning-root 가 집는다) — 🔴 뿌리라 base/overlays 없음
+platform/argocd/       플랫폼 child Application (platform-root)      — 🔴 같은 이유로 없음
+services/<svc>/        앱 서비스 13 + cloudflared. overlays/onprem 의 images.newTag = Jenkins 자리
+platform/              인프라 소관 — pg pooler es kafka redis pgsync rollouts policies*
+pipelines/             컨슈머 + CronJob.  🔴 pipelines/jobs/ 는 트랙 밖(1회성 kubectl)
 monitoring/            PrometheusRule·ServiceMonitor·대시보드
-common/                app-common ConfigMap 등 공용
+common/ gateway/ gateway-internal/ ingress/   공용·라우트·게이트웨이
 ops/                   🔴 ArgoCD 비대상 — 수동 migration/runbook 번들
 scripts/validate.py    푸시 전 관문 (아래 §검증)
 tests/                 validate.py 의 단위 테스트
 ```
+
+🔴 **새 매니페스트를 추가하면 `base/kustomization.yaml` 의 `resources` 에 등록해야 한다.**
+`platform/{es,kafka,pg,pgsync,pooler,redis,rollouts}` 는 2026-08-09 전까지 "디렉터리형"이라
+파일만 두면 배포됐다. 이제는 아니다 — **등록 안 하면 조용히 배포되지 않는다.**
 
 **뿌리가 둘이다** — `mealplanning-root`(앱, `argocd/applications/`) · `platform-root`(플랫폼,
 `platform/argocd/`). 서로 남의 디렉터리를 보지 않는다. 새 매니페스트를 추가하면 **해당 뿌리 밑
@@ -97,13 +103,13 @@ python3 scripts/validate.py
 kubectl patch application -n argocd <앱> --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}'
 ```
 
-🔴 **`envFrom.configMapRef` 는 파드 기동 시점에만 주입된다.** `common/app-common.yaml` 같은 ConfigMap 을
+🔴 **`envFrom.configMapRef` 는 파드 기동 시점에만 주입된다.** `common/base/app-common.yaml` 같은 ConfigMap 을
 바꾸고 sync 해도 **도는 파드는 옛 값을 그대로 쓴다.** 체크섬 어노테이션이 없어 ArgoCD 가 자동으로
 굴려주지 않으므로, 해당 워크로드에 `rollout restart` 가 **별도로** 필요하다.
 
 ## PGSync — 🔴 정본이 두 레포에 갈라져 있다
 
-`platform/pgsync/schema-configmap.yaml` 과 `plugins-configmap.yaml` 의 내용은
+`platform/pgsync/base/schema-configmap.yaml` 과 `plugins-configmap.yaml` 의 내용은
 앱 레포 `deploy/pgsync/schema.json` · `deploy/pgsync/plugins/*.py` 의 **사본**이다.
 (앱 레포 쪽이 빌드 컨텍스트 원본, 여기 ConfigMap 이 실제 배포본.)
 

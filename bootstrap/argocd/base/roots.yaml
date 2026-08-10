@@ -1,0 +1,75 @@
+# root Application 2종 (app-of-apps 뿌리).
+#
+# 🔴 라이브 실측(2026-08-09)의 정확한 재현이다. `path` 만 site 오버레이가 갈아끼운다.
+#
+# 🔴 **`mealplanning-root` Application 은 지금 어떤 IaC 에도 없다** — 손으로 apply 된 뒤
+#    손으로 patch 까지 됐다(실측: last-applied 의 `project: mealplanning` vs 라이브
+#    `project: mealplanning-root`). 이 파일이 그 유일한 기록이다.
+#    `platform-root` Application 은 반대로 Ansible `k8s_argocd` 가 이미 만들고 있다.
+#
+# 알려진 불일치 (실측 — 고치는 것은 사람 결정, ⑤):
+#   · **finalizer 비대칭** — `platform-root` 에만 `resources-finalizer` 가 있고
+#     `mealplanning-root` 에는 없다. Ansible 템플릿 주석은 "finalizer 가 없으면 root 삭제 시
+#     child 가 고아로 남는다"고 못박아 두었는데, 앱 뿌리는 그 보호가 없다.
+#     여기서는 **라이브 그대로**(없음) 둔다 — 붙이는 것은 삭제 의미론을 바꾸는 별건이다.
+#   · **prune 비대칭** — 앱 뿌리 `prune: true` / 플랫폼 뿌리 `prune: false`.
+#     플랫폼 쪽은 의도된 것이다(child 가 PG·ES·Kafka CR 이라 git 실수 하나가 데이터 삭제로 번진다).
+#     앱 뿌리의 `prune: true` 는 **0-4 컷오버에서 가장 위험한 값**이다 — 감시 디렉터리가
+#     비면 child 23개가 통째로 프룬된다. 컷오버 절차(SITES.md §0-4)를 반드시 따를 것.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mealplanning-root
+  namespace: argocd
+  # 🔴 라이브에 finalizer 없음 — 위 "알려진 불일치" 참조. 여기 임의로 추가하지 말 것.
+spec:
+  project: mealplanning-root
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: argocd/applications
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-root
+  namespace: argocd
+  finalizers:
+    # 🔴 없으면 root 삭제 시 child Application 이 고아로 남는다.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform-root
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: platform/argocd
+    directory:
+      # child 는 이 디렉터리 바로 아래 평면으로 둔다. recurse=true 로 하면
+      # `platform/pg/` 같은 본문 디렉터리까지 빨아들여 렌더가 깨진다.
+      include: "*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      # 자동 생성은 취하고 자동 삭제는 버린다 — child 가 데이터 티어 CR 이다.
+      prune: false
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

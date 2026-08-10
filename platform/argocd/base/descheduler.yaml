@@ -1,0 +1,163 @@
+# descheduler — 플랫폼 child Application (정본 = 이 파일).
+#
+# 존재 이유: **HPA scale-down 이 zone 분산을 깬다**(2026-08-01 실증 — status §5.5).
+#   TSC(topologySpreadConstraints)는 **스케줄 시점**만 관여한다. 축소 대상 선정은
+#   ReplicaSet 컨트롤러 몫이고 그건 zone 을 보지 않는다. 실제로 이런 일이 났다:
+#     recipe 3 replica: b1(host-b) · b2(host-b) · a2(host-a)
+#     HPA 3 → 2 축소  : b1(host-b) · b2(host-b)      ← host-a 것이 삭제됨
+#   노드당 파드 수가 1/1/1 동률이라 컨트롤러의 spread 랭킹이 갈라주지 못하고
+#   기동시각·재시작수 같은 기준으로 결정된다.
+#
+# 🔴 descheduler 는 파드를 **만들지 않는다. 축출만 한다.**
+#   올바른 zone 으로 보내는 건 우리가 이미 건 hard TSC + matchLabelKeys 다. 한 세트로 동작한다:
+#     descheduler(위반 감지 → 1개 축출) → ReplicaSet(대체 파드 생성)
+#       → 스케줄러(같은 RS 파드가 host-b 에 1개 남아 있으므로 hard TSC 상 host-a 강제)
+#
+# ⚠️ 이벤트 기반이 아니라 **주기적 리컨사일러**다(Deployment 모드도 내부 타이머 폴링이라 동일).
+#   즉 위반 발생 ~ 다음 실행 사이에 최대 30분의 무방비 창이 남는다. 그건 설계상 수용한 것이다
+#   — 위반이 드물고(HPA 축소 뒤에만), 복구가 멱등이며, 노출은 HPA 붙은 2종뿐이기 때문.
+#
+# CronJob 을 고른 이유(Deployment 아님):
+#   ① **조용한 실패를 잡기 쉽다** — 실패가 Job 단위 이벤트로 남아
+#      `kube_cronjob_status_last_successful_time` 로 바로 알람 가능. Deployment 는
+#      파드가 Running 인데 내부만 에러면 Healthy 로 보인다(이 프로젝트 함정 대부분이 이 계열).
+#   ② 매 실행이 새 파드라 policy ConfigMap 변경이 자동 반영된다 — rsyslog·Prometheus
+#      rules·pgsync schema.json 에서 세 번 밟은 "바인드마운트 옛 inode 고수" 함정 회피.
+#   ③ 설정 실수 시 스케줄이 자연 rate-limit.  ④ 유휴 자원 0.
+#   대가 = 파드가 단명해 Prometheus 스크레이프를 대부분 놓친다. 축출 관측은 Loki 로그로.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: descheduler
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://kubernetes-sigs.github.io/descheduler/
+    chart: descheduler
+    # 🔴 버전 고정 = 클러스터 K8s 마이너와 일치시킨다. 공식 호환 매트릭스가 1:1 이다
+    #    (descheduler v0.34 ↔ k8s v1.34). 우리 K8s 는 1.34.10 에 apt hold 이고
+    #    그 상한은 Cilium 1.19.6 이 정한 것이라 당분간 안 움직인다 → 0.34.0 고정.
+    targetRevision: "0.34.0"
+    helm:
+      valuesObject:
+        # 🔴 이름을 mp- 로 강제(차트 기본은 bare `descheduler`). ClusterRole/CronJob/SA/CM
+        #    전부 `mp-descheduler*` 가 된다 — 명명 규칙(CLAUDE.md).
+        fullnameOverride: mp-descheduler
+
+        kind: CronJob
+        schedule: "*/30 * * * *"
+        timeZone: "Asia/Seoul" # CronJob 은 KST (인프라 수칙)
+        successfulJobsHistoryLimit: 3
+        failedJobsHistoryLimit: 3 # 차트 기본 1 → 실패 이력을 더 남긴다(사후 분석용)
+        ttlSecondsAfterFinished: 3600
+        activeDeadlineSeconds: 300 # 🔴 반드시 cron 간격(30m)보다 짧게 — 겹침 방지
+
+        image:
+          tag: v0.34.0 # 차트 버전과 별개로 명시(차트 기본은 chart appVersion 추종)
+
+        # 차트 기본 requests 는 cpu 500m / mem 256Mi 로 과하다 — 5노드·~150파드 클러스터에서
+        # 한 번 스캔은 수초면 끝난다.
+        # 🔴 `cpu: null` 은 차트 기본 limits.cpu(500m)를 **지우려는 것**이다. Helm 은 맵을
+        #    병합하므로 limits 를 memory 만 적으면 기본 cpu 가 그대로 살아남는다(렌더로 확인함).
+        #    cpu limit 을 안 거는 건 프로젝트 수칙 — CFS 스로틀로 런이 길어지면
+        #    activeDeadlineSeconds(300s)에 걸려 Job 이 실패할 수 있다.
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: null
+            memory: 256Mi
+
+        cmdOptions:
+          v: 3 # 축출 판단 근거가 로그에 남는 수준. Loki 로 본다.
+
+        deschedulerPolicyAPIVersion: "descheduler/v1alpha2"
+        deschedulerPolicy:
+          # 🔴 폭주 상한. 우리 대상은 워크로드당 replica 2~4 뿐이라 한 런에 2개면 충분하고,
+          #    설정 실수·예상 못 한 위반이 있어도 클러스터를 흔들지 못한다.
+          maxNoOfPodsToEvictPerNamespace: 2
+          maxNoOfPodsToEvictTotal: 2
+          gracePeriodSeconds: 30
+
+          profiles:
+            - name: mp-topology-only
+              # 🔴 차트 기본 profiles 를 **통째로 대체한다**(Helm 은 리스트를 병합 아닌 교체).
+              #    기본값은 LowNodeUtilization·RemoveDuplicates·RemovePodsHavingTooManyRestarts
+              #    등을 전부 켜는데, 그건 우리가 원한 것보다 blast radius 가 훨씬 넓다.
+              #    우리는 **딱 하나의 문제**(HPA 축소로 깨진 zone 분산)만 고친다.
+              pluginConfig:
+                - name: DefaultEvictor
+                  args:
+                    # 축출 전에 "이 파드가 다른 노드에 실제로 들어갈 수 있나" 를 먼저 본다.
+                    # 없으면 축출 → 대체 파드 Pending → 다음 런에 또 축출, 로 루프가 날 수 있다.
+                    nodeFit: true
+                    # replica 가 2 미만인 워크로드는 건드리지 않는다(단일 replica 를 내리는 건
+                    # 분산 개선이 아니라 그냥 다운타임이다).
+                    minReplicas: 2
+                    # 🔴 롤아웃과 싸우지 않게 하는 장치. 롤링 업데이트 중엔 분산이 일시적으로
+                    #    깨져 보이는데(구·신 파드 공존), 5분 미만 파드를 보호하면 그 순간에
+                    #    끼어들지 않는다. 우리 롤아웃은 1분 내 끝나므로 사실상 완전 회피.
+                    #
+                    # 🪤 **단, 이건 축출만 막는 게 아니라 skew 계산에서도 그 파드를 지운다.**
+                    #    플러그인은 도메인별 파드 수를 셀 때 **축출 가능한 파드만** 센다
+                    #    (topologyspreadconstraint.go 의 "for each evictable pod" 루프).
+                    #    실증: recipe 2개가 둘 다 host-a 였는데 그중 하나가 생성 3분차라
+                    #    host-a 가 **1** 로 세어졌고 → skew 1 → "already balanced" 로 스킵됐다.
+                    #    6분차에 재실행하니 정상적으로 축출했다.
+                    #    ⇒ 신규 파드가 낀 위반은 **최대 5분 늦게** 감지된다. 30분 주기에서
+                    #      실질 영향은 "이번 런이 아니라 다음 런에 고쳐진다" 정도라 수용한다.
+                    #      값을 줄이면 감지는 빨라지지만 롤아웃과 싸울 위험이 커진다.
+                    minPodAge: 5m
+                    podProtections:
+                      # 🔴🔴 이걸 안 끄면 descheduler 가 **완전한 no-op 이 된다** (실증).
+                      #    처음엔 "기본 보호를 다 켜두는 게 안전하다" 며 이 줄을 비웠다. 그랬더니
+                      #    app ns 파드 20개 전부가 이 사유로 걸러졌다:
+                      #      "pod has local storage and is protected against eviction"
+                      #    원인 = **Istio 사이드카가 주입하는 emptyDir**(workload-socket ·
+                      #    credential-socket · workload-certs · istio-envoy · istio-data).
+                      #    즉 **메시에 들어간 모든 파드가 자동으로 '로컬스토리지 보유'** 가 된다.
+                      #    🪤 무서운 건 이게 조용히 실패한다는 점이다 — Job 은 Complete,
+                      #       evictedPods=0, Application 은 Healthy. 위반이 나도 영원히 안 고친다.
+                      #    실측으로 확인: 대상 4종의 emptyDir 은 **전부 Istio 주입분**이고 앱 자체
+                      #    emptyDir 은 0 개다. 소켓·인증서·envoy 런타임이라 파드 재기동 시 재생성된다
+                      #    → 축출로 잃을 데이터가 없다.
+                      defaultDisabled:
+                        - "PodsWithLocalStorage"
+                      extraEnabled:
+                        - "PodsWithPVC" # 데이터 티어 보호(이중 안전장치 — ns 스코프로도 이미 배제)
+                        # 🔴 이게 실질적인 최종 안전선이다: **PDB 없는 파드는 축출 대상이 아니다.**
+                        #    app ns 에서 PDB 를 가진 건 account·frontend·recipe·gw-public 4종뿐이라,
+                        #    ns 스코프가 뚫려도 그 밖으로는 손이 못 간다.
+                        - "PodsWithoutPDB"
+                - name: RemovePodsViolatingTopologySpreadConstraint
+                  args:
+                    # 기본값도 hard 뿐이지만 명시한다. soft(ScheduleAnyway)까지 넣으면
+                    # replica 1 서비스 10종의 tier 단위 soft 제약까지 대상이 되어
+                    # 의미 없는 축출이 계속 난다.
+                    constraints:
+                      - DoNotSchedule
+                    namespaces:
+                      include:
+                        - app # 🔴 data(PG·ES·Kafka·Redis)·pipeline·kube-system 은 대상 밖
+              plugins:
+                balance:
+                  enabled:
+                    - RemovePodsViolatingTopologySpreadConstraint
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system # platform AppProject 허용 대상. PSS 라벨 없어 차트 기본 SC 로 충분
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

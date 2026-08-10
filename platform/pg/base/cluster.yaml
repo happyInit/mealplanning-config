@@ -1,0 +1,124 @@
+# PG — CNPG Cluster. 초기 상태 = VM(.8) 스트리밍 replica (런북 Q4·Q7 · 플랜 §10).
+#
+# 🔴 이 파일의 목숨줄 3개:
+#   1. imageName 명시 핀 — 차트/오퍼레이터 기본값이 PG 18.4 라 안 박으면 18 이 서고,
+#      VM(16.14 실측)과의 물리 복제가 애초에 성립하지 않는다(§1.1).
+#   2. replica.enabled — true 인 동안 이 클러스터는 VM 을 따라가는 replica 다.
+#      🔫 promote = T-1 에 이 값을 false 로 바꾸는 커밋을 머지(장전)해 두고,
+#      전환창 §4-4 에서 ArgoCD manual sync 1클릭. `kubectl cnpg promote` 는 오용(§9-13).
+#   3. promote 직후 REINDEX DATABASE foodbudget 필수 — VM 은 musl 빌드인데
+#      datcollate=en_US.utf8(스텁) → glibc 로 오면 텍스트 인덱스가 조용히 오작동(§9-1).
+#      dev·tfstate DB 는 REINDEX 대신 roll-forward 확정 후 DROP(§4.1-⑤) — 그전 접속 금지.
+#
+# 전제(§2-A-4 완료분 + 확인 필요):
+#   · VM pg_hba: host replication streaming_replica ×노드IP — .17/.18/.19 적용됨.
+#     🔴 .20(worker-a1) 줄은 §2-C-0 항목 — sync 전 실적용 여부 확인(파드→VM 은 노드IP SNAT).
+#   · VM wal_keep_size=1GB (슬롯 안 씀 — 재-basebackup 이 싼 실패 모드, §9-6)
+#   · fb-secrets 에 data-secrets 적재(README.md) → ESO 가 mp-pg-replica-source 를 만든다.
+#
+# 파라미터: CNPG 기본값이 이미 정답이라 postgresql.parameters 는
+#   wal_level=logical(CNPG 고정 관리 — PGSync 슬롯 전제 ✓) · max_connections=100(VM 동일) 기본값 그대로.
+#   여기선 그 기본값에서 벗어날 필요가 있는 것만(spec.postgresql) 올린다(이슈 #516).
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg # 🔴 이름이 곧 서비스다: pg-rw/pg-ro/pg-r (Q8 "앱 전환은 pg-rw 직접"의 전제)
+  namespace: data
+spec:
+  instances: 2 # primary + standby. 🔴 2 인스턴스 동기복제 금지(standby 사망 = 쓰기 정지, status §3) — CNPG 기본 비동기 유지
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.14 # VM 16.14-alpine 실측과 동일 마이너. 상위 마이너로 올릴 땐 replica ≥ primary 규칙 확인
+  priorityClassName: data-critical # §9-10 실이름 — 마지막까지 살아남는 계층
+
+  # 이슈 #516: 버려진 복제 슬롯이 WAL 을 무한 붙잡는 사고 — 상한을 선언한다 (2026-08-03 신설).
+  #   왜 상한이 필요한가 — 소비자가 사라진 논리 슬롯은 실측 128MB/h(하루 약 3GB)씩 WAL 을
+  #     보존하고, walStorage 10Gi 기준 3일이면 가득 차 PG 가 쓰기를 멈춘다. 실제로 구
+  #     `foodbudget_recipes_pgsync` 슬롯을 그렇게 방치해 2026-08-03 수동 삭제했다.
+  #   상한 초과 시 — PG 는 디스크를 채우는 대신 **그 슬롯을 무효화**한다. 최악의 경우가
+  #     "PG 쓰기 전면정지"에서 "해당 인덱스만 재부트스트랩"(재basebackup 이 싼 실패 모드)으로 바뀐다.
+  #   1GB 를 고른 이유 — walStorage 10Gi 대비 보수적. PGSync 는 인덱스당 슬롯 하나씩 만들고
+  #     (#515 로 인덱스가 늘면 슬롯도 는다) 슬롯이 여럿 방치돼도 볼륨이 안 차야 하므로,
+  #     슬롯 하나당이 아닌 합계 상황을 늦게 잡는 큰 값은 피한다. ⚠️ CNPG 는 문자열 값이다.
+  postgresql:
+    parameters:
+      max_slot_wal_keep_size: "1GB"
+
+  # BestEffort → Burstable: 무리소스면 커널 OOM 점수 최악(1000)이라, kubelet 이 못 따라잡는
+  # 순간 스파이크에선 PriorityClass 와 무관하게 PG 가 노드의 첫 희생자가 된다(2026-07-30 컬리
+  # 폴러 OOM 건에서 확인). 메모리 req=lim = OOM 예측성(object_spec §13.9 권고), 2Gi 는 실측
+  # 295Mi(primary) 대비 ~7배 + 페이지캐시 몫. CPU limits 는 넣지 않는다(§13.7).
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      memory: 2Gi
+
+  storage:
+    size: 20Gi
+    storageClass: openebs-lvm
+  walStorage:
+    size: 10Gi
+    storageClass: openebs-lvm
+
+  # 배치 원칙(플랜 §5.2): primary=A · standby=B. CNPG 는 "어느 쪽이 primary" 를 선언으로 못 박는
+  # 기능이 없어 zone 강제 분산까지만 선언하고, promote 후 primary 가 B 에 있으면 switchover 로 A 로 옮긴다.
+  affinity:
+    topologyKey: topology.kubernetes.io/zone
+    podAntiAffinityType: required
+
+  monitoring:
+    # ~~enablePodMonitor: true~~ → false (2026-07-30 부채 해소) — CNPG 1.30 에서 deprecated 필드.
+    # 스크레이프는 monitoring.yaml 의 수동 PodMonitor `mp-pg` 가 대체(오퍼레이터 생성본과 동일 셀렉터).
+    # false 로 바꾸면 오퍼레이터 소유 PodMonitor `pg` 는 자동 삭제된다 — mp-pg 가 즉시 이어받는다.
+    enablePodMonitor: false # Q9 — cnpg_* 지표는 mp-pg PodMonitor 로
+    # 이슈 #516: 이 필드를 넣기 전에는 복제 슬롯 지표가 하나도 없었다(라이브 `cnpg_*` 30종 실측 중
+    # `pg_replication_slots` 계열 0건) → platform/pg/base/monitoring.yaml 의 critical 알림
+    # MpPGReplicationSlotRetainedWALHigh 가 빈 결과만 평가하며 죽어 있었다.
+    # (없는 지표명으로 알림을 쓰면 영원히 안 울린다 — CNPG 백업 지표 전례, 이슈 #506.)
+    #
+    # 🔴 `cnpg-default-monitoring` 을 반드시 함께 적는다. 이 필드를 지정하면 CNPG 오퍼레이터가
+    #    기본 쿼리 ConfigMap 을 **리스트 맨 앞에 자동으로 넣는데**, 매니페스트에 없으면 라이브와
+    #    선언이 영구히 어긋나 ArgoCD 가 계속 OutOfSync 로 뜬다(2026-08-04 실측). 영구 OutOfSync 는
+    #    "진짜 drift" 를 가려버리므로 눈감고 넘길 문제가 아니다. 순서도 오퍼레이터가 넣는 대로 맞춘다.
+    #    ⚠️ 기본 쿼리에 이미 pg_replication_slots 가 들어 있다 — 죽어 있던 알림을 실제로 살린 건
+    #    아래 mp-pg-custom-queries 가 아니라 이 배선 자체다. 커스텀 쪽이 추가로 주는 것은
+    #    `wal_status` 라벨 하나(슬롯 무효화 lost 감지)뿐이다. 상세는 custom-queries.yaml 헤더.
+    customQueriesConfigMap:
+      - name: cnpg-default-monitoring
+        key: queries
+      - name: mp-pg-custom-queries
+        key: queries # CNPG 는 ConfigMap key 를 명시해야 지표를 로드한다 — 없으면 알림이 조용히 죽는다
+
+  bootstrap:
+    pg_basebackup:
+      source: vm-pg
+      # 🔴 이 두 줄이 없으면 CNPG 기본값 database/owner = `app` 이 박힌다(2026-07-29 실측).
+      # 물리 복제본엔 app DB 도 app 롤도 없는데 메트릭 익스포터가 database=app 으로 붙으러 가서
+      # cnpg_collector_up=0 — cnpg_* 관측이 통째로 죽는다(런북 §9-25 · Q9 전제).
+      # 🔴 bootstrap 은 생성 시점 1회만 유효 — 고치려면 Cluster 삭제·재생성이다(실측 116초).
+      database: foodbudget
+      owner: fbapp # 실재 롤(basebackup 승계분). CNPG 는 pg_basebackup 부트스트랩에서 앱 자격증명을
+        # 관리하지 않는다(pg-app 시크릿 미생성 실측) — 이름만 알려주는 것이라 비밀번호에 영향 없다
+
+  replica:
+    enabled: false # 🔫 발사됨 (2026-07-29 전환창 T-1 장전 — 스텝 4 의 manual sync 가 promote 를 실행)
+    source: vm-pg
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: mp-pg-backup # → objectstore.yaml. 리허설 §7 의 S3 왕복(게이트 ①)이 이 경로를 탄다
+
+  externalClusters:
+    - name: vm-pg
+      connectionParameters:
+        host: 192.168.0.8
+        port: "5432"
+        user: streaming_replica
+        dbname: postgres
+        sslmode: prefer # VM PG 는 SSL 미설정 — prefer 가 평문 폴백(파드→VM 구간은 현행 compose 와 동일 평문, status §5 과도기 명시)
+      password:
+        name: mp-pg-replica-source
+        key: password
