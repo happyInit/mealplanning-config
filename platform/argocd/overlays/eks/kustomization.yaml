@@ -8,7 +8,7 @@ kind: Kustomization
 #
 # 여기서 갈라야 하는 것 — 실측 15건 (SITES.md §0-4 "이 구조가 열어주는 것"):
 #   [0-5] nodeSelector `kubernetes.io/hostname`      5건 · loki.yaml:79(b1) · kubecost.yaml:53,75,101,125(a2)
-#   [0-5] nodeSelector `topology.../zone: host-b`    1건 · tempo.yaml:108
+#   [0-5] nodeSelector `topology.../zone: host-b`    ✅ 1건 해소 · tempo.yaml:108 → 아래 patch
 #   [0-8] storageClass `openebs-lvm`                 6건 · loki.yaml:82 · tempo.yaml:112
 #                                                          · kubecost.yaml:25,62,80,83  → gp3
 #   [0-9] Harbor LAN IP `192.168.0.10/mealplanning`  1건 · rollouts.yaml:87 (initContainer 이미지) → ECR
@@ -43,3 +43,26 @@ patches:
       - op: replace
         path: /spec/source/helm/valuesObject/controller/initContainers/0/image
         value: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
+
+# ── 0-5 nodeSelector 이탈 — tempo (2026-08-10) ────────────────────────────────
+# `topology.kubernetes.io/zone: host-b` 는 **온프렘에서만 참인 값**이다. EKS 는 같은 라벨 키에
+# 실제 AZ(`ap-northeast-2a`·`ap-northeast-2c`)가 들어가므로 `host-b` 는 어느 노드에도 안 맞고,
+# tempo 파드가 **영구 Pending** 이 된다. persistence 가 켜져 있어(`enabled: true`) PVC 도
+# `WaitForFirstConsumer` 로 같이 멎는다 — 파드가 안 뜨니 볼륨도 영원히 안 붙는다.
+#
+# 🔴 온프렘 값은 base 에 **그대로 둔다**(ES 트랙과 반대 방향). ES 는 base→overlays/onprem 이사였지만
+#    여기는 `platform/argocd/overlays/onprem/kustomization.yaml` 의 방침이 "사이트 결합 값은
+#    base 에 그대로 둔다" 라서(그 파일 주석 9행), 이탈은 **eks 쪽에서 빼는** 모양이 된다.
+#    → 온프렘 렌더 diff 0. 배치 근거(호스트 B 고정 = A 급사 시 관측 생존)는 온프렘에서 계속 유효하다.
+#
+# 🔴 `op: test` 를 앞에 두는 이유는 위 rollouts 패치와 같다 — base 가 바뀌면 조용히 어긋나는 대신
+#    렌더가 죽어서 `validate.py` 가 잡는다.
+# ⚠️ JSON Pointer(RFC 6901) 이스케이프 — 키 `topology.kubernetes.io/zone` 의 `/` 는 `~1` 이다.
+#    이스케이프를 빼면 `topology.kubernetes.io` 아래 `zone` 이라는 **없는 경로**를 가리켜 test 가 깨진다.
+  - target: {group: argoproj.io, kind: Application, name: tempo}
+    patch: |-
+      - op: test
+        path: /spec/source/helm/valuesObject/nodeSelector/topology.kubernetes.io~1zone
+        value: host-b
+      - op: remove
+        path: /spec/source/helm/valuesObject/nodeSelector
