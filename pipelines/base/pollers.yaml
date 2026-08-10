@@ -36,7 +36,12 @@ spec:
               #    #580 이 포맷터의 exc_info 누락을 고쳐 트레이스백·error_type·category_code 가 찍힌다.
               #    #580 은 Jenkinsfile 에 `srcs:['crawler/kurly/','pipelines/stream/']` 도 넣어서,
               #    앞으로는 공유코드만 고쳐도 이 이미지가 리빌드된다(종전엔 조용히 옛 코드가 남았다).
-              image: 192.168.0.10/mealplanning/mp-crawler-kurly:9235439e52183980f1cdac0bf273abab6d965e15
+              # 2026-08-10(2차): app#588 — 간헐 유실의 **진짜 원인**을 고쳤다.
+              #    첫 카테고리(907)만 깨지던 건 SPA 렌더 경합이었다 — `wait_for_timeout(2000)` 고정
+              #    대기가 첫 내비게이션(캐시·쿠키 없음)에서 모자랐다. 실패까지 2.46초 = 타임아웃이
+              #    아니라 덜 기다린 것. 이제 카드 개수가 멈출 때까지 기다린다(꽉 차면 즉시 통과).
+              #    부수 효과로 페이지당 고정 2초가 사라져 잡 전체가 ~18초 짧아진다.
+              image: 192.168.0.10/mealplanning/mp-crawler-kurly:4f03052ef394f1a3064296f9f321516fa5e08575
               command: ["python", "crawler/kurly/prototype.py", "--kafka"]
               envFrom:
                 - configMapRef:
