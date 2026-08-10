@@ -24,7 +24,7 @@ spec:
       priorityClassName: pipeline-low
       containers:
         - name: retail-refiner
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
           command: ["python", "pipelines/stream/consume_retail.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
           envFrom:
             - configMapRef:
@@ -67,7 +67,7 @@ spec:
       priorityClassName: pipeline-low
       containers:
         - name: deal-notifier
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
           command: ["python", "pipelines/stream/consume_deal.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
           envFrom:
             - configMapRef:
@@ -110,7 +110,7 @@ spec:
       priorityClassName: pipeline-low
       containers:
         - name: recipe-refiner
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
           command: ["python", "pipelines/stream/consume_recipe.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
           envFrom:
             - configMapRef:
@@ -153,7 +153,7 @@ spec:
       priorityClassName: pipeline-low
       containers:
         - name: user-event-sink
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
           command: ["python", "pipelines/stream/consume_user_event.py"] # 이미지 WORKDIR=/app — compose 와 동일 상대경로 계약
           envFrom:
             - configMapRef:
@@ -201,7 +201,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: price-anomaly-notifier
-          image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+          image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
           imagePullPolicy: IfNotPresent
           command: ["python", "pipelines/stream/consume_price_anomaly.py"]
           env:

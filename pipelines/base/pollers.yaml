@@ -80,7 +80,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-oasis-dawn
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               command: ["python", "crawler/oasis/oasis_crawler.py", "--categories", "11,142,141,12,49,9,13,3,216,1274,1275,219,1191", "--kafka"]
               envFrom:
                 - configMapRef:
@@ -119,7 +119,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-oasis-noon
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               command: ["python", "crawler/oasis/oasis_crawler.py", "--categories", "11,142,141,12,49,9,13,3,216,1274,1275,219,1191", "--kafka"]
               envFrom:
                 - configMapRef:
@@ -158,7 +158,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-deal-timesale
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               command: ["python", "crawler/oasis/oasis_crawler.py", "--deal", "timeSale", "--kafka"]
               envFrom:
                 - configMapRef:
@@ -197,7 +197,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-deal-closesale
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               command: ["python", "crawler/oasis/oasis_crawler.py", "--deal", "closeSale", "--kafka"]
               envFrom:
                 - configMapRef:
@@ -237,7 +237,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-recipe
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               command: ["python", "/app/crawler/10k_recipe/10k_recipe_crawler.py", "--kafka", "--order", "date"]
               workingDir: /data/recipe-crawl
               envFrom:
@@ -284,7 +284,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-price-matview
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               command: ["python", "pipelines/ingest/refresh_price_matview.py"]
               envFrom:
                 - configMapRef:
@@ -324,7 +324,7 @@ spec:
           priorityClassName: pipeline-low
           containers:
             - name: poller-es-recipes
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               command: ["python", "pipelines/ingest/index_recipes_es.py"]
               envFrom:
                 - configMapRef:
@@ -371,7 +371,7 @@ spec:
           terminationGracePeriodSeconds: 30
           containers:
             - name: poller-price-anomaly
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               imagePullPolicy: IfNotPresent
               command: ["python", "pipelines/ingest/detect_price_anomaly.py", "--emit"]
               envFrom:
@@ -413,7 +413,7 @@ spec:
           terminationGracePeriodSeconds: 30
           containers:
             - name: poller-recipe-review
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               imagePullPolicy: IfNotPresent
               command: ["python", "crawler/10k_recipe/review_crawler.py"]
               envFrom:
@@ -450,7 +450,7 @@ spec:
           terminationGracePeriodSeconds: 30
           containers:
             - name: score-review-sentiment
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               imagePullPolicy: IfNotPresent
               command: ["python", "pipelines/ingest/score_review_sentiment.py"]
               env:
@@ -489,7 +489,7 @@ spec:
           terminationGracePeriodSeconds: 30
           containers:
             - name: summarize-reviews
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               imagePullPolicy: IfNotPresent
               command: ["python", "pipelines/ingest/summarize_reviews.py"]
               env:
@@ -528,7 +528,7 @@ spec:
           terminationGracePeriodSeconds: 30
           containers:
             - name: data-invariants
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               imagePullPolicy: IfNotPresent
               command: ["python", "pipelines/ingest/data_invariants.py"]
               envFrom:
@@ -565,7 +565,7 @@ spec:
           terminationGracePeriodSeconds: 30
           containers:
             - name: pantry-expire-recompute
-              image: 192.168.0.10/mealplanning/mp-data-pipeline:710b056de8174c5026ab3c5273d4dee973da4ff7
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
               imagePullPolicy: IfNotPresent
               command: ["python", "pipelines/ingest/recompute_pantry_expire.py", "--apply"]
               envFrom:

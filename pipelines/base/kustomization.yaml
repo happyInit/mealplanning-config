@@ -1,7 +1,13 @@
 # 파이프라인 (pipeline ns) — 컨슈머 4 + CronJob 11 (런북 Q12 · §1 실측 인벤토리).
 # 🔴 PVC 2종은 여기 없다 — C-20 으로 **온프렘 잔류**라 `overlays/onprem/pvc.yaml` 로 내려갔다.
 # 소유 = 인프라 / child = platform-root 가 집고 project=mealplanning (Q8).
-# 이미지 = 파이프라인 트랙 1.2.0 (:21db938c… — 2026-07-29 릴리스 런[Sentinel-aware], 3태그 정책대로 :sha 핀).
+# 이미지 = 파이프라인 트랙, 3태그 정책대로 :sha 핀 (`mp-data-pipeline` 22곳 · `mp-crawler-kurly` 1곳).
+# 🔴 **이 트랙은 Jenkins CD 가 태그를 안 올린다** — 'config 레포 태그 커밋' 스테이지는 앱 워크로드
+#    오버레이만 대상이라 data-pipeline·crawler-kurly·pgsync 는 스킵한다(Jenkinsfile 296).
+#    즉 **손으로 올리지 않으면 앱 레포를 아무리 고쳐도 옛 이미지가 계속 돈다.**
+#    실제로 그렇게 돼서 2026-08-10 에 crawler-kurly 6일치 · data-pipeline 10일치가 밀려 있었고,
+#    그동안 컬리 크롤 실패 원인을 못 보고 있었다(포맷터 수정이 이미지에 도달을 못 했다).
+#    앱 레포 `pipelines/`·`crawler/` 를 고쳤으면 여기 핀도 같이 올릴 것.
 # ✅ 전환창 §4-9 실행(2026-07-29) — 컨슈머 4 replicas 1 · CronJob 11 unsuspend, K8s 파이프라인이 정본.
 #    (구 dark-deploy 기본값은 전환창 전 상태 — 재-dark 가 필요하면 이 두 값 계열을 되돌린다.)
 # jobs/ 는 리소스에 안 넣는다 — 재색인 Job 은 필요 시점(§2-C-3·§4-5.5)에 kubectl 로 1회성 실행.
