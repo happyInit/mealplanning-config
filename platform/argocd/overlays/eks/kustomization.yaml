@@ -43,3 +43,92 @@ patches:
       - op: replace
         path: /spec/source/helm/valuesObject/controller/initContainers/0/image
         value: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
+
+  # ── C-18 MinIO 삭제 → S3 · 1-19 region/TLS — Loki (2026-08-10) ───────────────
+  # 🔴 **EKS 에는 MinIO 가 없다**(C-18). base 의 `http://minio.observability.svc:9000` 을 그대로
+  #    가져가면 Loki 가 store init 에서 죽는다. 4개를 **한 묶음으로** 갈아야 한다 —
+  #    하나만 하면 조용히 실패한다:
+  #
+  #   ① endpoint  → `s3.ap-northeast-2.amazonaws.com` (스킴 없이. Loki 는 insecure 로 판단한다)
+  #   ② 🔴 region  → **1-19.** 실측 = 온프렘 loki·tempo 매니페스트에 region 이 **0건**이다.
+  #      MinIO 는 region 을 안 봤지만 S3 는 본다. 안 넣으면 SDK 가 기본 리전(us-east-1)으로
+  #      붙어 **버킷을 못 찾는다**(ap-northeast-2 버킷이라 301/PermanentRedirect).
+  #   ③ 🔴 insecure: false · s3ForcePathStyle: false — **1-19 의 "뒤집기"** 가 이것이다.
+  #      `insecure: true` 면 평문 HTTP 로 S3 에 붙으려 하고, path-style 은 S3 가 이미 폐기 방향이다.
+  #   ④ 🔴 `extraEnvFrom` **삭제** — `lgtm-minio-creds` 시크릿이 EKS 에 없다. 남기면 파드가
+  #      `CreateContainerConfigError` 로 아예 안 뜬다(시크릿 없는 secretRef). `-config.expand-env`
+  #      도 같이 뺀다 — 치환할 `${MINIO_*}` 가 더 이상 없다.
+  #      ⇒ 자격증명은 **IRSA**(SA 애너테이션)로 간다. Loki 는 키를 안 적으면 AWS SDK 기본
+  #        자격증명 체인을 타므로 accessKeyId/secretAccessKey 를 **적지 않는다**(0-16 과 같은 트랙).
+  #
+  # 🔴 [0-5] nodeSelector `kubernetes.io/hostname: k8s-worker-b1` **제거** — EKS 에 그런 노드가
+  #    없어 영구 Pending 이다. `null` 이 키 삭제로 동작한다(SITES.md §0-4 실증).
+  #    base 에 남겨 두는 이유 = 온프렘에선 여전히 참이다(로컬 PV 가 b1 에 묶여 있다).
+  #
+  # ⚠️ 여기서 **안 고친 것** = `singleBinary.persistence.storageClass: openebs-lvm` → `gp3`.
+  #    그건 **0-8**(SC 트랙) 소관이고 이 PR 은 C-18(오브젝트 스토어)만 다룬다.
+  #    🔴 0-8 이 안 오면 PVC 가 바인딩되지 않아 Loki 가 Pending 이다 — 둘 다 필요하다.
+  # ⚠️ `PLACEHOLDER`(계정 ID)·버킷 이름은 C-8(계정 3개) 미생성 상태의 자리표시자다.
+  - target: {group: argoproj.io, kind: Application, name: loki}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: loki, namespace: argocd}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              loki:
+                storage:
+                  bucketNames:
+                    chunks: mp-observability-eks
+                    ruler: mp-observability-eks
+                    admin: mp-observability-eks
+                  s3:
+                    endpoint: s3.ap-northeast-2.amazonaws.com
+                    region: ap-northeast-2
+                    accessKeyId: null
+                    secretAccessKey: null
+                    s3ForcePathStyle: false
+                    insecure: false
+              serviceAccount:
+                annotations:
+                  eks.amazonaws.com/role-arn: arn:aws:iam::PLACEHOLDER:role/mp-loki-s3
+              singleBinary:
+                nodeSelector: null
+                extraArgs: null
+                extraEnvFrom: null
+
+  # ── C-18 · 1-19 — Tempo ──────────────────────────────────────────────────────
+  # 근거는 위 Loki 와 같다. Tempo 쪽 키 이름만 다르다(`insecure`/`forcepathstyle` — 소문자 붙임).
+  # 🔴 Tempo 는 **store init 실패 시 fail-fast** 다(base 주석: 그래서 421회 재시작으로 먼저 터졌다).
+  #    즉 이 패치가 틀리면 EKS 에서 가장 먼저·가장 시끄럽게 죽는 컴포넌트다 — 역설적으로 좋다.
+  # ⚠️ `nodeSelector: topology.kubernetes.io/zone: host-b` 는 **여기서 안 고친다** — zone 라벨
+  #    3건(prometheus·alertmanager·tempo)은 다른 레인 소관이다. 🔴 안 고치면 EKS 에서
+  #    zone 값이 `ap-northeast-2a/c` 라 영구 Pending 이다. 그 PR 과 **둘 다** 필요하다.
+  # ⚠️ `persistence.storageClassName: openebs-lvm` → `gp3` 도 0-8 소관(위와 동일).
+  - target: {group: argoproj.io, kind: Application, name: tempo}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: tempo, namespace: argocd}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              tempo:
+                extraArgs: null
+                extraEnvFrom: null
+                storage:
+                  trace:
+                    s3:
+                      bucket: mp-observability-eks
+                      endpoint: s3.ap-northeast-2.amazonaws.com
+                      region: ap-northeast-2
+                      access_key: null
+                      secret_key: null
+                      insecure: false
+                      forcepathstyle: false
+              serviceAccount:
+                annotations:
+                  eks.amazonaws.com/role-arn: arn:aws:iam::PLACEHOLDER:role/mp-tempo-s3

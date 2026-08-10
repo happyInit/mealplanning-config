@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── 온프렘 사이트 오버레이 ─────────────────────────────────────────────────────
+# 지금은 base 통과다. 온프렘에선 목적지가 **인클러스터 MinIO** 이고 자격증명이 필요하다.
+# 🔴 MinIO 를 온프렘에서도 지우면(C-18 을 양쪽에 적용하면) 이 ExternalSecret 도 함께 소멸한다 —
+#    그때는 Loki·Tempo 가 IRSA 가 아니라 **정적 IAM 키**를 써야 한다(온프렘은 EKS 밖이라
+#    IRSA 가 불가하다 — 체크리스트 ③ "온프렘의 S3 쓰기 권한" 과 같은 문제다).
+#    ⇒ 그 판단은 이 PR 범위 밖이다. ../../README.md "온프렘 MinIO 철거" 참조.
+resources:
+  - ../../base

@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+# ── observability ns 의 비밀 배선 (C-18 선행) ─────────────────────────────────
+# child app = platform/argocd/base/observability-secrets.yaml (수동 sync).
+#
+# 🔴 **이 트랙이 생긴 이유 = 단일 공급원을 끊는 것.**
+#    `lgtm-minio-creds`(Loki·Tempo 의 오브젝트 스토어 자격증명)는 지금까지
+#    **Ansible 롤 `k8s_platform_apps` 가 유일한 공급원**이었다 — ArgoCD 관리 밖이다
+#    (실측: 시크릿에 tracking-id 없음 · `kubectl apply` 계열 last-applied 애너테이션만 있음).
+#    그래서 CLAUDE.md 가 *"ESO/config 로 이관하기 전에는 그 롤을 지우지 말 것"* 이라고 못 박아 뒀다.
+#    ⇒ 이 파일이 그 이관이다. 여기가 정본이 되면 롤의 시크릿 태스크를 걷을 수 있다.
+resources:
+  - externalsecret-lgtm-object-store.yaml

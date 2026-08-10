@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── EKS 사이트 오버레이 — 🔴 아직 배포 대상이 아니다 ──────────────────────────
+# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다. 비어 있어도 검증은 초록이다.
+#
+# 🔴 **EKS 에는 이 ExternalSecret 이 필요 없다** — C-18 로 MinIO 가 없고, Loki·Tempo 는
+#    IRSA(SA 애너테이션, `platform/argocd/overlays/eks`)로 S3 에 붙는다. 즉 **정적 키가 0개**다.
+#    그래서 base 를 그대로 상속하는 대신 **지운다.** 남겨 두면
+#      · `fb-secrets`(온프렘 K8s provider)를 가리키는 ExternalSecret 이 AWS 에서 NotReady 로 남고
+#      · 0-16 이 없애려는 "정적 자격증명" 이 이름만 바꿔 되살아난다.
+resources:
+  - ../../base
+patches:
+  - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-lgtm-object-store}
+    patch: |-
+      $patch: delete
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata: {name: mp-lgtm-object-store, namespace: observability}
