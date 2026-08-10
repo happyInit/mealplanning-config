@@ -2,7 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: observability
 # 보안 ③ 티어 4 — observability ns default-deny(Ingress) 묶음.
-# child app = argocd/applications/policies-observability.yaml (mp-policies-observability, 수동 sync).
+# child app = platform/argocd/base/policies-observability.yaml (mp-policies-observability, 수동 sync).
 # 🔴 app(platform/policies)·data(platform/policies-data)·pipeline 과 분리 — 여기는 namespace:observability.
 #
 # 🔴 **v1 은 내부 도구 6종을 통째로 끊었다**(2026-08-03). 원인 = Cilium 이 트래픽을 IP 가 아니라

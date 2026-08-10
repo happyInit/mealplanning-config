@@ -51,15 +51,17 @@ SKIP_KUSTOMIZE_RE = re.compile(r"/(base|overlays/eks)$")
 
 # kustomization 없이 매니페스트를 그대로 두는 디렉터리형 ArgoCD 앱
 #
-# 🔴 2026-08-09(0-1) 로 6개가 여기서 빠졌다 — platform/{es,kafka,pg,pgsync,pooler,redis} 는
+# 🔴 2026-08-09(0-1) 로 6개가 빠졌다 — platform/{es,kafka,pg,pgsync,pooler,redis} 는
 #    사이트 분기(base/ + overlays/{onprem,eks})를 받으면서 kustomize 트랙이 됐다.
-#    이제 그 매니페스트는 kustomize_dirs() 의 `<트랙>/overlays/onprem` 렌더로 들어온다.
-#    남은 셋은 성격이 다르다:
-#      argocd/applications · platform/argocd = **ArgoCD 뿌리**. 뿌리 Application 2개가 IaC 밖이라
-#        (체크리스트 0-4) 경로를 config 레포 커밋으로 못 바꾼다 → 재구성 대상에서 의도적으로 뺐다.
-#      pipelines/jobs = ArgoCD 비대상(1회성 kubectl). desired state 가 아니라 분기할 것도 없다.
+# 🔴 2026-08-10(0-4 컷오버 3단계) 로 뿌리 2개도 빠졌다 — `argocd/applications` · `platform/argocd`.
+#    뿌리 Application 이 IaC 밖이라 경로를 못 바꾸던 것이 원인이었는데, 앱 레포 Ansible 이
+#    두 뿌리를 관리하게 되면서(0-4 2단계) `…/overlays/{{ argocd_site }}` 로 옮겼다.
+#    이제 그 매니페스트도 kustomize_dirs() 의 `<트랙>/overlays/onprem` 렌더로 들어온다.
+#
+# 남은 하나는 성격이 다르다:
+#   pipelines/jobs = ArgoCD 비대상(1회성 kubectl). desired state 가 아니라 분기할 것도 없다.
 DIRECTORY_APPS = [
-    "argocd/applications", "pipelines/jobs", "platform/argocd",
+    "pipelines/jobs",
 ]
 
 # 사이트 분기 골격(0-1). ArgoCD 가 실제로 쓰는 것은 overlays/onprem 뿐이고,
