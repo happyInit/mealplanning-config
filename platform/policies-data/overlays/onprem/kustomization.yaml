@@ -24,7 +24,10 @@ patches:
           from:
             - ipBlock:
                 cidr: 192.168.0.0/24
-  # mp-pg-pooler ingress[1] — app backend(0) 다음(= 마지막)
+  # mp-pg-pooler ingress[1] — app backend(0) 다음
+  # ⚠️ C-53 으로 base 에 Tailscale 규칙이 붙었다 → 여기는 **마지막이 아니라 삽입**이다.
+  #    JSON Patch `add` 는 밀어넣기라 Tailscale 규칙이 2번으로 밀리고 셋 다 살아 있다.
+  #    netpol ingress 는 합집합이라 순서에 의미가 없어 동작은 같다.
   - target:
       group: networking.k8s.io
       version: v1

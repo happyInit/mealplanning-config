@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── 온프렘 사이트 오버레이 (C-53) ──────────────────────────────────────────────
+# 지금은 base 와 같다. **사이트 결합 값이 base 에 남아 있는 것을 여기 적어 둔다** —
+# 나중에 eks 를 켤 때 무엇을 갈라야 하는지가 이 목록이다:
+#   · connector-subnet-onprem.yaml 의 `192.168.0.0/24`  → AWS 는 VPC CIDR `10.10.0.0/16`
+#   · Service 2개의 `tailscale.com/hostname` 접미사 `-onprem` → `-eks`
+#     🔴 MagicDNS 이름은 tailnet 전역에서 유일해야 한다. 양 사이트가 같은 이름을 쓰면
+#        두 번째 디바이스가 이름을 못 잡거나 첫 번째를 밀어낸다 ⇒ 사람이 어느 사이트 PG 에
+#        붙었는지 모르게 된다. **이게 이 오버레이가 존재하는 진짜 이유다.**
+#   · externalsecret-oauth.yaml 의 `secretStoreRef` → eks 는 `mp-aws-ssm` (0-2 · C-23)
+resources:
+  - ../../base

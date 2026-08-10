@@ -1,0 +1,87 @@
+# tailscale-operator — 플랫폼 child Application (C-53). 오퍼레이터 **차트**만 여기서 본다.
+# 그 위의 CR(Connector·ProxyClass·노출 Service·netpol)은 platform/tailscale/ = tailscale.yaml.
+#
+# 🔴 사람 평면 전용이다. 데이터 평면(PG WAL 복제 C-40 · 크롤 운반 C-44 · 서비스 간 호출)을
+#    이 경로에 태우지 말 것 — 경계선의 강제는 platform/tailscale/acl/policy.hujson 의 tests.
+#
+# 🔴 **선행 3건. 하나라도 없으면 sync 가 실패하거나 조용히 안 붙는다.**
+#   ① ns `tailscale` — Ansible `k8s_cluster_base` 가 유일 생산자다(ArgoCD 가 만들지 않는다).
+#      🔴 PSS 는 **privileged** 여야 한다. Tailscale v1.78+ 부터 프록시 main 컨테이너가
+#         `/dev/net/tun` 생성 때문에 privileged 로 돌고 CAP_NET_ADMIN 을 쓴다 ⇒
+#         오퍼레이터 ns 기본값 `baseline` 이면 **프록시 파드가 admission 에서 거부된다.**
+#         (오퍼레이터 파드 자체는 baseline 으로도 뜬다 — 그래서 "오퍼레이터는 떴는데
+#          디바이스가 안 생긴다" 로 헷갈리게 실패한다.)
+#   ② AppProject `platform` destinations 에 `tailscale` — 없으면 배포 거부.
+#      🔴 이것도 Ansible 이 정본이다(실측: 라이브 AppProject 의 last-applied 가
+#         `argocd-platform-project.yaml.j2` 출력과 일치). group_vars 의 `k8s_operator_namespaces`
+#         한 줄이 ①과 ②를 **동시에** 만든다 — 그 목록이 두 롤의 공통 입력이다.
+#   ③ sourceRepos 에 `https://pkgs.tailscale.com/helmcharts` — 없으면 Application 이
+#      `InvalidSpecError: repo is not permitted`. (descheduler 가 이걸로 죽어 있던 전례가 있다.)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tailscale-operator
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://pkgs.tailscale.com/helmcharts
+    chart: tailscale-operator
+    # 🔴 버전 핀. `""`(latest)로 두면 오퍼레이터가 조용히 올라가고 CRD 스키마가 바뀔 수 있다.
+    targetRevision: "1.98.9"
+    helm:
+      valuesObject:
+        # 🔴 oauth 를 **비워 둔다** — 차트의 oauth-secret.yaml 은 `.Values.oauth.clientId` 가
+        #    있을 때만 Secret 을 만든다(실측). 비우면 안 만들고, Deployment 는 그대로
+        #    `secretName: operator-oauth` 를 마운트한다 ⇒ 그 자리를 ESO 가 채운다
+        #    (platform/tailscale/base/externalsecret-oauth.yaml).
+        #    여기에 값을 적으면 **git 에 비밀이 들어간다.** 절대 금지.
+        oauth:
+          clientId: ""
+          clientSecret: ""
+        installCRDs: true # Connector·ProxyClass·ProxyGroup 등 7종. AppProject 화이트리스트에 CRD 있음
+        # 🔴 **false 로 내린다.** 차트가 만드는 클러스터 스코프 오브젝트를 렌더해서 센 결과:
+        #    ClusterRole 2 · ClusterRoleBinding 2 · CRD 7 · **IngressClass 1**.
+        #    앞 3종은 AppProject clusterResourceWhitelist 에 있지만 **IngressClass 는 없다**
+        #    ⇒ 켜 두면 sync 가 "resource not permitted in project" 로 죽는다.
+        #    끄는 게 화이트리스트를 넓히는 것보다 낫다 — 우리는 L7 Ingress 를 안 쓴다(L3 TCP 만).
+        ingressClass:
+          enabled: false
+        operatorConfig:
+          hostname: mp-tailscale-operator-onprem # tailnet 에 보이는 이름. 사이트를 이름에 넣는다
+          logging: info
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 128Mi }
+        proxyConfig:
+          # 🔴 프록시 파드에 우리 ProxyClass 를 기본으로 물린다. **netpol 이 이것에 의존한다** —
+          #    ProxyClass 가 심는 라벨 `mp.io/plane: human` 이 netpol-proxy-egress.yaml 의
+          #    셀렉터다. 비우면 프록시에 라벨이 없어 **egress 잠금이 아무 파드도 안 잡는다**
+          #    (정책은 초록인데 실제로는 안 걸린 상태 = 제일 나쁜 실패).
+          defaultProxyClass: mp-tailscale-proxy
+          # 🔴 `tag:k8s` 를 tagOwners 에 **일부러 선언하지 않았다**(acl/policy.hujson).
+          #    ⇒ Service 가 `tailscale.com/tags` 를 빼먹으면 이 기본값이 쓰이고, 그 태그의
+          #      소유자가 없어 **디바이스 생성이 거부된다** = fail-closed. 의도한 동작이다.
+          defaultTags: "tag:k8s"
+        apiServerProxyConfig:
+          # 🔴 kube-apiserver 를 tailnet 에 노출하지 않는다. 우리 kubectl 경로는 SSH 직결이고
+          #    (CLAUDE.md §로컬작업 2), API 서버를 tailnet 에 올리면 RBAC 위에 tailnet 신원
+          #    체계가 한 겹 더 얹혀 "누가 무슨 권한으로 들어왔나" 의 정본이 둘이 된다.
+          mode: "false"
+          allowImpersonation: "false"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tailscale
+  syncPolicy:
+    # 🔴 수동 sync. 오퍼레이터 업그레이드가 프록시 StatefulSet 을 굴리면 사람 접근이 끊기고,
+    #    무엇보다 **선행 3건이 갖춰졌는지 사람이 확인한 뒤** 처음 올려야 한다.
+    #    (netpol 잠금 순서도 있다 — platform/tailscale/base/netpol-proxy-egress.yaml 머리말.)
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tailscale
+# ── C-53 Tailscale — **사람 평면 전용** ────────────────────────────────────────
+# child app = platform/argocd/base/tailscale.yaml (수동 sync).
+# 오퍼레이터 차트 자체는 별 Application(tailscale-operator.yaml) — 여기는 그 위의 CR 들이다.
+# 적용 순서·키 정책·되돌리기 = ../README.md
+#
+# 🔴 **한 문장: "데이터는 S3 로, 사람은 Tailscale 로."**
+#    이 디렉터리에 데이터 평면(PG WAL 복제 C-40 · 크롤 운반 C-44 · 서비스 간 호출)을
+#    태우는 오브젝트를 추가하면 C-40·C-44 의 실측 근거가 통째로 무효가 된다.
+#    경계선은 문서가 아니라 **두 곳에서 강제된다**:
+#      ① tailnet ACL  ../acl/policy.hujson 의 `tests` 블록(deny 단정) — 어기면 ACL push 가 실패
+#      ② K8s netpol   netpol-proxy-egress.yaml — 프록시가 data ns 의 5432·9200 밖으로 못 나간다
+#
+# 🔴 왜 subnet router 만으로 안 되는가 (C-53 의 핵심)
+#    PG·ES 는 **파드**다(10.20.0.0/16 Cilium 오버레이). subnet router 가 광고하는
+#    LAN/VPC CIDR 안에 없다 ⇒ 라우팅이 그 대역을 모른다. 그래서 Operator 가 세트로 필요하다:
+#      subnet router  → LAN(192.168.0.0/24) 의 **호스트**들 (호스트 C 도구·Proxmox·노드 SSH)
+#      Operator       → **Service** 를 tailnet 디바이스로 노출 (pg-pooler · es-es-http)
+resources:
+  # 오퍼레이터 OAuth 클라이언트(ESO) — 🔴 없으면 오퍼레이터가 tailnet 에 못 붙는다
+  - externalsecret-oauth.yaml
+  # 프록시 파드 공통 형상(자원·라벨) — 🔴 netpol 이 이 라벨을 잡는다
+  - proxyclass.yaml
+  # subnet router 파드 (LAN 192.168.0.0/24)
+  - connector-subnet-onprem.yaml
+  # ExternalName + expose → data/pg-pooler:5432
+  - service-pg-pooler.yaml
+  # ExternalName + expose → data/es-es-http:9200
+  - service-es.yaml
+  # 🔴 프록시 egress 잠금 = 데이터 평면 금지의 K8s 쪽 강제.
+  #    🔴 **첫 sync 에는 이 줄을 주석 처리한다** — 연결을 세운 뒤에 잠근다(../README.md 적용 순서 5→8).
+  - netpol-proxy-egress.yaml

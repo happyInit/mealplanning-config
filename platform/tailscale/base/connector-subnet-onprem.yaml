@@ -1,0 +1,42 @@
+# C-53 ① 온프렘 subnet router — LAN 호스트 접근용.
+#
+# 🔴 **무엇을 광고하고 무엇을 안 광고하는가 — 이 파일의 전부가 이 결정이다.**
+#
+#   광고한다    192.168.0.0/24   LAN. 여기 있는 것 = 호스트 C `.10`(Harbor·Jenkins·SonarQube)
+#                                · 하이퍼바이저 `.12`(Proxmox) · 노드 `.17`–`.20` SSH
+#                                · MetalLB 게이트웨이 `.14`–`.16`
+#                                → 지금 `ssh -L` 2중 터널로 하던 것을 한 겹으로 준다
+#
+#   🔴 광고하지 않는다  10.96.0.0/12 (Service CIDR) · 10.20.0.0/16 (Cilium 파드 CIDR)
+#      광고하면 **클러스터 안의 모든 ClusterIP 가 tailnet 에서 직접 도달 가능**해진다 —
+#      Kafka·Redis·app ns 서비스·kubelet 까지 전부. 그건 "사람 평면 전용" 이 아니라
+#      사이트 간 상시 데이터 경로이고, C-41 이 기각한 그것이다.
+#      PG·ES 는 **Service 노출 2개**(service-pg-pooler.yaml · service-es.yaml)로만 준다 —
+#      그래야 대상마다 태그가 달려 ACL 이 포트 단위로 좁힐 수 있다. CIDR 광고는 그 손잡이가 없다.
+#
+# 🔴 **경로 승인은 수동이다.** `autoApprovers` 를 일부러 ACL 에 넣지 않았다(키 정책 ⑤).
+#    ⇒ 이 Connector 가 처음 붙은 뒤 admin console **Machines → Edit route settings** 에서
+#      192.168.0.0/24 를 사람이 승인해야 실제로 라우팅된다. 승인 전에는 조용히 안 통한다.
+#      이게 버그처럼 보이지만 의도다 — 자동승인은 "auth key 하나로 새 대역이 열리는" 경로다.
+#
+# 🔴 replicas 를 1 로 둔다. 2 이상이면 `hostname` 을 못 쓰고(CRD 제약: replicas>1 이면
+#    hostnamePrefix 만) 라우트 중복 광고의 페일오버 동작을 따로 검증해야 한다.
+#    사람 평면이라 **파드 1개가 죽으면 사람이 잠깐 못 붙는 것**이고, 그 국면의 대체 경로는
+#    지금도 살아 있는 `ssh -L`(CLAUDE.md §로컬작업 2) 이다. HA 를 살 이유가 없다.
+---
+apiVersion: tailscale.com/v1alpha1
+kind: Connector
+metadata:
+  name: mp-subnet-onprem
+spec:
+  hostname: mp-subnet-onprem
+  tags:
+    - tag:mp-subnet-onprem
+  replicas: 1
+  proxyClass: mp-tailscale-proxy
+  subnetRouter:
+    advertiseRoutes:
+      - 192.168.0.0/24
+  # 🔴 exitNode 를 켜지 않는다 — 켜면 팀원 노트북의 **전체 인터넷 트래픽**이 이 파드를 통과한다.
+  #    호스트 C 의 여유 디스크 27.9GB · 클러스터 회선 1GbE 를 사람 트래픽으로 먹일 이유가 없고,
+  #    "사람이 우리 리소스에 접근한다" 와 "사람이 우리를 경유해 인터넷에 나간다" 는 전혀 다른 요구다.

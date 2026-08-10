@@ -1,0 +1,129 @@
+// mealplanning tailnet ACL — C-53. 정본은 이 파일이다(admin console 에서 직접 편집 금지).
+//
+// 🔴🔴 이 파일의 존재 이유 = **"데이터 평면 금지"를 문서가 아니라 정책으로 강제한다.**
+//      Tailscale ACL 은 기본 거부다. 그래서 "안 적으면 안 통한다" 는 이미 참인데,
+//      그것만으로는 부족하다 — 나중에 누가 넓은 규칙 한 줄을 추가하면 조용히 열린다.
+//      ⇒ 아래 `tests` 블록이 **금지 경로를 deny 로 단정**한다. 누가 데이터 평면을 열면
+//        ACL push 자체가 실패한다. 그게 이 파일에서 제일 중요한 부분이다.
+//
+// 🔴 한 문장: **"데이터는 S3 로, 사람은 Tailscale 로."**
+//      ✅ 태워도 되는 것   사람 → PG · ES · 내부 도구(LAN)
+//      ❌ 절대 안 되는 것  PG WAL 복제(C-40) · 크롤 운반(C-44) · 서비스 간 호출
+//         어기면 C-40·C-44 의 실측 근거가 무효가 된다. C-40 의 근거는 비용이 아니라
+//         **터널 직결이면 프로덕션 primary 에 복제 슬롯이 생겨 DR 단절이 프로덕션 디스크를 채운다**
+//         는 것이다(#555 계열 — 논리슬롯 무효화를 이미 한 번 겪었다).
+//
+// 적용 = admin console → Access controls 에 붙여넣기, 또는 tailscale/gitops-acls 액션.
+//        🔴 순서: **ACL 을 먼저 올린다 → 그 다음 OAuth 클라이언트 발급.**
+//        tagOwners 에 태그가 없으면 오퍼레이터가 그 태그로 디바이스를 못 만든다.
+{
+  // ── 태그 소유권 ───────────────────────────────────────────────────────────
+  // 🔴 소유자를 **사람이 아니라 태그**로 둔다(`tag:k8s-operator`). 사람을 소유자로 하면
+  //    그 사람이 팀을 떠날 때 디바이스가 고아가 된다. 오퍼레이터가 자기 자식을 소유한다.
+  "tagOwners": {
+    "tag:k8s-operator":      ["autogroup:admin"],
+    "tag:mp-pg":             ["tag:k8s-operator"],
+    "tag:mp-es":             ["tag:k8s-operator"],
+    "tag:mp-subnet-onprem":  ["tag:k8s-operator"],
+  },
+
+  "groups": {
+    // 🔴 5인 실명 계정. Tailscale Personal 은 **6인까지 무료**(실측 2026-08-10) → 요금 $0.
+    //    사람이 늘어 7인이 되는 순간 Standard $8/user/월 이다 — 서비스 계정을 사람 자리로
+    //    쓰지 말 것(그래서 위 태그 소유자가 tag:k8s-operator 다).
+    "group:dev": [
+      // TODO(사람): 실제 tailnet 계정 이메일 5개로 채운다. 레포가 공개라 여기 실주소를 적지 않는다.
+      //            팀 내부 채널에서 받아 push 직전에 채울 것.
+      "autogroup:admin",
+    ],
+  },
+
+  // 🔴 `autoApprovers` 를 **일부러 비워 둔다**(키 정책 ⑤).
+  //    넣으면 auth key/OAuth 하나로 **새 서브넷 경로가 사람 승인 없이 열린다** —
+  //    그게 바로 "auth key 가 새 장기 자격증명이 되는" 경로다.
+  //    ⇒ Connector 의 192.168.0.0/24 는 admin console 에서 **사람이 1회 승인**한다.
+  //      승인 전에는 조용히 안 통한다. 버그처럼 보이지만 의도다.
+  // "autoApprovers": { "routes": { ... } },   ← 추가 금지
+
+  "acls": [
+    // ── ✅ 사람 평면 ─────────────────────────────────────────────────────────
+    // 1) 사람 → PG (pooler 경유 · transaction 풀링). psql·DBeaver·장애 디버깅.
+    {
+      "action": "accept",
+      "src":    ["group:dev"],
+      "dst":    ["tag:mp-pg"],
+      "ip":     ["tcp:5432"],
+    },
+    // 2) 사람 → Elasticsearch. 🔴 ES 는 HTTP TLS 가 꺼져 있다 —
+    //    이 경로의 기밀성은 전부 WireGuard 가 진다. tailnet 밖으로 내보내지 말 것.
+    {
+      "action": "accept",
+      "src":    ["group:dev"],
+      "dst":    ["tag:mp-es"],
+      "ip":     ["tcp:9200"],
+    },
+    // 3) 사람 → LAN 내부 도구 (subnet router 경유). 평시 경로는 Cloudflare Access 이고
+    //    이건 그 백업 경로다 + 노드 SSH·Proxmox 처럼 애초에 CF 뒤에 없는 것들.
+    //    🔴 포트를 열거하고 `*` 를 쓰지 않는다. `*` 면 이 한 줄이 5432·9092 까지 포함해
+    //       아래 tests 의 deny 단정과 정면 충돌한다(= push 실패로 드러난다).
+    {
+      "action": "accept",
+      "src":    ["group:dev"],
+      "dst":    ["tag:mp-subnet-onprem", "192.168.0.0/24"],
+      "ip":     [
+        "tcp:22",    // 노드 .17–.20 · 호스트 C .10 SSH
+        "tcp:443",   // 내부 도구 게이트웨이 .15
+        "tcp:8006",  // Proxmox 웹 UI (하이퍼바이저 A·B)
+        "tcp:8081",  // Jenkins (호스트 C)
+        "tcp:9000",  // SonarQube (호스트 C)
+      ],
+    },
+
+    // ── ❌ 데이터 평면 = 규칙 없음 ───────────────────────────────────────────
+    // 여기에 tag→tag 규칙을 추가하지 말 것. 특히 아래는 절대 금지다:
+    //   tag:mp-pg  → tag:mp-pg   (WAL 복제 — C-40 이 실측으로 기각. S3 아카이브 유지)
+    //   tag:*      → tag:*       (서비스 간 호출 — 양 사이트는 서로를 모른다)
+    //   크롤 운반                 (C-44 — 파일 → S3 → SQS. tailnet 을 타지 않는다)
+    // 기본 거부라 안 적으면 이미 막히지만, 아래 tests 가 그 상태를 **회귀 테스트**로 고정한다.
+  ],
+
+  // 🔴 SSH 를 안 켠다. Tailscale SSH 는 tailnet 신원으로 SSH 를 대체하는 기능인데,
+  //    우리 노드 접근은 이미 팀 SSH 키(`team_ssh_keys` 롤, additive·멱등)로 관리된다.
+  //    두 신원 체계를 겹치면 "누가 들어왔나" 의 정본이 둘이 된다.
+  "ssh": [],
+
+  // ── 🔴🔴 여기가 ④의 실체 — 금지 경로를 단정한다 ──────────────────────────
+  // ACL 을 push 할 때 이 단정이 깨지면 **push 가 거부된다.**
+  // 즉 누가 데이터 평면을 열려고 하면 배포 시점에 실패한다 = 문서가 아니라 정책이다.
+  "tests": [
+    {
+      // 사람은 PG·ES·도구에 붙는다.
+      "src": "group:dev",
+      "accept": [
+        "tag:mp-pg:5432",
+        "tag:mp-es:9200",
+        "tcp:192.168.0.10:8081",
+      ],
+      "deny": [
+        // 사람도 Kafka·Redis 같은 데이터 운반 포트는 못 탄다(애초에 노출 대상이 아니다).
+        "tag:mp-pg:9092",
+        "tcp:192.168.0.10:5432",
+      ],
+    },
+    {
+      // 🔴 PG 가 PG 에 못 붙는다 = WAL 복제 경로 없음 (C-40).
+      "src": "tag:mp-pg",
+      "deny": ["tag:mp-pg:5432", "tag:mp-es:9200"],
+    },
+    {
+      // 🔴 ES 도 마찬가지 — 서비스 간 호출 없음.
+      "src": "tag:mp-es",
+      "deny": ["tag:mp-pg:5432"],
+    },
+    {
+      // 🔴 subnet router 가 데이터 스토어로 들어가는 발판이 되지 않는다.
+      "src": "tag:mp-subnet-onprem",
+      "deny": ["tag:mp-pg:5432", "tag:mp-es:9200"],
+    },
+  ],
+}

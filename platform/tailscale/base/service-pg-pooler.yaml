@@ -1,0 +1,43 @@
+# C-53 ② 노출 대상 ①/2 — data/pg-pooler:5432 를 tailnet 디바이스로 만든다.
+#
+# 🔴 **왜 CNPG 가 만든 `data/pg-pooler` Service 를 직접 annotate 하지 않는가**
+#    그 Service 는 Pooler CR 이 소유한다(실측: ownerReferences → Pooler/pg-pooler ·
+#    `cnpg.io/lastAppliedSpec` 애너테이션으로 CNPG 가 스펙을 되돌린다). 남의 컨트롤러가
+#    reconcile 하는 오브젝트에 애너테이션을 얹으면 언제 지워질지 우리가 통제하지 못한다 —
+#    지워지면 tailnet 노출이 **조용히** 사라진다.
+#    ⇒ 대신 우리가 소유하는 `ExternalName` Service 를 tailscale ns 에 둔다.
+#      Tailscale 오퍼레이터는 ExternalName 노출을 정식 지원하고, 그 프록시는 **TCP 를 그대로
+#      포워드**한다(문서상 PostgreSQL·MySQL·Redis 명시). 즉 5432 가 그대로 통한다.
+#
+# 🔴 pg-rw(primary 직결)가 아니라 **pooler** 를 노출한다 — 사람이 psql 로 붙었다 말았다 하는 게
+#    primary 의 커넥션 슬롯을 먹지 않게 한다(P3 실증: pooler 경유라 account 4 replica 에서도 12/100).
+#    pooler 는 `poolMode: transaction` 이다 ⇒ 세션 상태에 기대는 것(임시테이블·advisory lock·
+#    `SET` 유지·프리페어드 스테이트먼트)은 사람이 써도 안 먹는다. 그런 작업이 필요하면 별 경로다.
+#
+# 🔴 접속 주소는 우리가 못 정한다 — 프록시의 MagicDNS 이름이다. sync 후 실측:
+#      kubectl -n tailscale get secret -l tailscale.com/parent-resource=mp-pg \
+#        -o go-template='{{range .items}}{{.metadata.name}}{{"\n"}}{{end}}'
+#    🔴 값은 출력하지 말 것(레포 규칙). 이름은 admin console Machines 에서도 보인다.
+#    붙는 법:  psql -h <magicdns-name> -p 5432 -U <내 롤> -d foodbudget
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mp-pg
+  namespace: tailscale
+  annotations:
+    # L3(TCP) 노출. 오퍼레이터가 tailscale ns 에 프록시 StatefulSet 을 만들고
+    # 프록시의 tailnet IP 로 온 트래픽을 이 Service 의 대상으로 DNAT 한다.
+    tailscale.com/expose: "true"
+    # 🔴 태그가 ACL 의 유일한 손잡이다. 이 태그가 없으면 디바이스가 **사용자 소유**로 붙고
+    #    ACL 의 `tag:mp-pg` 규칙이 아무것도 매칭하지 않는다 ⇒ 의도한 최소권한이 성립하지 않는다.
+    #    태그는 ../acl/policy.hujson 의 tagOwners 에 선언돼 있어야 한다(없으면 오퍼레이터가 거부).
+    tailscale.com/tags: "tag:mp-pg"
+    # MagicDNS 이름 힌트. tailnet 안에서 유일해야 한다.
+    tailscale.com/hostname: "mp-pg-onprem"
+spec:
+  type: ExternalName
+  # 🔴 `.svc` 단축형 고정 — 4-dot FQDN(`…svc.cluster.local`)은 search 확장 중 `.local` 로 새어
+  #    ISP 가 NXDOMAIN 을 공인 IP 로 하이재킹한다(2026-08-02 실측 21.7%). validate.py 가 막는다.
+  #    단축형이면 확장 후보가 전부 `cluster.local` 로 끝나 바깥으로 안 나간다.
+  externalName: pg-pooler.data.svc

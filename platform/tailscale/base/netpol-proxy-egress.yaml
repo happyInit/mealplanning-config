@@ -1,0 +1,74 @@
+# C-53 ③·④ 의 K8s 쪽 강제 — **프록시가 갈 수 있는 곳을 좁힌다.**
+#
+# 🔴 왜 필요한가: tailscale ns 는 PSS `enforce: privileged` 다(프록시 main 컨테이너가
+#    `/dev/net/tun` 때문에 privileged 로 돈다 — Tailscale v1.78+). 즉 **클러스터에서 가장 느슨한
+#    ns 를 하나 새로 들이는 것**이고, 그 안의 파드는 tailnet 에서 들어온 트래픽을 전달한다.
+#    ACL(tailnet 쪽)만으로 막으면 통제가 한 겹이다. 여기서 K8s 쪽 한 겹을 더 둔다.
+#
+# 🔴 이 정책이 실제로 금지하는 것 = **데이터 평면**
+#      app ns 서비스 간 호출 · Kafka · Redis · pipeline ns · kubelet · 다른 ns 전부  → 막힌다
+#      허용은 data ns 의 **5432·9200 딱 두 포트**뿐이다.
+#    ⇒ 누가 나중에 "그냥 터널로 복제하지" 를 시도하면 **여기서 먼저 막힌다**(C-40·C-44 보호).
+#
+# 🔴 적용 순서 함정 — 이 파일은 프록시 파드에 **egress default-deny** 를 건다.
+#    allow 목록이 하나라도 빠지면 터널이 아예 안 붙고, netpol 거부는 RST 가 아니라 **드롭**이라
+#    로그가 안 남는다(진단이 오래 걸리는 종류다 — netpol-pg.yaml ingress 9) 주석의 그 실패).
+#    ⇒ **오퍼레이터·프록시가 먼저 뜨고 tailnet 연결이 확인된 뒤에** 이 파일을 붙인다.
+#      순서 = ① operator+CR sync (이 파일 주석처리) → ② 디바이스 생성·psql 왕복 확인
+#            → ③ 이 파일 sync → ④ 왕복 **재확인**(잠근 뒤에 다시 재본다)
+#    지난 실측 교훈: 관측창에 안 잡혔을 뿐인 경로가 있었다 → 잠그기 전에 트래픽을 직접 만들어 재측정.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-tailscale-proxy-egress
+  namespace: tailscale
+spec:
+  podSelector:
+    matchLabels:
+      mp.io/plane: human      # proxyclass.yaml 이 심는 라벨
+  policyTypes:
+    - Egress
+  egress:
+    # 1) DNS — ExternalName 의 대상(`pg-pooler.data.svc…`)을 풀려면 반드시 필요하다.
+    #    🔴 이게 없으면 프록시가 DNAT 대상을 못 찾아 **연결이 조용히 안 된다**.
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2) 🟢 노출 대상 2개 — 이것이 "사람 평면" 의 전부다.
+    #    pooler:5432 · ES:9200. pg-rw(primary) 직결은 일부러 없다(service-pg-pooler.yaml 참조).
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 9200 }
+    # 3) tailnet 자체 — 컨트롤플레인(TCP 443)·DERP 릴레이(443)·STUN(3478/udp)·직접 연결(41641/udp).
+    #    🔴 클러스터·LAN 대역을 `except` 로 뺀다. 안 빼면 이 한 줄이 위 2)의 제한을 통째로
+    #       무의미하게 만든다 — 0.0.0.0/0:443 이 인클러스터 443 도 포함하기 때문이다.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8        # Service(10.96/12) + Cilium 파드(10.20/16)
+              - 172.16.0.0/12
+              - 192.168.0.0/16    # LAN — 아래 4)에서 필요한 것만 다시 연다
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: UDP, port: 3478 }
+        - { protocol: UDP, port: 41641 }
+    # 4) subnet router 가 광고하는 LAN — 사람이 붙는 대상만.
+    #    🔴 `192.168.0.0/24` 전체를 포트 무제한으로 열지 않는다. 22(SSH)·443(내부 도구 게이트웨이)
+    #       ·8081(Jenkins)·9000(SonarQube)·8006(Proxmox) 만.
+    #    ⚠️ 이 목록은 "사람이 쓰는 도구" 기준이다. 여기에 5432·9092(Kafka) 를 추가하지 말 것 —
+    #       그 순간 tailnet 이 데이터 경로가 된다.
+    - to:
+        - ipBlock: { cidr: 192.168.0.0/24 }
+      ports:
+        - { protocol: TCP, port: 22 }    # 노드·호스트 C SSH
+        - { protocol: TCP, port: 443 }   # 내부 도구 게이트웨이 .15 (https://<이름>.mealbong.cloud)
+        - { protocol: TCP, port: 8006 }  # Proxmox 웹 UI (.12 하이퍼바이저, A·B)
+        - { protocol: TCP, port: 8081 }  # Jenkins (호스트 C .10)
+        - { protocol: TCP, port: 9000 }  # SonarQube (호스트 C .10)

@@ -1,0 +1,24 @@
+# C-53 ② 노출 대상 2/2 — data/es-es-http:9200 을 tailnet 디바이스로 만든다.
+# 설계 근거·ExternalName 을 쓰는 이유는 service-pg-pooler.yaml 머리말과 같다
+# (여기서는 ECK 가 `es-es-http` Service 를 소유한다).
+#
+# 🔴 **HTTP TLS 가 꺼져 있다**(확정 결정: ES = 인증 켬 · HTTP TLS 끔 — LAN 전제였다).
+#    즉 이 경로의 기밀성은 **전부 WireGuard(tailnet) 가 진다.** 그래서
+#      · tailnet 밖으로 이 Service 를 노출하는 오브젝트를 절대 추가하지 말 것
+#      · ACL 로 `tag:mp-es:9200` 을 group:dev 에게만 준다(../acl/policy.hujson)
+#    ES 인증은 살아 있으므로 basic auth 자격증명은 여전히 필요하다 —
+#    슈퍼유저(`elastic`)가 아니라 최소권한 계정을 쓸 것(이슈 #521 트랙).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mp-es
+  namespace: tailscale
+  annotations:
+    tailscale.com/expose: "true"
+    tailscale.com/tags: "tag:mp-es"
+    tailscale.com/hostname: "mp-es-onprem"
+spec:
+  type: ExternalName
+  # 🔴 `.svc` 단축형 — 근거는 service-pg-pooler.yaml 의 같은 자리 주석(4-dot 은 ISP 하이재킹).
+  externalName: es-es-http.data.svc

@@ -118,6 +118,21 @@ spec:
         - { protocol: TCP, port: 5432 }
     # 2) ── 🔴 kubelet probe 용 `ipBlock: 192.168.0.0/24` 를 base 에서 내렸다 (0-18).
     #    onprem 오버레이가 ingress[1] 로 복원, eks 는 `netpol-node-probe.yaml` 이 대체.
+    # 3) 🆕 Tailscale 프록시(사람 평면, C-53) → pooler :5432.
+    #    🔴 **`podSelector` 만으로는 절대 안 된다** — NetworkPolicy 의 `from.podSelector` 는
+    #       **같은 ns(data) 안에서만** 매칭한다. 프록시는 tailscale ns 라 `namespaceSelector` 가 필수다.
+    #       (이 함정은 mp-ingress ns 분리에서 이미 한 번 밟았다.)
+    #    🔴 pooler 만 연다. instance(pg-rw) 는 열지 않는다 — 사람이 붙었다 말았다 하는 게
+    #       primary 커넥션 슬롯을 먹지 않게 pooler 를 경유시키는 것이 노출 대상 선정의 근거다
+    #       (platform/tailscale/base/service-pg-pooler.yaml 머리말).
+    #    🔴 `mp.io/plane: human` 라벨까지 함께 건다 — tailscale ns 에 나중에 다른 파드가 생겨도
+    #       (예: ProxyGroup·recorder) 자동으로 PG 에 닿지 않게 한다. ns 전체 신뢰가 아니다.
+    #       라벨 공급원 = platform/tailscale/base/proxyclass.yaml.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: tailscale } }
+          podSelector: { matchLabels: { mp.io/plane: human } }
+      ports:
+        - { protocol: TCP, port: 5432 }
   egress:
     # 1) DNS
     - to:

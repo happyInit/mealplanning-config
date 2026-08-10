@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── EKS 사이트 오버레이 (C-53) — 🔴 **아직 배포 대상이 아니다.** ───────────────
+# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE).
+#    여기가 비어 있어도 검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+#
+# 이 트랙에서 갈라야 하는 것:
+#   · 🔴 **MagicDNS 이름** — Service 2개의 `tailscale.com/hostname` 을 `-eks` 로.
+#     tailnet 전역 유일이라 안 갈면 온프렘 디바이스와 충돌한다. 그리고 이름이 곧 접속 주소이므로
+#     사람이 **어느 사이트 PG 에 붙었는지** 를 이름으로 구분해야 한다(양쪽 DB 이름이 다 `pg` 다).
+#   · Connector 광고 대역 → `10.10.0.0/16`(VPC). 🔴 파드 CIDR·Service CIDR 은 여전히 광고 금지.
+#     그리고 C-53 은 AWS 쪽에 **도구 서브넷의 subnet router `t4g.nano`** 를 따로 둔다
+#     (클러스터가 아플 때도 살아 있는 경로) — 그건 K8s 밖이라 Terraform 트랙이다.
+#   · `externalsecret-oauth.yaml` secretStoreRef → `mp-aws-ssm`(0-2). 🔴 `remoteRef` 는 안 바꾼다
+#     (스토어 prefix `/mp/prod/` 가 key 앞에 붙는다).
+#   · netpol-proxy-egress.yaml 의 LAN 규칙(4번) → VPC 대역으로. 온프렘 `192.168.0.0/24` 는 무의미.
+#   · ProxyClass 자원값은 그대로 — Graviton(arm64)에서도 tailscale 이미지는 멀티아치다.
+resources:
+  - ../../base
+
+# ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) / eks = `mp-aws-ssm`(SSM + IRSA).
+# 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 안 바꾼다 —
+#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 된다
+#    (예: tailscale-secrets → /mp/prod/tailscale-secrets). 상세 = bootstrap/eso/README.md
+# ⚠️ 값 자체(OAuth 클라이언트)는 **사이트마다 다른 것을 쓰는 게 맞다.** 같은 클라이언트를
+#    양쪽에서 쓰면 한쪽을 revoke 할 때 다른 쪽도 죽는다 — 사이트 격리의 요점이 그것이다.
+patches:
+  - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-tailscale-oauth}
+    patch: |-
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata: {name: mp-tailscale-oauth, namespace: tailscale}
+      spec:
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: mp-aws-ssm

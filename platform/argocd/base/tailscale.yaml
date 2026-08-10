@@ -1,0 +1,34 @@
+# tailscale CR 트랙 — 플랫폼 child Application (C-53).
+# 오퍼레이터 차트는 tailscale-operator.yaml. 여기는 그 위의 CR 이다:
+#   ProxyClass · Connector(subnet router) · 노출 Service 2개 · OAuth ExternalSecret · netpol.
+#
+# 🔴 **오퍼레이터보다 먼저 sync 하면 실패한다** — Connector·ProxyClass CRD 가 아직 없다.
+#    순서 = tailscale-operator sync(CRD 설치) → 이것 sync.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tailscale
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: platform/tailscale/overlays/onprem
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tailscale
+  # 🔴 automated 없음 = manual sync. 이유가 둘이다:
+  #   ① netpol-proxy-egress.yaml 은 **연결이 확인된 뒤에** 붙여야 한다(그 파일 머리말의 4단계).
+  #      자동이면 첫 sync 에 egress 잠금이 같이 나가서 터널이 안 붙는데 로그가 안 남는다.
+  #   ② tailnet 디바이스 생성·경로 승인은 admin console 에서 사람이 하는 단계가 섞여 있다.
+  syncPolicy:
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

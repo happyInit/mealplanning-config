@@ -64,7 +64,21 @@ spec:
       ports:
         - { protocol: TCP, port: 9200 }
     # 7) ── 🔴 kubelet probe 용 `ipBlock: 192.168.0.0/24` 를 base 에서 내렸다 (0-18).
-    #    onprem 오버레이가 ingress[7](= 마지막)로 복원, eks 는 `netpol-node-probe.yaml` 이 대체.
+    #    onprem 오버레이가 ingress[7] 로 복원, eks 는 `netpol-node-probe.yaml` 이 대체.
+    #    ⚠️ 아래 8) 이 추가되면서 onprem 의 `add /spec/ingress/7` 은 **마지막이 아니라 삽입**이 된다
+    #       (JSON Patch add 는 밀어넣기다) — 8) 이 8번으로 밀리고 둘 다 살아 있다. 동작은 같다.
+    # 8) 🆕 Tailscale 프록시(사람 평면, C-53) → ES HTTP :9200.
+    #    🔴 `namespaceSelector` 가 필수다 — `from.podSelector` 는 **같은 ns(data) 안에서만** 매칭한다.
+    #    🔴 ns 전체를 신뢰하지 않고 `mp.io/plane: human` 라벨까지 건다(라벨 공급원 =
+    #       platform/tailscale/base/proxyclass.yaml). tailscale ns 에 나중에 다른 파드가 생겨도
+    #       자동으로 ES 에 닿지 않는다.
+    #    🔴 :9300(transport) 은 **열지 않는다.** 사람은 HTTP API 로만 붙는다 — transport 를 열면
+    #       tailnet 쪽에서 클러스터 노드로 참여를 시도할 수 있는 표면이 생긴다.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: tailscale } }
+          podSelector: { matchLabels: { mp.io/plane: human } }
+      ports:
+        - { protocol: TCP, port: 9200 }
   egress:
     # 1) DNS (CoreDNS) — 노드 디스커버리가 파드 호스트네임 해석.
     - to:
