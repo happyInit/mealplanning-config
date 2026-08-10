@@ -1,0 +1,24 @@
+# child app — 내부 게이트웨이(.15) + 내부 도구 이름 6개(HTTPRoute). 공개 gateway 와 한 쌍의
+# 신중-배포 유닛이라 같은 집(argocd/applications/)에 두고 같은 수동 sync 로 반영한다.
+#
+# 🔴 project 가 mealplanning 이 아니라 **platform** 인 이유: 배포처가 observability ns 인데
+#    mealplanning 프로젝트의 destinations 는 app·data·pipeline 뿐이다. platform 은 observability 를
+#    허용하고 sourceRepos 에 이 레포도 이미 있다(2026-07-29 플랫폼 이사분).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gateway-internal
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # 없으면 Application 삭제 시 리소스가 유령으로 남음(status §4.2)
+spec:
+  project: platform
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    # 🔴 사이트 오버레이 경로 (0-1, 2026-08-09). 구 `gateway-internal` = base 직행. 렌더 결과는 동일(전 트랙 diff 0).
+    path: gateway-internal/overlays/onprem
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  # 수동 sync — 게이트웨이·인증서·옛 문 회수가 맞물린 전환이라 사람이 판단해서 반영한다(공개 GW 동일).

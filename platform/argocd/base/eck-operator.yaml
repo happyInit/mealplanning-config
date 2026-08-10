@@ -1,0 +1,33 @@
+# ECK 오퍼레이터 — 런북 §1.1: 3.4.1. ES 버전 핀은 platform/es (8.19.19 고정 —
+# ECK 3.4 는 Stack 9 도 지원하므로 spec.version 느슨하면 클라이언트 핀 `<9` 즉사).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: eck-operator
+  namespace: argocd
+  # 🔴 finalizer 없으면 Application 삭제 시 자식이 고아로 남는다(status §4.2)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://helm.elastic.co
+    chart: eck-operator
+    targetRevision: "3.4.1"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: elastic-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # 🔴 오퍼레이터 CRD 는 크다(ECK CRD 는 client-side apply 의 262KB annotation 한계 초과) → SSA 필수
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

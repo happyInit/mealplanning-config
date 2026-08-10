@@ -1,0 +1,29 @@
+# Elasticsearch (ECK) — 8.19.19 고정 (§1.1). 🔴 sync 전제 = nori 이미지 빌드·push(준비 ③)
+# 후 platform/es/base/elasticsearch.yaml 의 image :sha 채우기.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: es
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    # 🔴 사이트 오버레이 경로 (0-1, 2026-08-09). 구 `platform/es` = base 직행. 렌더 결과는 동일(전 트랙 diff 0).
+    path: platform/es/overlays/onprem
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  # 🔴 automated 없음 = manual sync (런북 Q8) — P2 기간 데이터 CR 은 사람이 sync 를 누른다.
+  #    selfHeal 이 있으면 전환창의 promote(수동 CR 조작·T-1 장전 커밋)가 몇 초 만에 리버트된다(§9-3).
+  #    automated 승격은 P3.
+  syncPolicy:
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

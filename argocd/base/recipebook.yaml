@@ -1,0 +1,27 @@
+# child Application — root app-of-apps 가 집어 mp-recipebook 를 배포.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mp-recipebook
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # 🔴 없으면 삭제 시 유령 리소스
+spec:
+  project: mealplanning
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: services/recipebook/overlays/onprem
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  # auto-sync ON (2026-07-29) — git(config) 변경 시 자동 배포.
+  #   🔴 selfHeal·prune 는 꺼둠 — selfHeal 은 수동 kubectl 편집을 되돌리고(핸드오프 함정),
+  #      Istio 사이드카 주입 드리프트로 OutOfSync↔sync 루프를 유발한다.
+  #      완전 GitOps(selfHeal+prune)는 Istio ignoreDifferences 세팅 후 후속(§10).
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+    syncOptions:
+      - CreateNamespace=false

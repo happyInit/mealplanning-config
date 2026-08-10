@@ -1,0 +1,127 @@
+# tempo — 플랫폼 child Application (정본 = 이 파일).
+#
+# 🔴 2026-07-29 이사분: 종전 정본은 Ansible `roles/k8s_platform_apps` 였다. platform-root
+#    (app-of-apps)가 이 디렉토리를 집으면서 git 이 정본이 됐다 — Ansible 쪽 Application
+#    태스크는 같은 날 은퇴했다. **양쪽에 두지 말 것**(정본 이원화).
+# 값 변경 = 이 파일 수정 → push → root 가 자동 반영(child 는 각자 automated sync).
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: tempo
+    targetRevision: "1.24.4"
+    helm:
+      valuesObject:
+        tempo:
+          reportingEnabled: false
+          retention: 168h # → compactor.compaction.block_retention
+          extraArgs:
+            "config.expand-env": true # 렌더 결과 = -config.expand-env=true
+          extraEnvFrom:
+            - secretRef:
+                name: lgtm-minio-creds
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi # 플랜 §2.2 예산 + `.11` Tempo OOM 이력 → 명시
+
+          # 🔴 프로브 완화 (2026-08-02) — 차트 기본값이 기동 작업을 견디지 못한다.
+          #
+          # 무슨 일이 있었나: tempo-0 이 07-28 부터 닷새간 440회 넘게 재시작했다. 원인이 둘이었고
+          # 앞의 것이 뒤의 것을 가리고 있었다.
+          #   ① MinIO 엔드포인트가 4-dot FQDN 이라 `.local` search 하이재킹으로 공인 IP 로 해석
+          #      → store init 실패 → exit 1. (이 파일 아래 endpoint 주석 참조. 2026-08-02 해소)
+          #   ② ①을 고치자 init 은 통과하는데 이번엔 이렇게 죽었다:
+          #        12:07:03  "Tempo started"
+          #        12:07:05  "completing block" block=5a948331-…      ← 닷새째 같은 블록
+          #        12:07:33  liveness 시작 (initialDelay 30s)
+          #        12:08:04  "received SIGINT/SIGTERM"                 ← 3회 실패 × 10s 만에 kill
+          #      차트 기본 liveness = initialDelay 30 · period 10 · failureThreshold 3
+          #      → 기동 후 **약 60초**면 죽인다. 그런데 그 블록 flush 가 60초 안에 안 끝난다.
+          #      영원히 못 끝내고 무한 반복한다.
+          #
+          # 실측으로 배제한 것: 메모리가 아니다.
+          #   max_over_time(container_memory_working_set_bytes{pod="tempo-0"}[6h]) = 82Mi / 2Gi
+          #   종료 사유도 OOMKilled 가 아니라 Error(137) = SIGTERM 유예 초과 후 SIGKILL.
+          #   /ready 는 503 을 돌려주고 있었다(HTTP 서버는 살아 있다 = 프로세스가 아니라 준비상태 문제).
+          #
+          # 왜 이렇게 나눴나:
+          #   readiness 실패는 **트래픽만 끊는다**(엔드포인트에서 빠짐). 단일 인스턴스 트레이스
+          #     백엔드라 그동안 스팬이 유실되지만, 어차피 죽어 있으면 똑같이 유실된다. 그래서
+          #     기본값을 유지해 상태를 정직하게 반영하게 둔다.
+          #   liveness 는 **파드를 죽인다**. 기동 시 블록 완료 같은 무거운 작업을 60초로 판정하면
+          #     안 된다. 120s + 20×30s = 최대 **12분** 유예를 준다. 진짜로 멈춘 Tempo 는 여전히
+          #     잡히고, 다만 12분 뒤에 잡힌다 — 트레이스 백엔드에는 받아들일 만한 거래다.
+          #   ⚠️ 차트 1.24.4 는 startupProbe 를 템플릿에 두지 않는다(values 로 넣을 수 없다).
+          #      그래서 startupProbe 대신 liveness 를 늘리는 방식을 쓴다. 차트가 나중에
+          #      startupProbe 를 노출하면 그쪽으로 옮기는 게 더 정확하다.
+          #
+          # 🔴 이걸로도 안 낫으면 그건 블록이 손상된 것이다. 그때 조치는 WAL 비우기다 —
+          #    /var/tempo/wal 은 아직 MinIO 로 안 올라간 트레이스뿐이고, 닷새간 조회된 적 없으며
+          #    보존은 어차피 168h 다. 완성된 블록은 MinIO 에 있으므로 잃는 게 사실상 없다.
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 3200
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 20
+            successThreshold: 1
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3200
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 10 # 기본 5s 로는 기동 중 /ready 가 매번 타임아웃했다
+            failureThreshold: 3
+            successThreshold: 1
+          # receivers 는 기본값 유지(otlp 4317/4318 포함) — jaeger 제거 금지(상단 함정 메모)
+          storage:
+            trace:
+              backend: s3
+              s3:
+                bucket: tempo # P0 k8s_minio 가 만들어 둔 버킷
+                # 🔴 `.svc` 단축형 고정 — 이 한 줄이 tempo-0 421회 재시작의 근인이었다. 4-dot FQDN 이
+                #    search 확장 중 `.local` 로 새고 ISP 가 공인 IP(218.38.137.28)를 물려줘, 기동 때마다
+                #    ListObjects 가 그리로 나가 i/o timeout → init 실패 → exit 1(2026-08-02 실측 21.7%).
+                #    tempo 는 store init 실패 시 fail-fast 라 유독 이 스택에서 먼저 터졌다. alloy.yaml 참조.
+                endpoint: minio.observability.svc:9000
+                access_key: ${MINIO_ACCESS_KEY_ID}
+                secret_key: ${MINIO_SECRET_ACCESS_KEY}
+                insecure: true
+                forcepathstyle: true
+              wal:
+                path: /var/tempo/wal
+        nodeSelector:
+          topology.kubernetes.io/zone: host-b
+        persistence:
+          enabled: true # WAL·블록 조립용 — 완성 블록은 MinIO 로
+          size: 10Gi
+          storageClassName: openebs-lvm
+        serviceMonitor:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

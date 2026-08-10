@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── EKS 사이트: platform-root 의 감시 대상 ──────────────────────────────────────
+# 🔴 지금은 base 통과다. **이 디렉터리가 0-4 의 목적 그 자체**다 — Helm 소스 child 12개의
+#    사이트 결합 값이 `spec.source.helm.valuesObject` 안에 인라인이라, 오버레이가 없으면
+#    가를 수단이 0 이었다. 이제 JSON merge patch 로 **필드 단위** 수정이 된다
+#    (`null` 이 키 삭제로 동작 → nodeSelector 통째 제거 가능. 실증 = SITES.md §0-4).
+#
+# 여기서 갈라야 하는 것 — 실측 15건 (SITES.md §0-4 "이 구조가 열어주는 것"):
+#   [0-5] nodeSelector `kubernetes.io/hostname`      5건 · loki.yaml:79(b1) · kubecost.yaml:53,75,101,125(a2)
+#   [0-5] nodeSelector `topology.../zone: host-b`    1건 · tempo.yaml:108
+#   [0-8] storageClass `openebs-lvm`                 6건 · loki.yaml:82 · tempo.yaml:112
+#                                                          · kubecost.yaml:25,62,80,83  → gp3
+#   [0-9] Harbor LAN IP `192.168.0.10/mealplanning`  1건 · rollouts.yaml:87 (initContainer 이미지) → ECR
+#   [--]  MinIO 인클러스터 엔드포인트                 2건 · loki.yaml:38 · tempo.yaml:100 → S3
+#
+#   나머지 8개(alloy · keda · descheduler + 오퍼레이터 5)는 사이트 결합 값이 0 이라 패치할 것이 없다.
+#
+# 🔴 git 소스 child 9개는 여기서 `spec.source.path` 를 `…/overlays/eks` 로 돌려야 한다
+#    (그 트랙들의 eks 오버레이는 0-1 이 이미 깔아 뒀다).
+# 🔴 이 디렉터리는 **부트스트랩(bootstrap/argocd/overlays/eks)이 이미 참조하도록 적혀 있다** —
+#    거기 EKS platform-root 의 path 가 `platform/argocd/overlays/eks` 다.
+resources:
+  - ../../base

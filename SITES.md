@@ -271,9 +271,30 @@ base 로 **실제 이동**이 필요하다. 그런데 이동하는 순간 라이
 
 → **3단계로 나눈다. 각 단계가 단독으로 안전해야 한다.**
 
-1. **(config PR) 복사** — `argocd/overlays/{onprem,eks}` · `platform/argocd/overlays/{onprem,eks}` 를
-   **새로 만든다. 기존 `argocd/applications/*.yaml`·`platform/argocd/*.yaml` 은 건드리지 않는다.**
+1. **(config PR) 복사** — ✅ **실행 완료 2026-08-10** (`feat/argocd-roots-cutover-1`).
+   `argocd/{base,overlays/{onprem,eks}}` · `platform/argocd/{base,overlays/{onprem,eks}}` 를
+   **새로 만들었다. 기존 `argocd/applications/*.yaml`·`platform/argocd/*.yaml` 은 건드리지 않았다.**
    이 시점엔 같은 Application 정의가 git 에 두 벌 있지만 **뿌리는 옛 경로만 읽으므로 새 쪽은 무생물**이다.
+
+   **렌더 불변 증명** (방법 = 아래 §검증 방법의 정규화 비교):
+
+   | 뿌리 | 옛 경로(directory 모드) | 새 경로(kustomize) | 문서 | 신원 집합 | 전 필드 값 |
+   |---|---|---|---|---|---|
+   | `mealplanning-root` | `argocd/applications` (recurse=true) | `argocd/overlays/onprem` | 23 = 23 | 동일 | **차이 0** |
+   | `platform-root` | `platform/argocd` (include=`*.yaml`) | `platform/argocd/overlays/onprem` | 21 = 21 | 동일 | **차이 0** |
+
+   - 복사한 44개 파일은 원본과 **바이트 단위 동일**(`cmp` 전건 통과).
+   - 렌더 **텍스트**는 바이트 비교가 성립하지 않는다 — kustomize 가 재직렬화하며 **주석을 버리고 키를 정렬**한다
+     (27,942B → 11,909B / 64,560B → 25,600B). ArgoCD 는 파싱된 오브젝트를 비교·적용하므로 판정 기준은
+     전 필드 값 동일이고, 이는 0-1 이 디렉터리형 트랙에 쓴 것과 같은 방법이다.
+   - 렌더된 child 44개 = 라이브 Application 46개 − 뿌리 2개, **이름 집합 완전 일치**(2026-08-10 실측).
+
+   🔴 **이 단계가 라이브를 못 건드리는 근거 2줄** — 새 디렉터리를 두 뿌리가 읽지 않는다.
+   - `mealplanning-root` 는 `argocd/applications` 만 본다. 새 `argocd/base`·`argocd/overlays` 는
+     그 **밖의 형제 디렉터리**라 `recurse: true` 의 탐색 범위에 아예 없다.
+   - `platform-root` 는 `platform/argocd` 를 보되 **`recurse` 가 없다(=false)** → 하위 디렉터리를 읽지 않는다.
+     새 `platform/argocd/base`·`overlays` 는 하위다. 게다가 이 뿌리는 **`prune: false`** 라,
+     설령 읽는다 해도 **child 삭제는 구조적으로 불가능**하다(같은 이름·같은 내용의 중복 적용 = SSA no-op).
 2. **(앱 레포 PR + 적용) 뿌리 재지정** — Ansible `k8s_argocd` 가 `mealplanning-root` Application 을
    **처음으로** 관리하게 하고, 두 뿌리의 `path` 를 `…/overlays/{{ argocd_site }}` 로 바꾼다.
    적용 후 확인:
