@@ -31,7 +31,12 @@ spec:
               #    크롤러를 고쳐 머지해도 여기 안 바꾸면 **옛 이미지가 계속 돈다.**
               # 2026-08-04: app#525(조용한 절단 가드 4종) 반영. 이미지에 새 코드가 들어있는지는
               #    실제로 당겨서 확인했다(MIN_TOTAL_RECORDS=500 · GOTO_ATTEMPTS=3 · CrawlTruncatedError).
-              image: 192.168.0.10/mealplanning/mp-crawler-kurly:1ea4a8be3d274a675a419a34aaa91366e2cc8980
+              # 2026-08-10: 6일치 밀린 것을 한 번에 올린다 — app#529·#567·#580.
+              #    🔴 이 6일 동안 실패 로그에 남은 게 `"result":"failure"` 한 줄뿐이었다.
+              #    #580 이 포맷터의 exc_info 누락을 고쳐 트레이스백·error_type·category_code 가 찍힌다.
+              #    #580 은 Jenkinsfile 에 `srcs:['crawler/kurly/','pipelines/stream/']` 도 넣어서,
+              #    앞으로는 공유코드만 고쳐도 이 이미지가 리빌드된다(종전엔 조용히 옛 코드가 남았다).
+              image: 192.168.0.10/mealplanning/mp-crawler-kurly:9235439e52183980f1cdac0bf273abab6d965e15
               command: ["python", "crawler/kurly/prototype.py", "--kafka"]
               envFrom:
                 - configMapRef:
