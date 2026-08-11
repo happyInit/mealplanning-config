@@ -93,6 +93,13 @@ spec:
               valueFrom: {secretKeyRef: {name: mp-crawl-refiner, key: AWS_ACCESS_KEY_ID}}
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom: {secretKeyRef: {name: mp-crawl-refiner, key: AWS_SECRET_ACCESS_KEY}}
+            # readOnlyRootFilesystem 이라 홈이 없다. botocore 가 ~/.aws 를 찾을 때
+            # uid 1000 이 /etc/passwd 에 없어도 조용히 넘어가게 명시한다(자격증명은 env 로 온다).
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           ports:
             - name: metrics
               containerPort: 9401
@@ -102,6 +109,12 @@ spec:
               memory: 128Mi
             limits:
               memory: 512Mi
+      volumes:
+        # readOnlyRootFilesystem 의 짝 — 이 컨슈머는 디스크에 쓰지 않지만 파이썬·라이브러리가
+        # 임시파일을 쓸 자리는 남겨둔다. 없으면 기동은 되고 나중에 조용히 터진다.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
 ---
 # retail.deal.raw → PG(deal_type) + Redis 핫딜. 🔴 REDIS_URL placeholder 해소(Q3) 전 기동 금지
 apiVersion: apps/v1
