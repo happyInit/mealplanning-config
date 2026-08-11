@@ -8,9 +8,15 @@ kind: Kustomization
 #   · 🔴 **MagicDNS 이름** — Service 2개의 `tailscale.com/hostname` 을 `-eks` 로.
 #     tailnet 전역 유일이라 안 갈면 온프렘 디바이스와 충돌한다. 그리고 이름이 곧 접속 주소이므로
 #     사람이 **어느 사이트 PG 에 붙었는지** 를 이름으로 구분해야 한다(양쪽 DB 이름이 다 `pg` 다).
-#   · Connector 광고 대역 → `10.10.0.0/16`(VPC). 🔴 파드 CIDR·Service CIDR 은 여전히 광고 금지.
-#     그리고 C-53 은 AWS 쪽에 **도구 서브넷의 subnet router `t4g.nano`** 를 따로 둔다
-#     (클러스터가 아플 때도 살아 있는 경로) — 그건 K8s 밖이라 Terraform 트랙이다.
+#   · 🔴 **Connector(subnet router)는 AWS 에 두지 않는다** — ⟳ C-55(2026-08-11) 로 미채택.
+#     하던 일을 다른 것이 이미 덮고 있었다: 노드 접속 = SSM Session Manager(C-37) ·
+#     ElastiCache = 파드에서 `kubectl exec` · VPC-B/C 는 원래도 못 붙었다(VPC-A 대역만 광고).
+#     ⇒ **EC2 5대 → 4대.** 도구 서브넷은 비우되 대역은 예약 유지(사후 변경 불가 · 비용 $0).
+#     ⇒ 이 오버레이가 할 일은 광고 대역 교체가 **아니라 `connector-subnet-onprem.yaml` 제외**다
+#       (base 를 그대로 받으면 온프렘용 Connector 가 EKS 에 딸려 온다 — `192.168.0.0/24` 를
+#       AWS 에서 광고하는 꼴이 된다). AWS 쪽은 **Operator 단독**이다.
+#     🟡 되살릴 조건 = EKS 엔드포인트 IP 허용목록을 exit node 로 채우기로 할 때(체크리스트 미결 ⑮).
+#     ~~C-53 ①: 도구 서브넷 subnet router `t4g.nano` = Terraform 트랙~~ → 만들지 말 것.
 #   · `externalsecret-oauth.yaml` secretStoreRef → `mp-aws-ssm`(0-2). 🔴 `remoteRef` 는 안 바꾼다
 #     (스토어 prefix `/mp/prod/` 가 key 앞에 붙는다).
 #   · netpol-proxy-egress.yaml 의 LAN 규칙(4번) → VPC 대역으로. 온프렘 `192.168.0.0/24` 는 무의미.
