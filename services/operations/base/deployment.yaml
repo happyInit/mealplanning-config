@@ -79,12 +79,6 @@ spec:
               value: "true"
             - name: OPERATIONS_KUBERNETES_EVIDENCE_ENABLED
               value: "false"
-            # Incident Evidence 생성 시에만 Loki에서 해당 서비스·시간 범위의 오류 패턴을 수집한다.
-            - name: OPERATIONS_LOKI_EVIDENCE_ENABLED
-              value: "true"
-            # 4-dot FQDN은 파드 search domain에서 외부 DNS로 새므로 .svc까지만 쓴다.
-            - name: OPERATIONS_LOKI_URL
-              value: http://loki.observability.svc:3100
             - name: OPERATIONS_PROMETHEUS_URL
               value: http://kube-prometheus-stack-prometheus.observability.svc:9090
             # 임시: 내부 CNPG 여유 확보 전까지 더존비즈온 교육용 외부 PG(team2) 사용.
