@@ -1,0 +1,35 @@
+# Incident Evidence용 최소 읽기 권한.
+# Operations는 app 네임스페이스의 Event·Pod·Deployment·ReplicaSet 목록만 읽는다.
+# Secret·ConfigMap·exec·patch·삭제와 다른 네임스페이스 권한은 부여하지 않는다.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mp-operations-evidence
+  namespace: app
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mp-operations-evidence-reader
+  namespace: app
+rules:
+  - apiGroups: [""]
+    resources: ["events", "pods"]
+    verbs: ["list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mp-operations-evidence-reader
+  namespace: app
+subjects:
+  - kind: ServiceAccount
+    name: mp-operations-evidence
+    namespace: app
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mp-operations-evidence-reader

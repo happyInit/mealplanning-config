@@ -1,0 +1,22 @@
+# Operations Evidence Collector → kube-apiserver 최소 egress.
+#
+# Kubernetes API는 kubernetes.default.svc:443으로 보이지만 Cilium이 실제 control-plane :6443으로
+# 변환한다. 표준 NetworkPolicy의 IP/CIDR로는 이 신원을 안전하게 표현할 수 없어 예약 엔티티를 쓴다.
+# 이 규칙은 app=operations 파드 하나에만 적용하며, API 접근 권한 자체는
+# services/operations/base/evidence-rbac.yaml의 namespace Role이 제한한다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: mp-operations-kube-apiserver-egress
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: operations
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+            - { port: "6443", protocol: TCP }

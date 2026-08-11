@@ -9,6 +9,7 @@ resources:
   - netpol-frontend.yaml            # 티어 1: frontend (default-deny, ingress=GW+probe / egress=DNS+istiod)
   - netpol-backend.yaml             # 티어 2: backend 공통 (GW+intra-app+probe / data+DNS+istiod+intra-app)
   - netpol-operations.yaml          # 티어 2 부록: operations cross-ns ↔ observability(Alertmanager/Prometheus)
+  - cnp-operations-kube-apiserver.yaml # Operations Evidence Collector → kube-apiserver 최소 egress
   - netpol-backend-fqdn.yaml        # 티어 2 부록: account→OAuth · ocr/chat→Gemini FQDN (CiliumNetworkPolicy)
   # 🔴 티어 0 진입점 정책 4종(netpol-gateway{,-ingress}·netpol-cloudflared{,-ingress})은
   #    **여기 없다** — 2026-08-06 `platform/policies-ingress/`(ns=mp-ingress)로 이전했다(#532 ③).
