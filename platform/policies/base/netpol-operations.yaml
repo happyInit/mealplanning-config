@@ -4,6 +4,7 @@
 # **observability ns 와의 cross-ns 왕복**만 추가한다(공통 규칙엔 없는 목적지 — operations 만 필요).
 #   · ingress ← Alertmanager(observability) 가 /api 로 알림 webhook POST → :8011
 #   · egress  → Prometheus(observability) :9090 조회 (config: kube-prometheus-stack-prometheus.observability.svc:9090)
+#   · egress  → Loki(observability) :3100 Evidence 로그 패턴 조회
 #
 # ⚠️ mTLS 주의(netpol 과 별개 층): app ns 는 PeerAuthentication STRICT. Alertmanager 는 메시 밖(observability
 #    미주입)이라 operations 인바운드로 **평문**이 온다 → STRICT 가 L7 에서 막을 수 있다. 이 netpol 은 L3/L4 만
@@ -36,6 +37,13 @@ spec:
               kubernetes.io/metadata.name: observability
       ports:
         - { protocol: TCP, port: 9090 }
+    # operations → Loki(observability) :3100, Incident Evidence 로그 패턴 수집
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - { protocol: TCP, port: 3100 }
     # operations → team2 external PostgreSQL :15432 (temporary Operations DB)
     - to:
         - ipBlock:
