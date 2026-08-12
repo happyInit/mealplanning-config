@@ -5,6 +5,7 @@
 #   · ingress ← Alertmanager(observability) 가 /api 로 알림 webhook POST → :8011
 #   · egress  → Prometheus(observability) :9090 조회 (config: kube-prometheus-stack-prometheus.observability.svc:9090)
 #   · egress  → Loki(observability) :3100 Evidence 로그 패턴 조회
+#   · egress  → Tempo(observability) :3200 Evidence 오류·느린 Trace 조회
 #
 # ⚠️ mTLS 주의(netpol 과 별개 층): app ns 는 PeerAuthentication STRICT. Alertmanager 는 메시 밖(observability
 #    미주입)이라 operations 인바운드로 **평문**이 온다 → STRICT 가 L7 에서 막을 수 있다. 이 netpol 은 L3/L4 만
@@ -44,6 +45,16 @@ spec:
               kubernetes.io/metadata.name: observability
       ports:
         - { protocol: TCP, port: 3100 }
+    # operations → Tempo 검색 API :3200 (Incident Evidence Snapshot의 오류·느린 Trace 수집 전용).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+      ports:
+        - { protocol: TCP, port: 3200 }
     # operations → team2 external PostgreSQL :15432 (temporary Operations DB)
     - to:
         - ipBlock:
