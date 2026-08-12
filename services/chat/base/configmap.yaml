@@ -16,3 +16,6 @@ data:
   CHAT_PERSIST_ENABLED: "true"          # 대화 chat.chat_message 영속 → chat-insights→랭킹 개인화 연료
   CHAT_PANTRY_ENABLED: "true"            # 🔴 프로드 복원 — 냉장고 재고 기반 추천(미인증 시 폴백)
   CHAT_FOCUS_ENABLED: "true"             # 🔴 프로드 복원 — 대화 일관성(recipe-in-focus·반복 가드)
+  # chat의 tracing.py는 이미 FastAPI·PG·Redis·ES 자동계측을 구성한다.
+  # 이 플래그만 켜면 app-common의 Tempo OTLP endpoint로 Trace를 전송한다.
+  OTEL_TRACES_ENABLED: "true"
