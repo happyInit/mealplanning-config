@@ -72,9 +72,9 @@ images:
 # ⚠️ 그때까지 이 오버레이를 ArgoCD 에 붙이지 말 것.
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
 patches:
 
@@ -91,9 +91,9 @@ patches:
 # ⚠️ 그때까지 이 오버레이를 ArgoCD 에 붙이지 말 것.
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
   - target: {group: external-secrets.io, kind: ExternalSecret}
     patch: |-
@@ -103,7 +103,7 @@ patches:
       spec:
         secretStoreRef:
           kind: ClusterSecretStore
-          name: mp-aws-ssm
+          name: mp-aws-secrets
 
   # ── 0-16 정적 AWS 키 제거 ─────────────────────────────────────────────────
   # 🔴 **여기가 0-16 의 실제 레버다.** 22개 워크로드가 `envFrom.secretRef: mp-pipeline-secrets` 로
@@ -138,7 +138,7 @@ patches:
 # ECR 은 **kubelet 이 노드 인스턴스 롤로** 당긴다(IRSA/Pod Identity 는 파드용이라 이미지 풀에
 # 관여하지 않는다 — 노드 롤에 AmazonEC2ContainerRegistryReadOnly). dockerconfigjson 이 불요하다.
 # 🔴 남기면 해로운 이유: 이 ExternalSecret 은 온프렘 `fb-secrets` 의 `harbor-pull`(robot 계정)을
-#    당긴다. EKS 스토어(SSM, C-23)엔 그 키가 없으므로 **영구 SecretSyncedError** 가 되고,
+#    당긴다. EKS 스토어(Secrets Manager, C-36)엔 그 키가 없으므로 **영구 SecretSyncedError** 가 되고,
 #    ns 의 ESO 상태가 상시 빨강이라 진짜 실패가 묻힌다.
 # ⚠️ 나머지 반쪽(default SA 의 imagePullSecrets: harbor)은 **앱 레포 Ansible 소관**이다 — 1-31.
   - target:

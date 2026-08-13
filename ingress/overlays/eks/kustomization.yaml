@@ -16,7 +16,7 @@ kind: Kustomization
 #    - 0-6 hard TSC → `hostname` 축은 ScheduleAnyway 로, `zone` 축은 soft 로 유지
 #    - 0-2 secretStoreRef (externalsecret-cloudflare.yaml)
 #    - 0-6 hard TSC → `hostname` 축은 ScheduleAnyway 로, `zone` 축은 soft 로 유지
-#    - ✅ 0-2 secretStoreRef → `mp-aws-ssm` (2026-08-10, 아래 patches — cloudflare·pullsecret 둘 다)
+#    - ✅ 0-2 secretStoreRef → `mp-aws-secrets` (2026-08-10, 아래 patches — cloudflare·pullsecret 둘 다)
 #    - TLS 종단은 Istio Gateway 유지(C-26) — cert-manager Let's Encrypt DNS-01 그대로
 resources:
   - ../../base
@@ -103,9 +103,9 @@ patches:
                         gateway.networking.k8s.io/gateway-name: mp-gw-public
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
   - target: {group: external-secrets.io, kind: ExternalSecret}
     patch: |-
@@ -115,7 +115,7 @@ patches:
       spec:
         secretStoreRef:
           kind: ClusterSecretStore
-          name: mp-aws-ssm
+          name: mp-aws-secrets
 # ── 1-31 Harbor pull secret 제거 ────────────────────────────────────────────
 # 🔴 이 트랙의 pull secret 은 **cloudflared 이미지 전용**이다(GW 는 공개 이미지). 그런데
 #    C-5 로 cloudflared 는 **온프렘 DR 전용 존치**라 EKS 에는 그 워크로드 자체가 없다

@@ -21,9 +21,9 @@ images:
 #    hard TSC 보유는 실측 5종뿐 = account · recipe · frontend · gw-public · kafka-combined.
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
 
 # ── 0-14c 워크로드별 SA (EKS 전용 · C-83 덧셈) ─────────────────────────────────
@@ -49,7 +49,6 @@ images:
 #   노드 allocatable ephemeral 43.7 GiB 의 8% 다(sizeLimit 은 예약이 아니라 상한).
 # 🔴 `op: test` 를 앞에 두는 이유 = 인덱스 기반 JSON6902 는 base 의 volumes 순서가 바뀌면
 #    **엉뚱한 볼륨에 상한을 건다.** test 가 깨지면 렌더가 죽어서 validate.py 가 잡는다.
-      # tmp → 64Mi — readOnlyRootFilesystem 스크래치 · 관측 4KiB
 
   # ── C-14(ElastiCache) 대비 Redis 튜너블 — EKS 전용 (이슈 #642 · 체크리스트 1-14·1-15) ──
   # 🔴 **앱 기본값은 현행 온프렘 동작**이고(무한 대기 / 재시도 없음), 여기서만 켠다.
@@ -76,7 +75,7 @@ patches:
     spec:
       secretStoreRef:
         kind: ClusterSecretStore
-        name: mp-aws-ssm
+        name: mp-aws-secrets
   target:
     group: external-secrets.io
     kind: ExternalSecret

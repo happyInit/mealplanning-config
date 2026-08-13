@@ -29,7 +29,7 @@
 #      ArgoCD Application 의 `CreateNamespace=true` 는 ns 를 만들지만 **PSA 라벨은 안 붙인다.**
 #      ⇒ 미결(사람 결정): ⑴ 여기에 추가 / ⑵ Terraform EKS 모듈이 붙임 / ⑶ AWS 에서는 포기.
 #    · 온프렘 물리에만 있는 것 — `metallb-system` `openebs` `cilium-secrets` `fb-secrets`
-#      (C-16 으로 OpenEBS 없음 · MetalLB 는 NLB 로 대체(C-26) · ESO 백엔드는 SSM(C-23)).
+#      (C-16 으로 OpenEBS 없음 · MetalLB 는 NLB 로 대체(C-26) · ESO 백엔드는 Secrets Manager(C-36)).
 #    · `mp-users` — 사람 RBAC 용(앱 레포 `k8s_team_rbac` 롤). RBAC 이관 자체가 미결이라 제외.
 #
 # ── 🔴 `app` = restricted + istio-injection 의 숨은 전제: **istio-cni** ────────

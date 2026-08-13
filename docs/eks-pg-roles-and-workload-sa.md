@@ -46,7 +46,7 @@
 ### 배선 (전부 `overlays/eks`)
 
 ```
-SSM /mp/prod/pg-roles  (12 property · 32자 랜덤)          ← 🔴 값 적재는 이 레포 밖
+Secrets Manager mp/prod/pg-roles  (12 property · 32자 랜덤)          ← 🔴 값 적재는 이 레포 밖
    │  ExternalSecret ×12  (platform/pg/overlays/eks/pg-roles.yaml)
    │     type: kubernetes.io/basic-auth   ← CNPG 요구 타입
    ▼
@@ -87,9 +87,11 @@ PgBouncer 는 **(유저, DB) 쌍마다 별도 풀**을 만든다.
 
 ### 🔴 이 레포가 못 하는 것 (사람·Terraform)
 
-1. **SSM `/mp/prod/pg-roles` 적재** — 없으면 ExternalSecret 이 `SecretSyncedError` 로 앉고
+1. **Secrets Manager `mp/prod/pg-roles` 적재** — 없으면 ExternalSecret 이 `SecretSyncedError` 로 앉고
    **CNPG 가 롤을 못 만든다.** 32자 랜덤 12개(온프렘 `fbapp` 은 8바이트 — 자연스러운 회전 기회).
-   🔴 `app-secrets` 번들에 넣지 말 것 — 0-11(SSM standard 4,096 B) 여유가 711 B 뿐이고 12롤이 579 B 다.
+   🔴 `app-secrets` 번들에 넣지 말 것 — ⟳ **2026-08-13 정정**: 원래 근거(4,096 B 여유 711 B)는
+   **C-36**(Secrets Manager · 64KB)으로 소멸했다. 유지 근거는 **폭발 반경 분리**다 —
+   `app-secrets` 는 3 ns · 16객체를 받치고 IAM 경로 최소권한은 번들 단위까지만 간다.
 2. **`schema-roles.sql` 실행** — GRANT 는 CNPG 가 관리하지 않는다.
    ⟳ **§6① 로 정정** — AWS 는 `initdb` 로 뜨므로 `postInitApplicationSQL` 이 *기술적으로는* 돈다.
    그래도 **안 쓴다**: GRANT 정본이 앱 레포 SQL 하나여야 하고 복사하면 갈린다.
