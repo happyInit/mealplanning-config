@@ -5,7 +5,7 @@ kind: ConfigMap
 metadata:
   name: mealplan-config
 data:
-  IMPRESSION_LOG_ENABLED: "true"         # 추천 노출 → activity.recipe_impression(학습데이터)
+  IMPRESSION_LOG_ENABLED: "false"        # 추천 노출 → activity.recipe_impression(학습데이터)
   # ADD_CART → Kafka events.user.activity → mp-user-event-sink → activity.user_event.
   # 🔴 false 로 두는 동안 user_event 가 37행에서 멈춰 있었다(2026-08-03 실측). 이 표는 랭킹
   #    학습 라벨의 원천이라 **시간이 지나야 값이 쌓이는** 종류다 — 늦게 켤수록 데이터가 없다.
