@@ -15,8 +15,11 @@ kind: Kustomization
 #    - ✅ objectstore.yaml 자격증명 = 0-16 (2026-08-10, IRSA `inheritFromIAMRole` — 아래 patches)
 #    - onsite-backup.yaml 은 온프렘 전용(MinIO 목적지). C-18 = barman 과 **다른 버킷/계정**
 #    - ✅ 0-27 CPU 요청 500m → 250m (인스턴스당) — 아래
+#    - ✅ 0-13 스키마별 롤 — 2026-08-13, 아래 `managed.roles` + `pg-roles.yaml`
+#    - ✅ 0-23 · 0-30 barman 경로 사이트 분기 — 아래 patch (destinationPath·serverName = `pg-eks`)
 resources:
   - ../../base
+  - pg-roles.yaml # 0-13 — 서비스 롤 12종의 비밀번호 배선(EKS 전용)
 
 # ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
 # 실측(C-29): 클러스터 CPU 요청 10.780 코어 ↔ 실사용 1.145(9.4배). PG 는 500m × 2 인스턴스 = 1.0 코어로
@@ -154,9 +157,124 @@ patches:
             annotations:
               eks.amazonaws.com/role-arn: arn:aws:iam::PLACEHOLDER:role/mp-pg-barman
 
-# ── 🔴 이 트랙에 남은 결정 (0-2/0-16 범위 밖 · 사람이 정할 것) ─────────────────
+  # ── 0-13 서비스별 PG 롤 — **AWS PG 는 처음부터 갈라서 짓는다** (2026-08-13) ──
+  # 설계 정본 = 앱 레포 `docs/prd/schema-roles.md`(+ 멱등 DDL `schema-roles.sql`, #566).
+  #
+  # 🔴 **온프렘은 손대지 않는다 — C-83.** `fbapp` 단독 그대로다. 라이브에서 롤을 가르려면
+  #    앱 11종을 하나씩 전환해야 하고(그 문서 §5 Phase 4 = "유일한 위험 구간"), 그건 형상 변경이다.
+  #    여기서 하는 것은 *새로 짓는 쪽*을 처음부터 옳게 짓는 것뿐이다.
+  #
+  # 🔴🔴 **`inRoles` 는 배타적이다.** CNPG 는 여기 안 적힌 멤버십을 **REVOKE 한다.**
+  #    `schema-roles.sql` 의 `GRANT mp_data_reader TO svc_*` 가 전부 멤버십이므로, 아래 표와
+  #    그 파일이 어긋나면 다음 reconcile 에서 조용히 회수돼 **읽기가 죽는다.** 둘을 같이 고칠 것.
+  #    대조표 = schema-roles.md §4.2.
+  #
+  # 🔴 그룹 롤(`mp_data_reader`·`mp_data_writer`)은 여기 **안 적는다** — NOLOGIN 이라 CNPG 가
+  #    관리할 이유가 없고, spec 에 넣으면 그 자신도 inRoles 반영 대상이 되어 꼬인다.
+  #    그 둘은 `schema-roles.sql` 1단계가 만든다.
+  #
+  # 🔴 `connectionLimit: 5` = **파드당 psycopg 풀 max_size 와 같은 수**(§1.5 실측). 롤이 갈리면
+  #    PgBouncer 가 **(유저, DB) 쌍마다 별도 풀**을 만들어 상한 산수가 통째로 바뀐다 —
+  #    그래서 `platform/pooler/overlays/eks` 를 **같은 PR 에서** 같이 줄였다. 한쪽만 하면 고갈이다.
+  #    ⚠️ 이 값은 롤당 상한이지 풀 크기가 아니다. 직결 소비자(ocr·ranking·pipeline)에 실효.
+  #
+  # 🔴 `ensure: present` 만 쓴다. `absent` 는 어디에도 안 적는다 — 오타 하나가 롤 삭제가 된다.
+  - target: {group: postgresql.cnpg.io, kind: Cluster, name: pg}
+    patch: |-
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata: {name: pg, namespace: data}
+      spec:
+        managed:
+          roles:
+            - name: svc_account
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: []
+              passwordSecret: {name: mp-pg-role-account}
+            - name: svc_recipebook
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: [mp_data_reader]
+              passwordSecret: {name: mp-pg-role-recipebook}
+            - name: svc_pantry
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: []
+              passwordSecret: {name: mp-pg-role-pantry}
+            - name: svc_mealplan
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: [mp_data_reader]
+              passwordSecret: {name: mp-pg-role-mealplan}
+            - name: svc_price
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: [mp_data_reader]
+              passwordSecret: {name: mp-pg-role-price}
+            - name: svc_notify
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: []
+              passwordSecret: {name: mp-pg-role-notify}
+            - name: svc_chat
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: [mp_data_reader]
+              passwordSecret: {name: mp-pg-role-chat}
+            - name: svc_recipe
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: [mp_data_reader]
+              passwordSecret: {name: mp-pg-role-recipe}
+            - name: svc_video
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: [mp_data_reader]
+              passwordSecret: {name: mp-pg-role-video}
+            - name: svc_ocr
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: [mp_data_reader]
+              passwordSecret: {name: mp-pg-role-ocr}
+            - name: svc_ranking
+              ensure: present
+              login: true
+              connectionLimit: 5
+              inRoles: [mp_data_reader]
+              passwordSecret: {name: mp-pg-role-ranking}
+            # 🔴 파이프라인만 writer 다 — public(데이터 티어) 쓰기는 여기 하나뿐이다.
+            #    직결(Pooler 미경유)이고 CronJob 17종이 겹칠 수 있어 상한을 넉넉히 준다.
+            - name: svc_pipeline
+              ensure: present
+              login: true
+              connectionLimit: 15
+              inRoles: [mp_data_writer]
+              passwordSecret: {name: mp-pg-role-pipeline}
+
+# ── 🔴 이 트랙에 남은 결정 (사람이 정할 것) ────────────────────────────────────
 #  · `mp-pg-onsite-minio` + `onsite-backup.yaml` — 목적지가 인클러스터 MinIO 인데 C-18 로 EKS 에는
-#    MinIO 가 없다. eks 오버레이에서 **둘 다 걷어낼지**, S3 두 번째 버킷으로 살릴지가 미결.
+#    MinIO 가 없다. eks 오버레이에서 **둘 다 걷어낼지**, `mp-pg-dump-ap2`(C-69)로 살릴지가 미결.
 #    지금은 **일부러 남겨 뒀다** — 백업 트랙을 지우는 것은 자동 판단할 일이 아니다.
-#  · `objectstore.yaml` 의 `destinationPath: s3://mp-backup-ap2/pg` 는 사이트 축이 없다.
-#    양 사이트 Cluster 이름이 둘 다 `pg` 라 WAL 이 서로를 덮는다 → **0-23**. 여기서 손대지 않았다.
+#    🔴 살리기로 하면 그 CronJob 도 전용 SA + IRSA 가 필요하다(0-14c 는 app·pipeline ns 만 했다).
+#      이미 `platform/policies-data/overlays/eks/netpol-pg-onsite-s3.yaml` 이 STS 를 열어 두었으므로
+#      **네트워크는 IRSA 를 전제하는데 신원이 없는** 어정쩡한 상태다.
+#  · 🔴 **`bootstrap.pg_basebackup` 이 죽은 VM 을 가리킨다** — base cluster.yaml 의
+#    `externalClusters: vm-pg → 192.168.0.8` 은 P4(2026-07-31)에서 파괴된 호스트다.
+#    eks 렌더가 이걸 그대로 들고 있어 **AWS 클러스터가 부트스트랩 자체를 못 한다.**
+#    0-32(온프렘→AWS 초기 적재)가 정할 일 = `bootstrap.recovery` + `externalClusters` 를
+#    **온프렘 barman**(`serverName: pg` · `destinationPath: s3://mp-backup-ap2/pg`)으로 돌리는 것.
+#    🔴 그때 serverName 을 `pg-eks` 로 적으면 빈 경로를 읽어 실패한다 — *읽는 곳*은 온프렘 값이다.
+#    ⚠️ 그리고 recovery 로 부트스트랩하면 **`fbapp` 과 그 권한이 물리 복제로 따라온다.**
+#      위 `managed.roles` 는 롤을 *더할* 뿐 `fbapp` 을 지우지 않는다 —
+#      AWS 쪽 `ALTER ROLE fbapp NOLOGIN`(schema-roles.sql 5단계)은 **적재 검증 후 사람이** 돌린다.

@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: app
 resources:
   - ../../base
+  - serviceaccount.yaml
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
 images:
   - name: 192.168.0.10/mealplanning/mp-recipe-service
@@ -57,3 +58,39 @@ patches:
         secretStoreRef:
           kind: ClusterSecretStore
           name: mp-aws-ssm
+
+# ── 0-14c 워크로드별 SA (EKS 전용 · C-83 덧셈) ─────────────────────────────────
+# 🔴 merge 패치로 `serviceAccountName` **한 필드만** 얹는다. Rollout 은 CRD 라 kustomize 가
+#    스키마를 몰라 JSON merge 로 처리하는데, 패치에 리스트(`containers`)를 적으면 통째로
+#    **교체**된다. 이 패치는 리스트를 안 담으므로 안전하다(0-9 §rollouts initContainer 함정과 같은 축).
+  - target: {group: argoproj.io, kind: Rollout, name: mp-recipe}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Rollout
+      metadata: {name: mp-recipe}
+      spec:
+        template:
+          spec:
+            serviceAccountName: mp-recipe
+
+# ── 0-13 PG 서비스 롤 = svc_recipe (EKS 전용) ─────────────────────
+# 온프렘은 `fbapp` 단독 그대로다 — **권한을 회수하지 않는다**(라이브 앱 즉사).
+# AWS PG 는 처음부터 롤이 갈린 상태로 짓는다. 롤 실체 = platform/pg/overlays/eks,
+# GRANT = 앱 레포 `docs/prd/schema-roles.sql`(사람이 psql 로 1회).
+# 🔴 `env` 가 `envFrom` 을 이긴다 — app-common 의 `PGUSER: fbapp` 을 이 한 줄이 덮는다.
+#    Rollout 은 JSON6902 로 간다(위 함정 — env 를 담으려면 컨테이너 리스트를 건드려야 한다).
+  - target: {group: argoproj.io, kind: Rollout, name: mp-recipe}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: PGUSER, value: svc_recipe}
+# 🔴 비밀번호 출처도 같이 간다 — 유저명과 비번은 한 세트다. 한쪽만 바꾸면 인증이 전부 실패한다.
+#    `op: test` 로 base 의 순서 변경을 렌더 실패로 드러낸다(0-16 패치와 같은 규약).
+  - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-recipe-secrets}
+    patch: |-
+      - op: test
+        path: /spec/data/0/secretKey
+        value: PGPASSWORD
+      - op: replace
+        path: /spec/data/0/remoteRef
+        value: {key: pg-roles, property: svc_recipe}

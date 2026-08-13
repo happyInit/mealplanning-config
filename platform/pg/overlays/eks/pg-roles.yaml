@@ -1,0 +1,264 @@
+# 0-13 — 서비스별 PG 롤의 **비밀번호 배선** (EKS 전용)
+#
+# 앱 레포 `docs/prd/schema-roles.md §4.3 ②` 의 매니페스트를 그대로 옮긴 것이다.
+# 역할 분담(§4.1):
+#   · 롤 존재 · LOGIN · **비밀번호** · connectionLimit · 그룹 멤버십 → CNPG `Cluster.spec.managed.roles`
+#                                                                    (kustomization.yaml 의 patch)
+#   · 스키마·테이블 GRANT                                          → `schema-roles.sql`(사람이 psql 로 1회)
+#
+# 🔴 **온프렘에는 이 파일이 없다 — C-83.** 온프렘 PG 는 `fbapp` 단독 그대로 두고 권한을 회수하지
+#    않는다. 회수하면 라이브 앱 11종이 즉사한다. AWS PG 만 처음부터 갈라서 짓는다.
+#
+# 🔴 CNPG 는 `kubernetes.io/basic-auth` 타입을 요구한다(그냥 Opaque 면 롤이 조용히 reconcile 안 된다).
+#    `username` 은 template 에 리터럴로 박는다 — 비밀이 아니고, SSM 왕복을 하나 줄인다.
+#
+# 🔴 원격 키 = `pg-roles` **한 개**에 12 property. `app-secrets` 에 넣지 않는 이유는 0-11 —
+#    그 번들이 이미 SSM standard 4,096 B 의 82.6% 다(여유 711 B). 12 롤을 넣으면 96.8% 가 되고
+#    다음에 키 하나 추가하는 사람이 조용히 초과시킨다. 별도 파라미터면 폭발 반경도 분리된다.
+#    ⚠️ property 이름에 `.` 금지(AWS provider 가 gjson 경로로 읽는다 — SITES.md §0-2).
+#
+# 🔴 **값 적재는 이 레포 밖이다.** `/mp/prod/pg-roles` 에 12키 JSON 을 넣는 것은 사람/Terraform
+#    소관이고, 없으면 ExternalSecret 이 SecretSyncedError 로 앉아 **CNPG 가 롤을 못 만든다.**
+#    32자 랜덤 12개 — 온프렘 `fbapp` 이 8바이트인 것과 달리 처음부터 회전 가능한 길이로 짓는다.
+#
+# `secretStoreRef` 는 kustomization.yaml 의 전수 패치가 `mp-aws-ssm` 으로 덮는다(0-2). 여기도
+# 같은 값을 적어 파일만 봐도 읽히게 했다 — 두 값이 갈리면 validate.py check_eks_secret_store() 가 잡는다.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-account
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-account
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_account
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_account}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-recipebook
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-recipebook
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_recipebook
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_recipebook}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-pantry
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-pantry
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_pantry
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_pantry}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-mealplan
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-mealplan
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_mealplan
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_mealplan}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-price
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-price
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_price
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_price}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-notify
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-notify
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_notify
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_notify}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-chat
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-chat
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_chat
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_chat}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-recipe
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-recipe
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_recipe
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_recipe}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-video
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-video
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_video
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_video}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-ocr
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-ocr
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_ocr
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_ocr}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-ranking
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-ranking
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_ranking
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_ranking}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-pipeline
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-ssm}
+  target:
+    name: mp-pg-role-pipeline
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: svc_pipeline
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: pg-roles, property: svc_pipeline}
