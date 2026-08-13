@@ -8,7 +8,7 @@ resources:
 # 바뀌는 것: 이미지 레지스트리 Harbor→ECR, SC openebs-lvm→gp3 등.
 images:
 - name: 192.168.0.10/mealplanning/mp-account-service
-  newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-account-service
+  newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-account-service
   newTag: c8eeac60c58dd1103cd6f3fc91163d394b8172de
 
 # ── 0-6 hard TSC 완화 + 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────

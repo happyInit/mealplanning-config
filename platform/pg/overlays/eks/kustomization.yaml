@@ -148,7 +148,7 @@ patches:
         configuration:
           destinationPath: s3://mp-backup-ap2/pg-eks
           serverName: pg-eks
-  # 🔴 PLACEHOLDER 는 services/* 오버레이의 ECR 레지스트리와 같은 규약이다 —
+  # 🟢 계정 ID 는 채워졌다(2026-08-14 · `689192361171`). services/* 오버레이와 같은 규약이다 —
   #    계정 ID 가 아직 없다(C-8 계정 3개 미생성). 채우지 않고 배포하면 barman 이 인증에 실패한다.
   #    CNPG 가 이 애너테이션을 클러스터 SA(`pg`)에 얹고, barman-cloud 사이드카가 그 SA 로 STS 를 탄다.
   - target: {group: postgresql.cnpg.io, kind: Cluster, name: pg}
@@ -160,7 +160,7 @@ patches:
         serviceAccountTemplate:
           metadata:
             annotations:
-              eks.amazonaws.com/role-arn: arn:aws:iam::PLACEHOLDER:role/mp-pg-barman
+              eks.amazonaws.com/role-arn: arn:aws:iam::689192361171:role/mp-pg-barman
 
   # ── 0-32 bootstrap — **빈 클러스터로 짓는다** (C-78, 2026-08-13) ────────────
   # 🔴 **이 패치가 없으면 AWS 클러스터가 기동 자체를 못 한다.** base 의 bootstrap 은

@@ -7,7 +7,7 @@ resources:
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
 images:
 - name: 192.168.0.10/mealplanning/mp-recipebook-service
-  newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-recipebook-service
+  newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-recipebook-service
   newTag: c8eeac60c58dd1103cd6f3fc91163d394b8172de
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────

@@ -7,7 +7,7 @@ resources:
 # EKS 이관 시 Harbor 주소만 ECR로 교체한다.
 images:
 - name: 192.168.0.10/mealplanning/mp-operations-service
-  newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-operations-service
+  newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-operations-service
   newTag: 9a47d2c11552aa9cb08202e9447fc11232ad1686
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────

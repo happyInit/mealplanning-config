@@ -16,8 +16,12 @@ kind: Kustomization
 #
 #   나머지 8개(alloy · keda · descheduler + 오퍼레이터 5)는 사이트 결합 값이 0 이라 패치할 것이 없다.
 #
-# 🔴 git 소스 child 9개는 여기서 `spec.source.path` 를 `…/overlays/eks` 로 돌려야 한다
+# 🔴 git 소스 child 는 여기서 `spec.source.path` 를 `…/overlays/eks` 로 돌려야 한다
 #    (그 트랙들의 eks 오버레이는 0-1 이 이미 깔아 뒀다).
+#    → ✅ **A1 에서 데이터 티어 4종을 돌렸다**(2026-08-14, 아래 patches). 나머지는 그 트랙 차례에.
+#    🔴 **이걸 안 돌리면 EKS 에 온프렘 매니페스트가 배포된다** — 실측으로 이미 일어났다:
+#       app ns 파드 12종이 `192.168.0.10/mealplanning/...`(LAN Harbor)에서 이미지를 당기다
+#       `ImagePullBackOff` 였다. **ECR 이 비어서가 아니라 오버레이가 온프렘이어서다.**
 # 🔴 이 디렉터리는 **부트스트랩(bootstrap/argocd/overlays/eks)이 이미 참조하도록 적혀 있다** —
 #    거기 EKS platform-root 의 path 가 `platform/argocd/overlays/eks` 다.
 resources:
@@ -56,7 +60,7 @@ resources:
 #    **엉뚱한 값을 조용히 덮어쓴다.** test 가 깨지면 렌더가 죽어서 `validate.py` 가 잡는다.
 # ⚠️ 태그는 온프렘과 **같은 커밋 SHA** 를 유지한다. ECR 로 옮길 때 같은 다이제스트를 밀어 넣는
 #    전제이고, 태그가 갈리면 "같은 플러그인"이라는 보장이 사라진다.
-# 🔴 `PLACEHOLDER` = AWS 계정 ID 미정(`scripts/sites.yaml` eks.registry 와 같은 값이어야 한다).
+# 🟢 계정 ID 확정(2026-08-14 · `689192361171`) — `scripts/sites.yaml` eks.registry 와 **같은 값이어야 한다**.
 #    계정이 정해지면 sites.yaml 을 고치고 `validate.py` 가 열거하는 목록대로 맞춘다.
 patches:
   - target: {group: argoproj.io, kind: Application, name: rollouts}
@@ -66,7 +70,7 @@ patches:
         value: 192.168.0.10/mealplanning/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
       - op: replace
         path: /spec/source/helm/valuesObject/controller/initContainers/0/image
-        value: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
+        value: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
 
   # ── C-18 MinIO 삭제 → S3 · 1-19 region/TLS — Loki (2026-08-10) ───────────────
   # 🔴 **EKS 에는 MinIO 가 없다**(C-18). base 의 `http://minio.observability.svc:9000` 을 그대로
@@ -92,7 +96,7 @@ patches:
   # ⚠️ 여기서 **안 고친 것** = `singleBinary.persistence.storageClass: openebs-lvm` → `gp3`.
   #    그건 **0-8**(SC 트랙) 소관이고 이 PR 은 C-18(오브젝트 스토어)만 다룬다.
   #    🔴 0-8 이 안 오면 PVC 가 바인딩되지 않아 Loki 가 Pending 이다 — 둘 다 필요하다.
-  # ⚠️ `PLACEHOLDER`(계정 ID)·버킷 이름은 C-8(계정 3개) 미생성 상태의 자리표시자다.
+  # 🟢 계정 ID 는 채워졌다(2026-08-14). ⚠️ **버킷 이름은 아직 자리표시자다** — 실물 생성 확인 전이다.
   - target: {group: argoproj.io, kind: Application, name: loki}
     patch: |-
       apiVersion: argoproj.io/v1alpha1
@@ -117,7 +121,7 @@ patches:
                     insecure: false
               serviceAccount:
                 annotations:
-                  eks.amazonaws.com/role-arn: arn:aws:iam::PLACEHOLDER:role/mp-loki-s3
+                  eks.amazonaws.com/role-arn: arn:aws:iam::689192361171:role/mp-loki-s3
               singleBinary:
                 nodeSelector: null
                 extraArgs: null
@@ -155,7 +159,7 @@ patches:
                       forcepathstyle: false
               serviceAccount:
                 annotations:
-                  eks.amazonaws.com/role-arn: arn:aws:iam::PLACEHOLDER:role/mp-tempo-s3
+                  eks.amazonaws.com/role-arn: arn:aws:iam::689192361171:role/mp-tempo-s3
 # ── 0-5 nodeSelector 이탈 — tempo (2026-08-10) ────────────────────────────────
 # `topology.kubernetes.io/zone: host-b` 는 **온프렘에서만 참인 값**이다. EKS 는 같은 라벨 키에
 # 실제 AZ(`ap-northeast-2a`·`ap-northeast-2c`)가 들어가므로 `host-b` 는 어느 노드에도 안 맞고,
@@ -178,3 +182,83 @@ patches:
         value: host-b
       - op: remove
         path: /spec/source/helm/valuesObject/nodeSelector
+
+# ══════════════════════════════════════════════════════════════════════════════
+# A1 — 데이터 티어를 EKS 오버레이로 돌린다 (2026-08-14 · C-78 A1)
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 **왜 이 4개만인가** = A1 의 범위가 데이터 티어이기 때문이다. 나머지 git 소스 child
+#    (`pipelines`·`rollouts-pullsecret`·`observability-secrets`·`policies-observability`)는
+#    각자의 차례(A2·A4·A5)에 같은 모양으로 돌린다. **한 번에 다 돌리면 실패 시 원인이 안 갈린다.**
+#
+# 🔴 `op: test` 를 앞에 두는 이유는 이 파일의 다른 패치들과 같다 — base 가 바뀌면 조용히
+#    어긋나는 대신 렌더가 죽어서 `validate.py` 가 잡는다.
+  - target: {group: argoproj.io, kind: Application, name: pg}
+    patch: |-
+      - op: test
+        path: /spec/source/path
+        value: platform/pg/overlays/onprem
+      - op: replace
+        path: /spec/source/path
+        value: platform/pg/overlays/eks
+
+  - target: {group: argoproj.io, kind: Application, name: pooler}
+    patch: |-
+      - op: test
+        path: /spec/source/path
+        value: platform/pooler/overlays/onprem
+      - op: replace
+        path: /spec/source/path
+        value: platform/pooler/overlays/eks
+
+  - target: {group: argoproj.io, kind: Application, name: es}
+    patch: |-
+      - op: test
+        path: /spec/source/path
+        value: platform/es/overlays/onprem
+      - op: replace
+        path: /spec/source/path
+        value: platform/es/overlays/eks
+
+  - target: {group: argoproj.io, kind: Application, name: pgsync}
+    patch: |-
+      - op: test
+        path: /spec/source/path
+        value: platform/pgsync/overlays/onprem
+      - op: replace
+        path: /spec/source/path
+        value: platform/pgsync/overlays/eks
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 EKS 에서 **통째로 빼는** 트랙 2개 (2026-08-14 · 사용자 확정)
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 **오버레이를 비우는 것으로는 부족하다.** child Application 자체가 EKS 목록에 있으면
+#    누군가 sync 를 누르는 순간 온프렘 CR 이 EKS 로 샌다(`platform/redis/overlays/eks` 의
+#    머리말이 정확히 이 위험을 적어 두고 있다: *"지금 통과로 두면 RedisReplication CR 이 EKS 로 샌다"*).
+#    ⇒ **목록에서 지운다.** `$patch: delete` 는 base 를 안 건드리고 이 사이트에서만 뺀다.
+#
+# ── redis — C-14 ElastiCache for Valkey ───────────────────────────────────────
+# EKS 에는 Redis **파드가 없다**(`cache.t4g.micro` Multi-AZ 2노드로 나간다).
+# 🔴 대체 경로 = `app-common` 의 Redis 엔드포인트 교체(common 트랙 · A2 소관).
+#    ⚠️ 그때까지 앱은 Redis 에 못 붙는다 — **A1 은 데이터 티어를 세우는 단계지 앱이 도는 단계가 아니다.**
+# 🟢 `pgsync` 의 전용 Redis(`platform/pgsync/base/redis-pgsync.yaml`)는 **별개다.** 그건 남는다 —
+#    체크포인트 저장소라 앱 캐시와 수명·소유자가 다르다. C-14 는 앱 캐시 이야기다.
+#
+# ── kafka — C-39 크롤 파이프라인 재설계 ───────────────────────────────────────
+# **AWS 쪽 Kafka 를 전면 제거**한다. 온프렘 Kafka 는 인터넷 단절 버퍼로 남고,
+# AWS 는 S3 → SQS → KEDA → 리파이너 경로다.
+# 🔴 `platform/kafka/overlays/eks` 의 머리말은 **C-39 이전에 쓰였다** — 아직 MM2(C-11~13)를
+#    전제하고 gp3·용량 조정을 "할 일"로 적고 있다. **낡았다.** 그 오버레이는 지우지 않고 두되
+#    (온프렘 렌더에 영향 0), **여기서 목록에서 빼는 것이 실효 결정**이다.
+  - target: {group: argoproj.io, kind: Application, name: redis}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: redis, namespace: argocd}
+      $patch: delete
+
+  - target: {group: argoproj.io, kind: Application, name: kafka}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: kafka, namespace: argocd}
+      $patch: delete

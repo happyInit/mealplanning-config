@@ -7,7 +7,7 @@ resources:
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
 images:
 - name: 192.168.0.10/mealplanning/mp-price-service
-  newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-price-service
+  newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-price-service
   newTag: 4fcabbcd937c6ebf54529d3ca7d79a158abf8d14
 
 # ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
