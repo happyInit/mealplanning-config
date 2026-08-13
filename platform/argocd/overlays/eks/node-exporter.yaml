@@ -1,0 +1,69 @@
+# prometheus-node-exporter — EKS 사이트 전용 child Application (0-3, 2026-08-13).
+#
+# ── 왜 kube-prometheus-stack 과 별개인가 ──────────────────────────────────────
+# 온프렘은 스택의 `nodeExporter.enabled: false` 로 끄고 **별도 Helm 릴리스**로 돌린다
+# (실측: `helm list -A` → release `node-exporter` / chart `prometheus-node-exporter-4.56.1`,
+#  `kube-system/node-exporter-prometheus-node-exporter` DaemonSet).
+# EKS 도 **같은 모양을 유지한다** — 스택 안으로 합치면 DaemonSet 이름·job 라벨·ServiceMonitor
+# 이름이 전부 바뀌고, 그러면 `mp-container-memory` 의 `MpNodeCpuHigh`·`MpNodeMemoryHigh` 와
+# 대시보드 04(Infrastructure Overview)의 쿼리가 사이트별로 갈린다. 구조를 같게 두는 편이 싸다.
+#
+# ── 소유권 근거 (실측 2026-08-13) ──────────────────────────────────────────────
+# `argocd.argoproj.io/tracking-id` 없음 = ArgoCD 밖. Helm(Ansible) 단독 소유.
+#
+# ── values 근거 = 온프렘 릴리스의 user-supplied values 전부(실측) ──────────────
+#   extraArgs: [--collector.textfile.directory=/host/root/var/lib/node_exporter/textfile_collector]
+#   prometheus.monitor.enabled: true
+#   resources.requests: {cpu 10m, memory 32Mi}
+#
+# 🔴 **textfile collector 는 EKS 에서 빈 디렉터리를 읽는다** — 그리고 그게 맞다.
+#    그 디렉터리에 `.prom` 을 쓰는 주체는 앱 레포 Ansible 롤(`backup_freshness`·`secrets_backup`)이고
+#    **온프렘 호스트에만** 있다. 즉 EKS 에는 `mp_backup_*` 메트릭이 생기지 않는다.
+#    ⇒ 1-28 에서 `mp-backup` 룰을 어떻게 다룰지의 근거가 이것이다(monitoring/overlays/eks 참조).
+#    플래그를 **빼지 않는 이유**: 나중에 EKS 에 노드 로컬 지표를 흘릴 자리를 미리 열어 두는 편이
+#    싸고, 빈 디렉터리는 비용이 0 이다. 🔴 다만 EKS 노드에 그 경로가 없으면 hostPath 마운트가
+#    디렉터리를 만든다(차트 기본 `hostRootFsMount`) — 파드가 못 뜨는 상황은 아니다.
+#
+# 🔴 **선행(앱 레포 Ansible)** — `AppProject/platform.sourceRepos` 에
+#    `https://prometheus-community.github.io/helm-charts` 가 **없다**(실측 2026-08-13).
+#    이 Application 과 `kube-prometheus-stack.yaml` 이 **같은 레포**를 쓰므로 한 줄이면 둘 다 풀린다.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: node-exporter
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: prometheus-node-exporter
+    targetRevision: "4.56.1" # = 온프렘 라이브와 동일. appVersion 1.12.1
+    helm:
+      valuesObject:
+        extraArgs:
+          - --collector.textfile.directory=/host/root/var/lib/node_exporter/textfile_collector
+        prometheus:
+          monitor:
+            enabled: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

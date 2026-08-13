@@ -1,0 +1,284 @@
+# kube-prometheus-stack — EKS 사이트 전용 child Application (0-3 · 0-3b · 1-27 · 1-28, 2026-08-13).
+#
+# ══ 이 파일이 여는 것 ═══════════════════════════════════════════════════════════
+# 지금까지 `monitoring/SITE-SPLIT.md` 가 "**앱 레포 Ansible 소관이라 config 에서 못 한다**" 로
+# 미뤄 둔 항목들이, 스택을 EKS 에서 ArgoCD 소유로 **신설**하면서 **여기서 풀린다**:
+#   · 0-3b `externalLabels: {site: aws}`      (SITE-SPLIT §2)
+#   · 1-27 `retentionSize`                    (SITE-SPLIT §3)
+#   · 0-3c 나머지 = 스크레이프 job 4종 제거    (SITE-SPLIT §4)
+#   · 0-5  `nodeSelector zone: host-b` 제거    (SITE-SPLIT §4 표)
+#   · 0-8  `storageClassName openebs-lvm→gp3`  (SITE-SPLIT §4 표)
+#   · 1-28 KSM zone 라벨 allowlist             (SITE-SPLIT §5-C — 아래 kube-state-metrics)
+# 🔴 **온프렘 values(앱 레포 Ansible 템플릿)는 손대지 않는다.** C-83 = 형상 동결·덧셈만.
+#    SITE-SPLIT.md 의 그 명세들은 **온프렘 쪽에 대해서는 여전히 유효한 미결**로 남는다.
+#
+# ── 소유권 근거 (실측 2026-08-13) ──────────────────────────────────────────────
+# `helm list -A` → release `kube-prometheus-stack` / chart `kube-prometheus-stack-87.20.0` /
+# app v0.92.1 / revision 8. `observability/kube-prometheus-stack-*` 오브젝트에
+# `argocd.argoproj.io/tracking-id` **없음** = ArgoCD 밖(순수 Helm/Ansible).
+# 아래 values 는 그 릴리스의 **user-supplied values 전문**을 기준으로, 사이트가 갈리는 곳만 바꿨다.
+#
+# ── 🔴 이 Application 이 실제로 뜨려면 필요한 것 (전부 이 레포 밖) ─────────────
+# ① `AppProject/platform.sourceRepos` 에 `https://prometheus-community.github.io/helm-charts`
+#    (실측: 없다). `node-exporter.yaml` 과 공유하는 한 줄.
+# ② `observability` ns — `platform/cluster-baseline/overlays/eks` 가 PSA 라벨과 함께 만든다.
+#    그래서 여기서는 `CreateNamespace=false` 다(ArgoCD 가 만들면 **PSA 라벨이 안 붙는다**).
+# ③ `ExternalSecret/observability/mp-alertmanager-slack` — 🔴 **config 레포에 없다.**
+#    라이브에서는 Ansible 이 직접 apply 한다(SITES.md §0-2 "이 레포 밖에 남은 ExternalSecret 2개").
+#    없으면 Alertmanager 파드가 `secrets:` 마운트 실패로 **아예 안 뜬다.**
+# ④ `Secret/mp-grafana-admin` — 아래 grafana 절 참조.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  finalizers:
+    # CRD 8종(Prometheus·Alertmanager·PrometheusRule·ServiceMonitor·PodMonitor·Probe·
+    # ThanosRuler·ScrapeConfig)을 고아로 남기면 다른 트랙의 PrometheusRule 이 전부 적용 불가가 된다.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: "87.20.0" # = 온프렘 라이브와 동일. appVersion v0.92.1
+    helm:
+      # 🔴 CRD 가 크다(Prometheus CRD 단독 1MB 급) — client-side apply 의 last-applied
+      #    어노테이션 한도(256KB)에 닿는다. keda 와 같은 사정.
+      skipCrds: false
+      valuesObject:
+        # ── 컨트롤플레인 컴포넌트: EKS 는 **관리형이라 스크레이프 대상이 없다** ──────
+        # 온프렘과 값이 같지만(`false`) **이유가 다르다** — 온프렘은 kubeadm + kube-proxy 미설치
+        # (Cilium kubeProxyReplacement), EKS 는 컨트롤플레인이 AWS 소유라 엔드포인트가 없다.
+        # 🔴 켜면 ServiceMonitor 가 붙지 않는 타깃을 만들어 **TargetDown 이 영구 발화**한다.
+        #    끄면 해당 알람 그룹도 같이 안 만들어진다(온프렘 실측으로 확인 — 스케줄러·
+        #    컨트롤러매니저·etcd·kube-proxy PrometheusRule 이 라이브에 아예 없다).
+        kubeControllerManager:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        kubeProxy:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+
+        # node-exporter 는 **별도 릴리스**다(`node-exporter.yaml`). 온프렘과 같은 구조를 유지한다.
+        nodeExporter:
+          enabled: false
+
+        # ── kube-state-metrics ────────────────────────────────────────────────
+        kube-state-metrics:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 96Mi
+          # 🔴 **1-28 의 선행** — `mp-workload-spread` 를 EKS 용으로 다시 쓰려면 KSM 이
+          #    노드의 zone 라벨을 메트릭으로 내보내야 한다. 기본값에서 `kube_node_labels` 는
+          #    라벨을 **하나도** 싣지 않는다(카디널리티 방어). 이 allowlist 가 그 문을 연다.
+          #    온프렘이 노드 **이름 정규식**(`k8s-worker-([ab])[0-9]+`)으로 zone 을 파생한 이유가
+          #    바로 이 값이 꺼져 있었기 때문이다 — EKS 에서는 파생이 아니라 **실값**을 쓴다
+          #    (`topology.kubernetes.io/zone: ap-northeast-2a` …).
+          #    ⚠️ 카디널리티 증가는 노드 수 × 1 시리즈뿐이다(3노드 = 3). 무시 가능.
+          extraArgs:
+            - --metric-labels-allowlist=nodes=[topology.kubernetes.io/zone]
+
+        prometheusOperator:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+
+        # ── Prometheus ────────────────────────────────────────────────────────
+        prometheus:
+          prometheusSpec:
+            # 🔴 0-3b — **AWS 쪽에만 붙인다.** 온프렘 Prometheus 에는 붙이지 않는다:
+            #    ① `external_labels` 는 로컬 TSDB 에 저장되지 않아 **소급이 애초에 불가능**하다.
+            #       이미 쌓인 시계열에 라벨이 생기지 않으므로 양쪽에 붙여도 비대칭은 남는다.
+            #    ② 붙이면 StatefulSet 이 재시작한다(메트릭 1~2분 공백) — C-83 형상 동결 아래서
+            #       온프렘에 그 비용을 낼 이유가 없다.
+            #    ⇒ **쿼리 규약**: 온프렘 = 라벨 부재 = `site!="aws"`, AWS = `site="aws"`.
+            #       라벨 값이 `aws` 인 것은 C-22 표기(`onprem|aws`)를 따른다 — `eks` 가 아니다.
+            #       대시보드 변수·런북이 문자열로 무는 값이라 한 번 정하면 바꾸기 비싸다.
+            externalLabels:
+              site: aws
+
+            # 🔴 0-3c 나머지 — `additionalScrapeConfigs` **없음**.
+            #    온프렘 값에는 hypervisor · vm-node · vm-cadvisor · vm-alloy 4개가 무조건 들어간다
+            #    (타깃 = 192.168.0.12 / .22 / .10). AWS 에서 그 IP 는 닿지 않으므로 켜 두면
+            #    알람 룰이 없어도 스택 빌트인 **TargetDown 이 4건 영구 발화**한다.
+            #    `mp-physical-layer` 9룰을 onprem 오버레이로 내린 것(0-3c)의 짝이다 —
+            #    룰만 갈고 타깃을 안 가르면 절반만 고친 것이 된다.
+
+            # 🔴 0-5 — `nodeSelector` **없음**. 온프렘은 `topology.kubernetes.io/zone: host-b`
+            #    (호스트 A 급사 3회 → 관측을 B 에 고정). EKS 는 같은 키에 실제 AZ 가 들어가
+            #    `host-b` 는 어느 노드에도 안 맞고 **영구 Pending** 이다. 배치는 EBS 토폴로지가 정한다.
+
+            retention: 15d
+            # 🔴 1-27 — 시간 상한과 **둘 다** 둔다(OR: 먼저 걸리는 쪽이 블록을 지운다).
+            #    근거(실측 2026-08-10): PVC 8.10 GiB used / 29.36 GiB cap, 클러스터 나이 13일,
+            #    retention 15d 라 **첫 만료 전** = 8.10 GiB 는 정상상태의 하한. 일 증가 ≈ 0.62 GiB
+            #    → 15일 ≈ 9.4 GiB. 체크리스트의 "12일 최대 시계열 220,683(+28%)" 을 얹으면 최악 ≈ 12 GiB.
+            #    C-16 이 PVC 를 20Gi 로 줄이므로(사용가능 ≈ 19.5 GiB) 14GiB = 약 72%.
+            #    🔴 `retentionSize` 는 WAL·head 를 안 세고 삭제가 **블록 단위**라 오버슈트가 있다 —
+            #       PVC 를 꽉 채우는 값(19GiB 류)을 넣으면 안 된다.
+            retentionSize: 14GiB
+
+            resources:
+              requests:
+                cpu: 200m
+                memory: 1Gi
+              limits:
+                memory: 2500Mi
+
+            # 라벨 무관 수집 — 다른 트랙(KEDA·Istio·CNPG…)이 자기 ServiceMonitor 를 들고 온다.
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            serviceMonitorSelectorNilUsesHelmValues: false
+
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  accessModes:
+                    - ReadWriteOnce
+                  # 🔴 0-8 · C-16 — `openebs-lvm` → `gp3`, 30Gi → **20Gi**.
+                  #    위 retentionSize 14GiB 와 한 묶음이다. 하나만 바꾸면 디스크가 찬다.
+                  storageClassName: gp3
+                  resources:
+                    requests:
+                      storage: 20Gi
+
+        # ── Alertmanager ──────────────────────────────────────────────────────
+        alertmanager:
+          alertmanagerSpec:
+            # 0-5 — 온프렘의 `nodeSelector zone: host-b` 제거(Prometheus 와 같은 이유).
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+            # 🔴 이 시크릿은 **config 레포에 없다**(위 선행 ③). Ansible 이 직접 apply 하는
+            #    `ExternalSecret/observability/mp-alertmanager-slack` 이 만든다.
+            #    마운트 경로가 아래 receivers 의 `api_url_file` 과 짝이다 — 이름을 바꾸면 둘 다 바꿔야 한다.
+            secrets:
+              - mp-alertmanager-slack
+            storage:
+              volumeClaimTemplate:
+                spec:
+                  accessModes:
+                    - ReadWriteOnce
+                  storageClassName: gp3 # 0-8
+                  resources:
+                    requests:
+                      storage: 2Gi
+          # 🔴 라우팅은 온프렘과 **동일하게 둔다.** C-22 = 사이트별 Alertmanager 각자 운영이라
+          #    같은 alertname 이 한 메시지로 묶일 일이 없다 → `group_by` 에 `site` 를 넣지 않는다.
+          #    ⚠️ 다만 **같은 Slack 채널**로 들어오므로 사람 눈에는 섞인다 —
+          #       구분은 위 `externalLabels.site` 가 붙는 알림 라벨로 한다(0-3b 가 필요한 진짜 이유).
+          config:
+            global:
+              resolve_timeout: 5m
+            inhibit_rules:
+              - source_matchers:
+                  - severity = "critical"
+                target_matchers:
+                  - severity =~ "warning|info"
+                equal:
+                  - namespace
+                  - alertname
+              - source_matchers:
+                  - severity = "warning"
+                target_matchers:
+                  - severity = "info"
+                equal:
+                  - namespace
+                  - alertname
+              - source_matchers:
+                  - alertname = "InfoInhibitor"
+                target_matchers:
+                  - severity = "info"
+                equal:
+                  - namespace
+            route:
+              group_by:
+                - alertname
+                - service
+              group_wait: 30s
+              group_interval: 5m
+              repeat_interval: 4h
+              receiver: slack-default
+              routes:
+                - matchers:
+                    - alertname = "InfoInhibitor"
+                  receiver: "null"
+                - matchers:
+                    - severity = "critical"
+                  receiver: slack-critical
+                  repeat_interval: 1h
+            receivers:
+              - name: "null"
+              - name: slack-default
+                slack_configs:
+                  # 🔴 URL 본문이 아니라 **파일 경로**다 — 웹훅이 git 에 안 들어오는 이유가 이것이다.
+                  #    경로 = /etc/alertmanager/secrets/<위 secrets[] 이름>/<키>
+                  - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_default
+                    channel: "#monitoring"
+                    send_resolved: true
+                    title: "[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}"
+                    text: "service: {{ .CommonLabels.service }} {{ range .Alerts }} - {{ .Annotations.summary }} {{ end }}"
+              - name: slack-critical
+                slack_configs:
+                  - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_critical
+                    channel: "#alerts-critical"
+                    send_resolved: true
+                    title: "[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}"
+                    text: "service: {{ .CommonLabels.service }} {{ range .Alerts }} - {{ .Annotations.summary }} {{ end }}"
+
+        # ── Grafana ───────────────────────────────────────────────────────────
+        grafana:
+          enabled: true
+          # 🔴 **`adminPassword` 를 여기에 적을 수 없다.** 온프렘 values 는 평문으로 갖고 있지만
+          #    (Ansible `secrets.yml` → 템플릿), 그 파일은 git 밖이다. 이 파일은 **공개 레포**다.
+          #    → `existingSecret` 으로 우회한다. 그 시크릿은
+          #      `platform/observability/overlays/eks/externalsecret-grafana-admin.yaml` 이 만든다.
+          #    🔴 시크릿이 없으면 Grafana 파드는 `CreateContainerConfigError` 로 안 뜬다 —
+          #       조용한 실패가 아니라 시끄러운 실패다(그게 낫다).
+          admin:
+            existingSecret: mp-grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
+          persistence:
+            enabled: false # 대시보드는 CM(sidecar)에서 오고 상태는 안 남긴다 — 온프렘과 동일
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+          service:
+            type: ClusterIP
+          sidecar:
+            dashboards:
+              # 🔴 `monitoring/base` 의 대시보드 CM 13장은 **`app` ns** 에 만들어진다
+              #    (그 kustomization 이 `namespace: app` 을 강제한다). ALL 이 아니면 안 읽는다.
+              searchNamespace: ALL
+          # 🔴 `grafana.ini.server.root_url` 을 **일부러 비워 뒀다.**
+          #    온프렘 값은 `https://grafana.mealbong.cloud/` = 내부 게이트웨이(MetalLB `.15`).
+          #    AWS 의 내부 도구 접근 경로는 **미결**(C-55 사람 평면)이라, 지금 값을 적으면
+          #    존재하지 않는 호스트를 가리키는 링크가 알림·공유 URL 에 박힌다.
+          #    기본값(`%(protocol)s://%(domain)s:%(http_port)s/`)이면 port-forward 로는 정상 동작한다.
+          #    ⇒ 접근 경로가 정해지면 여기에 한 줄 추가. **사람 결정.**
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    # 🔴 automated 를 **켜지 않는다** = 수동 sync. `mp-policies-observability` 와 같은 논리다:
+    #    관측 스택을 잘못 굴리면 **끊겼다는 사실을 알려줄 수단이 같이 죽는다.**
+    #    특히 이 Application 은 Prometheus StatefulSet + PVC + CRD 8종을 들고 있어
+    #    "머지 = 강제 적용" 이 되면 안 된다. 이관 안정화 후 automated 승격을 검토한다.
+    syncOptions:
+      - CreateNamespace=false # ns 는 cluster-baseline 이 PSA 라벨과 함께 만든다
+      - ServerSideApply=true # CRD 가 커서 client-side apply 어노테이션 한도(256KB)에 닿는다
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

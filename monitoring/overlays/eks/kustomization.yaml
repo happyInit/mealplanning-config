@@ -21,25 +21,43 @@ kind: Kustomization
 #       엉뚱한 그룹이 지워지므로, 이름이 다르면 **렌더가 실패하도록** 막아 둔다.
 #       (validate.py `check_site_overlays()` 가 eks 렌더 실패를 잡는다 = 조용히 안 썩는다.)
 #
+# 3. **1-28 알림 룰셋 사이트화 (2026-08-13)** — 아래 §1-28. 두 가지를 했다:
+#    ① `mp-workload-spread` 통째 교체(`$patch: delete` + `rules-workload-spread.yaml`)
+#    ② `mp-backup` 에서 **AWS 에 대상이 없는 4알람 제거**
+#    근거·전수 분류는 `monitoring/EKS-RULESET.md`.
+#
+# ── ✅ 여기서 해소된 것 (종전 "앱 레포 소관" 이었던 것) ──────────────────────────
+# 🔴 아래 A·B·C 는 **더 이상 미결이 아니다** — 0-3(2026-08-13)이 EKS 쪽 kube-prometheus-stack 을
+#    ArgoCD/config 소유로 **신설**하면서 values 가 이 레포 안으로 들어왔다:
+#    `platform/argocd/overlays/eks/kube-prometheus-stack.yaml`
+# A. ✅ **0-3b `externalLabels: {site: aws}` · 1-27 `retentionSize: 14GiB` · `nodeSelector` 제거**
+#    · `storageClassName: gp3` · PVC 30→20Gi(C-16) — 전부 그 파일에 있다.
+#    ⚠️ **온프렘 쪽은 여전히 미결**이고 그게 의도다(C-83 형상 동결) — 온프렘 Prometheus 에는
+#       `site` 라벨을 붙이지 않는다. 쿼리 규약 = 온프렘은 라벨 부재 = `site!="aws"`.
+#       종전 명세(`monitoring/SITE-SPLIT.md` §2·§3)는 **온프렘에 대해서만** 유효한 기록으로 남는다.
+# B. ✅ **스크레이프 job 4종**(hypervisor·vm-node·vm-cadvisor·vm-alloy) — 같은 파일에
+#    `additionalScrapeConfigs` 를 **아예 두지 않았다**. 룰(0-3c)만 갈고 타깃을 안 가르면
+#    절반만 고친 것이라 스택 빌트인 `TargetDown` 이 4건 영구 발화한다.
+# C. ✅ **`PrometheusRule/mp-workload-spread`** — 아래 §1-28 ① 로 교체 완료.
+#    선행이던 KSM `--metric-labels-allowlist=nodes=[topology.kubernetes.io/zone]` 도 같은 파일에서 켰다.
+#
 # ── 🔴 아직 안 갈린 것 (이 레포에서 못 하거나, 사람 결정 대기) ──────────────────
-# A. **0-3b `externalLabels: {site: aws}` · 1-27 `retentionSize` · Prometheus `nodeSelector`**
-#    → kube-prometheus-stack values = **앱 레포 Ansible** 소관. 명세 = `monitoring/SITE-SPLIT.md`.
-# B. **스크레이프 job 4종**(hypervisor·vm-node·vm-cadvisor·vm-alloy) → 같은 파일. 위와 한 묶음.
-# C. **`PrometheusRule/mp-workload-spread`** — zone 을 노드 **이름 정규식**
-#    (`k8s-worker-([ab])[0-9]+`)으로 파생한다. EKS 노드 이름은 `ip-10-…` 이라 **하나도 안 맞는다**:
-#      · `MpNodeZoneMapUnknown` → 전 노드에서 영구 발화
-#      · zone 파생이 전부 빈 라벨로 접혀 `MpDeploymentPodsOnSingleZone` 이 **전 Deployment 오발화**
-#    고쳐야 할 방향은 정해져 있다(룰 주석의 "제대로 된 해법") — KSM 에
-#    `--metric-labels-allowlist=nodes=[topology.kubernetes.io/zone]` 을 켜고 `kube_node_labels`
-#    조인으로 교체. **그건 앱 레포 선행이라 여기서 임의로 못 한다** → 사람 결정. SITE-SPLIT.md §4.
 # D. **대시보드 `08-hypervisor.json`** — 온프렘 물리 전용이라 EKS 에선 빈 패널이 된다.
 #    알람이 아니라 소음이 0 이므로 **의도적으로 두었다**(빼려면 CM 을 갈라야 하는데 그러면
 #    onprem 렌더가 바뀐다 = 0-1 안전기준 위반). 정리하려면 별건으로.
 # E. **`rules-backup.yaml` 의 런북 문자열** — `ssh ubuntu@192.168.0.17` / `.10` 이 박혀 있다.
 #    `annotations` 는 발화·라우팅에 참여하지 않아 **오발화를 만들지 않는다** → 0-3c 대상 아님.
 #    다만 AWS 온콜이 없는 호스트로 안내받는다 → 문구 정리 별건.
+# 🔴 `namespace: app` 을 여기 다시 적는 이유 = onprem 오버레이와 **같은 사정**이다.
+#    base 의 `namespace:` 는 base 의 resources 에만 적용된다. 이 오버레이가 **직접** 넣은
+#    `rules-workload-spread.yaml` 은 base 트랜스포머를 안 거치므로, 여기서 지정하지 않으면
+#    네임스페이스 없이 렌더돼 base 산출물(전부 `app`)과 갈린다.
+#    base 산출물에 대해서는 무연산이다(이미 `app` — 렌더 diff 로 확인).
+namespace: app
 resources:
   - ../../base
+  # 1-28 ① — base `mp-workload-spread` 의 EKS 대체본. 아래 patches 의 `$patch: delete` 와 한 묶음.
+  - rules-workload-spread.yaml
 patches:
   - target:
       group: monitoring.coreos.com
@@ -52,3 +70,84 @@ patches:
         value: mp-minio
       - op: remove
         path: /spec/groups/2
+
+  # ══ §1-28 ① `mp-workload-spread` 통째 교체 (2026-08-13) ═════════════════════
+  # base 판은 zone 을 노드 **이름 정규식**으로 파생한다(`k8s-worker-([ab])[0-9]+`). EKS 노드는
+  # `ip-10-…` 이라 하나도 안 맞아 `MpNodeZoneMapUnknown` 이 전 노드에서, 그리고 zone 이 빈 라벨로
+  # 접혀 `MpDeploymentPodsOnSingleZone` 이 **replica 2 이상 전 Deployment 에서** 오발화한다.
+  # ⇒ 삭제하고 `rules-workload-spread.yaml`(kube_node_labels 조인)로 갈아 끼운다.
+  #
+  # 🔴 **왜 patch 로 필드만 고치지 않고 통째로 지우나** — 바꿀 것이 record 규칙 2개의 expr 본문
+  #    전체이고, 남는 4개(records 2 + alerts 2)도 그 record 를 참조한다. JSON6902 로 expr 문자열을
+  #    replace 하면 "이 룰이 왜 이렇게 생겼나" 가 두 파일에 쪼개져 다음 사람이 못 읽는다.
+  #    삭제 + 신설이면 EKS 판이 **한 파일에 완결**된다(0-3c 가 rules-physical 에 쓴 것과 같은 방식).
+  # 🔴 대체본의 `metadata.name` 이 `-eks` 접미인 이유 = 같은 이름이면 kustomize 가 리소스를
+  #    **수집 단계**에서 ID 충돌로 거부한다(patch 는 그 뒤 단계라 늦다). **alertname 은 동일**하다.
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: PrometheusRule
+      name: mp-workload-spread
+    patch: |
+      $patch: delete
+      apiVersion: monitoring.coreos.com/v1
+      kind: PrometheusRule
+      metadata:
+        name: mp-workload-spread
+        namespace: app
+
+  # ══ §1-28 ② `mp-backup` — AWS 에 **대상이 없는** 4알람 제거 (2026-08-13) ═══════
+  # 9알람 전부가 `mp_backup_*`(node-exporter textfile collector) 또는 `kube_cronjob_*` 기반이다.
+  # 🔴 발화 의미론을 먼저 봐야 한다 — 지울 것과 남길 것이 여기서 갈린다:
+  #     · `absent(X)`            → X 가 없으면 **발화한다**
+  #     · `X == 0` · `time()-X>N` → X 가 없으면 시리즈가 비어 **발화하지 않는다**(조용히 침묵)
+  #
+  # ── 지우는 4개 = **AWS 에 감시 대상 자체가 존재하지 않는 것** ────────────────
+  #   · `MpBackupEtcdStale`         — EKS 는 컨트롤플레인이 관리형이라 **우리가 백업할 etcd 가 없다.**
+  #                                   AWS 가 알아서 한다. 우리 쪽 백업 잡이 영원히 안 생긴다.
+  #   · `MpBackupSourceStale`       — 소스 레포 백업은 호스트 C(`.10`)에서 돈다 = 온프렘 전용.
+  #   · `MpBackupImageNeverArchived`— Harbor 이미지 아카이브. EKS 는 ECR 이고 ECR 은 AWS 가 복제한다.
+  #   · `MpBackupPgOnsiteDumpStale` — `kube_cronjob_status_last_successful_time{cronjob="mp-pg-onsite-dump"}`
+  #                                   = 온사이트 MinIO 덤프. C-18 로 MinIO 가 없다.
+  #   ⇒ 넷 다 지금은 "조용한" 부류지만(위 의미론), **남기면 더 나쁘다**: AWS 온콜이 룰 목록에서
+  #     `MpBackupEtcdStale` 을 보고 "etcd 백업은 감시되고 있다" 고 읽는다. 침묵을 정상으로 오독한다.
+  #
+  # ── 남기는 5개 (지우지 않는 근거) ───────────────────────────────────────────
+  #   · `MpBackupProbeMissing`(absent) — 🔴 **EKS 에서 즉시 발화한다. 그리고 그게 맞다.**
+  #     `mp_backup_*` 를 쓰는 주체는 앱 레포 Ansible 롤(`backup_freshness`)이고 온프렘 호스트에만
+  #     있다 → AWS 에는 메트릭이 없다 → absent 가 참. 이것은 **오발화가 아니라 참인 사실**이다:
+  #     "AWS 에 백업 신선도 관측이 없다." 끄면 그 사실이 사라지고 아무도 안 만든다.
+  #     ⇒ **이관 전 선행 작업으로 승격**할 항목이다(프로브를 EKS 로 이식). 상세 = EKS-RULESET.md.
+  #   · `MpBackupProbeFailed` · `MpBackupWalArchivingStalled` · `MpBackupPgBaseStale`
+  #     · `MpBackupSecretsStale` — 대상이 **AWS 에도 실재한다**(CNPG barman-cloud → S3 의 WAL·베이스
+  #     백업 = C-15 로 PG 자체운영 유지 · 비밀 = SSM). 프로브가 이식되면 그날부터 바로 일한다.
+  #
+  # 🔴 인덱스 기반 `op: remove` 는 **내림차순**이어야 한다 — 앞을 먼저 지우면 뒤 인덱스가 밀린다.
+  #    각 remove 앞의 `op: test` 는 base 의 룰 순서가 바뀌면 **렌더가 죽게** 하는 장치다
+  #    (`validate.py check_site_overlays()` 가 eks 렌더 실패를 잡는다 = 조용히 엉뚱한 걸 지우지 않는다).
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: PrometheusRule
+      name: mp-backup
+    patch: |
+      - op: test
+        path: /spec/groups/0/rules/8/alert
+        value: MpBackupPgOnsiteDumpStale
+      - op: remove
+        path: /spec/groups/0/rules/8
+      - op: test
+        path: /spec/groups/0/rules/7/alert
+        value: MpBackupImageNeverArchived
+      - op: remove
+        path: /spec/groups/0/rules/7
+      - op: test
+        path: /spec/groups/0/rules/6/alert
+        value: MpBackupSourceStale
+      - op: remove
+        path: /spec/groups/0/rules/6
+      - op: test
+        path: /spec/groups/0/rules/4/alert
+        value: MpBackupEtcdStale
+      - op: remove
+        path: /spec/groups/0/rules/4

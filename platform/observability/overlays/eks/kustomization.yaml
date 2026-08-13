@@ -8,8 +8,16 @@ kind: Kustomization
 #    그래서 base 를 그대로 상속하는 대신 **지운다.** 남겨 두면
 #      · `fb-secrets`(온프렘 K8s provider)를 가리키는 ExternalSecret 이 AWS 에서 NotReady 로 남고
 #      · 0-16 이 없애려는 "정적 자격증명" 이 이름만 바꿔 되살아난다.
+#
+# ── 반대로 **여기에만 있는 것 1건** (0-3, 2026-08-13) ─────────────────────────
+# `externalsecret-grafana-admin.yaml` — Grafana 관리자 자격증명.
+# 온프렘은 이 값을 Ansible values(`grafana.adminPassword`, git 밖)로 넣지만, EKS 는 스택
+# Application 이 **이 공개 레포 안**에 있어(`platform/argocd/overlays/eks/kube-prometheus-stack.yaml`)
+# 평문을 적을 수 없다. 그래서 `admin.existingSecret` + ESO 로 우회한다.
+# 🔴 base 가 아니라 여기 있는 이유 = 온프렘에는 짝이 없다(C-83 덧셈 원칙).
 resources:
   - ../../base
+  - externalsecret-grafana-admin.yaml
 patches:
   - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-lgtm-object-store}
     patch: |-
