@@ -2,28 +2,18 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: app
 resources:
-  - ../../base
+- ../../base
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
 images:
-  - name: 192.168.0.10/mealplanning/mp-notify-service
-    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-notify-service
-    newTag: "d20d3fdb3a4fe05d852bde354cca7991e11c6d59"
+- name: 192.168.0.10/mealplanning/mp-notify-service
+  newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-notify-service
+  newTag: c8eeac60c58dd1103cd6f3fc91163d394b8172de
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
 #    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
-patches:
-  - target: {group: external-secrets.io, kind: ExternalSecret}
-    patch: |-
-      apiVersion: external-secrets.io/v1
-      kind: ExternalSecret
-      metadata: {name: selected-by-target}   # target 이 고르므로 이 이름은 매칭에 안 쓰인다
-      spec:
-        secretStoreRef:
-          kind: ClusterSecretStore
-          name: mp-aws-ssm
 
 # ══ 0-8d — emptyDir `sizeLimit` (2026-08-13) ═══════════════════════════════════
 # 🔴 **eks 오버레이에만 건다** — 온프렘에 걸면 잘못된 값이 곧 파드 축출이다(C-83 형상 동결).
@@ -36,12 +26,29 @@ patches:
 #   노드 allocatable ephemeral 43.7 GiB 의 8% 다(sizeLimit 은 예약이 아니라 상한).
 # 🔴 `op: test` 를 앞에 두는 이유 = 인덱스 기반 JSON6902 는 base 의 volumes 순서가 바뀌면
 #    **엉뚱한 볼륨에 상한을 건다.** test 가 깨지면 렌더가 죽어서 validate.py 가 잡는다.
-  - target: {group: apps, version: v1, kind: Deployment, name: mp-notify}
-    patch: |-
       # tmp → 64Mi — readOnlyRootFilesystem 스크래치 · 관측 4KiB
-      - op: test
-        path: /spec/template/spec/volumes/0/name
-        value: tmp
-      - op: add
-        path: /spec/template/spec/volumes/0/emptyDir/sizeLimit
-        value: 64Mi
+patches:
+- patch: |-
+    apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata: {name: selected-by-target}   # target 이 고르므로 이 이름은 매칭에 안 쓰인다
+    spec:
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: mp-aws-ssm
+  target:
+    group: external-secrets.io
+    kind: ExternalSecret
+- patch: |-
+    # tmp → 64Mi — readOnlyRootFilesystem 스크래치 · 관측 4KiB
+    - op: test
+      path: /spec/template/spec/volumes/0/name
+      value: tmp
+    - op: add
+      path: /spec/template/spec/volumes/0/emptyDir/sizeLimit
+      value: 64Mi
+  target:
+    group: apps
+    kind: Deployment
+    name: mp-notify
+    version: v1

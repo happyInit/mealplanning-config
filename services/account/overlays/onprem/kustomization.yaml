@@ -9,4 +9,4 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-account-service
   newName: 192.168.0.10/mealplanning/mp-account-service
-  newTag: 03c9334d2a016e1c5189762f1d62f6161622e038
+  newTag: c8eeac60c58dd1103cd6f3fc91163d394b8172de
