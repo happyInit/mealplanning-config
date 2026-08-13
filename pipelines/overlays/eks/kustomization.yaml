@@ -19,8 +19,21 @@ kind: Kustomization
 #    - 0-9 이미지 → ECR — 미착수
 #    - ✅ 0-2 secretStoreRef(2026-08-10)
 #    - ✅ 0-16 정적 AWS 키 제거(2026-08-10) — 🔴 워크로드 22개가 아니라 **시크릿에서 뺐다**. 아래 patches 주석 참조
+#    - ✅ 0-14c 워크로드별 SA — 22/22 (2026-08-13, 아래 + serviceaccounts.yaml)
+#    - ✅ 0-13 PG 롤 `svc_pipeline` (2026-08-13, 아래 — ConfigMap 한 줄로 22개가 같이 간다)
+#    - ⛔ **0-14d(`mp-pipeline-secrets` 를 db용/aws용으로 쪼개기) 는 EKS 에서 할 일이 없다.**
+#      명세(#571 §B)가 쪼개라고 한 이유는 *"20개는 AWS 키가 필요 없는데 envFrom 이 통째 주입이라
+#      뺄 수가 없다"* 였다. **EKS 에서는 뺄 것이 이미 없다** — 위 0-16 패치가 `AWS_ACCESS_KEY_ID`·
+#      `AWS_SECRET_ACCESS_KEY` 두 엔트리를 시크릿에서 통째로 지웠고(렌더 실측: eks 4키 / 온프렘 6키),
+#      Bedrock 자격증명은 IRSA 가 SA 두 개(`mp-score-review-sentiment`·`mp-summarize-reviews`)에만
+#      준다. 여기서 굳이 쪼개면 **키가 0개인 `mp-pipeline-aws-secrets`** 가 생긴다.
+#      🔴 그래서 0-14d 는 *온프렘 쪽 항목*으로 남는데, 온프렘은 **C-83 으로 형상 동결**이다
+#         (시크릿을 쪼개는 것 = 오브젝트 구조·권한 변경). 명세 §B 의 "런타임 Job 36개 처리 절차"도
+#         라이브 온프렘 얘기라 신규 클러스터인 EKS 에는 대상이 없다.
+#      ⇒ **이 트랙에서 더 할 일 없음.** 되살리려면 C-83 예외를 먼저 받아야 한다.
 resources:
   - ../../base
+  - serviceaccounts.yaml
 
 #      🔴 그 판정이 나면 아래 mp-crawler-kurly 매핑은 **같이 지운다** — 지금은
 #         "base 통과 + 레지스트리만 교체" 라 매핑이 남아 있어야 렌더가 Harbor 를 안 가리킨다.
@@ -117,33 +130,9 @@ patches:
       - op: remove
         path: /spec/data/4
 
-  # Bedrock 을 실제로 호출하는 워크로드 2개에만 IRSA 용 SA 를 물린다(나머지 20개는 AWS 를 안 쓴다).
-  # 🔴 **SA 이름은 제안이다.** 실물 생성은 0-14c(다른 레인) 소관 — 지금 pipeline ns 22/22 가 `default` SA 다.
-  #    이름이 확정되면 여기 두 줄만 맞추면 된다. 롤 = bedrock:InvokeModel 두 모델 ARN 한정.
-  # ℹ️ `automountServiceAccountToken` 은 건드리지 않는다 — IRSA 토큰은 EKS 웹훅이 별도 projected
-  #    볼륨(`aws-iam-token`)으로 주입하므로 그 플래그와 무관하다. 0-14c 가 false 로 잠가도 안 깨진다.
-  - target: {group: batch, kind: CronJob, name: mp-score-review-sentiment}
-    patch: |-
-      apiVersion: batch/v1
-      kind: CronJob
-      metadata: {name: mp-score-review-sentiment}
-      spec:
-        jobTemplate:
-          spec:
-            template:
-              spec:
-                serviceAccountName: mp-review-ai
-  - target: {group: batch, kind: CronJob, name: mp-summarize-reviews}
-    patch: |-
-      apiVersion: batch/v1
-      kind: CronJob
-      metadata: {name: mp-summarize-reviews}
-      spec:
-        jobTemplate:
-          spec:
-            template:
-              spec:
-                serviceAccountName: mp-review-ai
+  # ✅ Bedrock IRSA 의 SA 는 **아래 0-14c 블록**이 워크로드 이름 그대로 만든다(2026-08-13).
+  #    종전 제안이던 공용 `mp-review-ai` 는 미채택 — 근거는 serviceaccounts.yaml 머리말.
+  #    롤 어노테이션은 SA 쪽에 있다. 롤 = bedrock:InvokeModel 두 모델 ARN 한정.
 
 # ── 1-31 Harbor pull secret 제거 ────────────────────────────────────────────
 # ECR 은 **kubelet 이 노드 인스턴스 롤로** 당긴다(IRSA/Pod Identity 는 파드용이라 이미지 풀에
@@ -162,3 +151,264 @@ patches:
       kind: ExternalSecret
       metadata:
         name: mp-harbor-pull
+
+# ── 0-14c 워크로드별 SA 물리기 — 22/22 (EKS 전용 · C-83 덧셈) ──────────────────
+# 🔴 base 는 `kind: Deployment` / `kind: CronJob` 전수 패치를 쓰지만 여기서는 못 쓴다 —
+#    SA 이름이 워크로드마다 다르다. 이름 대 이름 22줄이 곧 검증표다(빠지면 그 워크로드가
+#    `default` SA 로 남고, 그건 IRSA 를 걸었을 때 폭발 반경이 22 로 되돌아가는 경로다).
+  - target: {group: apps, kind: Deployment, name: mp-deal-notifier}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-deal-notifier}
+      spec:
+        template:
+          spec:
+            serviceAccountName: mp-deal-notifier
+  - target: {group: apps, kind: Deployment, name: mp-price-anomaly-notifier}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-price-anomaly-notifier}
+      spec:
+        template:
+          spec:
+            serviceAccountName: mp-price-anomaly-notifier
+  - target: {group: apps, kind: Deployment, name: mp-recipe-refiner}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-recipe-refiner}
+      spec:
+        template:
+          spec:
+            serviceAccountName: mp-recipe-refiner
+  - target: {group: apps, kind: Deployment, name: mp-retail-refiner}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-retail-refiner}
+      spec:
+        template:
+          spec:
+            serviceAccountName: mp-retail-refiner
+  - target: {group: apps, kind: Deployment, name: mp-user-event-sink}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-user-event-sink}
+      spec:
+        template:
+          spec:
+            serviceAccountName: mp-user-event-sink
+  - target: {group: batch, kind: CronJob, name: mp-chat-insights}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-chat-insights}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-chat-insights
+  - target: {group: batch, kind: CronJob, name: mp-data-invariants}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-data-invariants}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-data-invariants
+  - target: {group: batch, kind: CronJob, name: mp-deal-pruner}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-deal-pruner}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-deal-pruner
+  - target: {group: batch, kind: CronJob, name: mp-pantry-expire-recompute}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-pantry-expire-recompute}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-pantry-expire-recompute
+  - target: {group: batch, kind: CronJob, name: mp-poller-deal-closesale}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-deal-closesale}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-deal-closesale
+  - target: {group: batch, kind: CronJob, name: mp-poller-deal-timesale}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-deal-timesale}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-deal-timesale
+  - target: {group: batch, kind: CronJob, name: mp-poller-es-recipes}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-es-recipes}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-es-recipes
+  - target: {group: batch, kind: CronJob, name: mp-poller-kurly}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-kurly}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-kurly
+  - target: {group: batch, kind: CronJob, name: mp-poller-oasis-dawn}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-oasis-dawn}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-oasis-dawn
+  - target: {group: batch, kind: CronJob, name: mp-poller-oasis-noon}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-oasis-noon}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-oasis-noon
+  - target: {group: batch, kind: CronJob, name: mp-poller-price-anomaly}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-price-anomaly}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-price-anomaly
+  - target: {group: batch, kind: CronJob, name: mp-poller-price-matview}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-price-matview}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-price-matview
+  - target: {group: batch, kind: CronJob, name: mp-poller-recipe}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-recipe}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-recipe
+  - target: {group: batch, kind: CronJob, name: mp-poller-recipe-review}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-recipe-review}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-poller-recipe-review
+  - target: {group: batch, kind: CronJob, name: mp-score-review-sentiment}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-score-review-sentiment}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-score-review-sentiment
+  - target: {group: batch, kind: CronJob, name: mp-summarize-reviews}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-summarize-reviews}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-summarize-reviews
+  - target: {group: batch, kind: CronJob, name: mp-user-data-pruner}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-user-data-pruner}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-user-data-pruner
+
+# ── 0-13 PG 서비스 롤 = svc_pipeline (EKS 전용) ───────────────────────────────
+# 🔴 온프렘 `fbapp` 은 그대로다 — 권한 회수 금지(라이브 크롤·리파이너 즉사).
+# 파이프라인은 22개가 **한 ConfigMap** 을 공유하므로 서비스처럼 워크로드마다 env 를 얹을 필요가 없다.
+# 한 줄이면 22개가 같이 간다. 롤 실체·비밀 = platform/pg/overlays/eks.
+# ⚠️ ConfigMap 값은 **파드 기동 시점 주입**이다. 신규 클러스터라 문제 없지만, 나중에 바꾸면
+#    상시 컨슈머 5종은 rollout restart 가 별도로 필요하다(base configmap.yaml 주석과 같은 함정).
+  - target: {version: v1, kind: ConfigMap, name: mp-pipeline-env}
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: mp-pipeline-env}
+      data:
+        PGUSER: svc_pipeline
+# 🔴 비밀번호 출처도 같이 — 유저명과 비번은 한 세트다.
+#    `op: test` 로 base 순서 변경을 렌더 실패로 드러낸다(위 0-16 패치와 같은 규약).
+  - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-pipeline-secrets}
+    patch: |-
+      - op: test
+        path: /spec/data/0/secretKey
+        value: PGPASSWORD
+      - op: replace
+        path: /spec/data/0/remoteRef
+        value: {key: pg-roles, property: svc_pipeline}

@@ -8,6 +8,46 @@ kind: Kustomization
 #    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
 #
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - PG 인스턴스 3(C-21)에 맞춰 풀 크기 재검토 — 근거는 P3 실측(account 4 replica 에서 커넥션 12/100)
+#    - ✅ 0-13 롤 분리에 따른 풀 산수 재조정 (2026-08-13, 아래) — 근거는 P3 실측(account 4 replica 에서 커넥션 12/100)
+#    - PG 인스턴스 3(C-21)에 맞춰 인스턴스 수 재검토 — 미착수(풀 크기와는 별개 축)
 resources:
   - ../../base
+
+# ── 0-13 의 필수 짝 — 롤을 가르면 **풀 개수가 늘어난다** (2026-08-13) ──────────
+# 🔴 이건 "튜닝" 이 아니라 **0-13 과 한 몸**이다. 빠뜨리면 롤 분리가 그대로 커넥션 고갈 장애다.
+#
+# PgBouncer 는 **(유저, DB) 쌍마다 별도 풀**을 만든다. 지금은 `fbapp` 하나라 풀도 하나다:
+#
+#     지금  : 풀 1개(fbapp@foodbudget)   × 20 × 2 인스턴스 =  40  ≤ 97   ✅
+#     롤 분리: 풀 9개(svc_*@foodbudget)  × 20 × 2 인스턴스 = 360  ≫ 97   ❌
+#
+# `max_connections` 100 − `superuser_reserved_connections` 3 = 가용 **97**(온프렘 실측, §1.5).
+# 그래서 두 값을 같이 내린다:
+#
+#     default_pool_size  5   → 9풀 × 5 × 2 = 90 (요구치)
+#     max_db_connections 25  → 인스턴스당 하드캡. 실제 천장은 2 × 25 = **50**
+#
+#     실효 = pooler 50 + pgsync 8 + 직결(ocr 2 · ranking 2 · pipeline ~10) + replica 1 + exporter 1
+#          ≈ 74 ≤ 97   ✅ (여유 23)
+#
+# `min_pool_size = 0` 이라 9풀이 동시에 최대로 벌어지는 건 실부하에서만 일어난다.
+# k6 실측(recipe 4 replica)에서도 PG 커넥션은 12/100 이었다 — 25 는 관측 피크의 4배 여유다.
+#
+# 🔴 **PGSync 는 이 풀을 안 탄다**(LISTEN/NOTIFY 가 세션 기능이라 transaction 풀링에서 죽는다).
+#    위 산수의 `pgsync 8` 이 직결분이다 — 풀을 줄여도 그 8은 안 준다.
+# 🔴 인증은 **안 바뀐다.** `auth_query` 가 `public.user_search`(SECURITY DEFINER)로 pg_shadow 를
+#    조회해 임의 롤을 자동 해석한다. 롤을 추가해도 pgbouncer 설정에 손댈 것이 없다(§1.5 실측).
+# ⚠️ CNPG 가 이 두 키를 `spec.pgbouncer.parameters` 로 허용하는지는 **적용 전에 dry-run 으로 확인**할 것.
+#    (CNPG 는 `auth_*`·`listen_*`·`admin_users` 를 차단한다. 이 둘은 차단 목록에 없으나 미실증.)
+# ⚠️ C-21 로 PG 인스턴스가 3이 되어도 이 산수는 안 바뀐다 — 상한은 **primary 의 max_connections** 다.
+patches:
+  - target: {group: postgresql.cnpg.io, kind: Pooler, name: pg-pooler}
+    patch: |-
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Pooler
+      metadata: {name: pg-pooler, namespace: data}
+      spec:
+        pgbouncer:
+          parameters:
+            default_pool_size: "5"
+            max_db_connections: "25"

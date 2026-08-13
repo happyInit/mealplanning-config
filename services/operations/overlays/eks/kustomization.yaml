@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: app
 resources:
   - ../../base
+  - serviceaccount.yaml
 # EKS 이관 시 Harbor 주소만 ECR로 교체한다.
 images:
   - name: 192.168.0.10/mealplanning/mp-operations-service
@@ -25,6 +26,19 @@ patches:
           kind: ClusterSecretStore
           name: mp-aws-ssm
 
+# ── 0-14c 워크로드별 SA (EKS 전용 · C-83 덧셈) ─────────────────────────────────
+# 🔴 merge 패치로 `serviceAccountName` **한 필드만** 얹는다. Rollout 은 CRD 라 kustomize 가
+#    스키마를 몰라 JSON merge 로 처리하는데, 패치에 리스트(`containers`)를 적으면 통째로
+#    **교체**된다. 이 패치는 리스트를 안 담으므로 안전하다(0-9 §rollouts initContainer 함정과 같은 축).
+  - target: {group: apps, kind: Deployment, name: mp-operations}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-operations}
+      spec:
+        template:
+          spec:
+            serviceAccountName: mp-operations
 # ══ 0-8d — emptyDir `sizeLimit` (2026-08-13) ═══════════════════════════════════
 # 🔴 **eks 오버레이에만 건다** — 온프렘에 걸면 잘못된 값이 곧 파드 축출이다(C-83 형상 동결).
 # 값의 근거·실측·안전 검산 = `docs/eks-emptydir-sizing.md`. 요약:

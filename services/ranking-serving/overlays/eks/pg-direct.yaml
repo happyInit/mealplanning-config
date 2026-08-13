@@ -1,0 +1,30 @@
+# 🔴 **ranking-serving 은 Pooler 를 우회한다** — 온프렘 `overlays/onprem/pg-direct.yaml` 과 **같은 내용**이다.
+#
+# 🔴 왜 여기 따로 있나 = **0-1(사이트 분기) 누락분**(2026-08-13 발견). 이 오버라이드는 처음부터
+#    `overlays/onprem` 에만 있었고 eks 오버레이엔 없었다 → eks 렌더가 app-common 의
+#    `PGHOST: pg-pooler.data.svc` 를 그대로 물어 **AWS 에서만 Pooler 를 타게** 돼 있었다.
+#    해제 조건(아래)이 아직 충족되지 않았으므로 사이트에 따라 갈릴 이유가 없다.
+#
+# 우회 근거는 온프렘 파일의 주석이 정본이다(2026-07-30 실측). 요약:
+#   `ml/recipe-ranking/serve.py` 가 `psycopg.connect()` 를 직접 호출한다. app#407 의
+#   `prepare_threshold=None` 패치는 `services/*/app/db.py` 의 AsyncConnectionPool 만 대상이었으므로
+#   여기는 **psycopg 기본값(prepare_threshold=5)** 그대로다 → transaction 풀링에서
+#   `prepared statement "..." does not exist`. 게다가 HPA 대상이 아니라 다중화 이득도 0이다.
+#
+# 🔴 해제 조건도 그대로다 — serve.py 의 connect 에 `prepare_threshold=None` 을 넣고 재빌드한 뒤에야
+#    옮긴다. 코드가 바뀌기 전에는 **양 사이트에서 같이** 지운다.
+#
+# ⚠️ 0-13 의 `PGUSER: svc_ranking` 패치와 같은 컨테이너를 건드리지만 키가 달라 SMP 가 병합한다
+#    (`env` 의 patchMergeKey = `name`). 렌더로 둘 다 살아 있음을 확인했다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-ranking-serving
+spec:
+  template:
+    spec:
+      containers:
+        - name: ranking-serving
+          env:
+            - name: PGHOST
+              value: pg-rw.data.svc
