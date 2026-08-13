@@ -120,7 +120,7 @@ patches:
   #     ⇒ **이관 전 선행 작업으로 승격**할 항목이다(프로브를 EKS 로 이식). 상세 = EKS-RULESET.md.
   #   · `MpBackupProbeFailed` · `MpBackupWalArchivingStalled` · `MpBackupPgBaseStale`
   #     · `MpBackupSecretsStale` — 대상이 **AWS 에도 실재한다**(CNPG barman-cloud → S3 의 WAL·베이스
-  #     백업 = C-15 로 PG 자체운영 유지 · 비밀 = SSM). 프로브가 이식되면 그날부터 바로 일한다.
+  #     백업 = C-15 로 PG 자체운영 유지 · 비밀 = Secrets Manager). 프로브가 이식되면 그날부터 바로 일한다.
   #
   # 🔴 인덱스 기반 `op: remove` 는 **내림차순**이어야 한다 — 앞을 먼저 지우면 뒤 인덱스가 밀린다.
   #    각 remove 앞의 `op: test` 는 base 의 룰 순서가 바뀌면 **렌더가 죽게** 하는 장치다

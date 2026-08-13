@@ -122,7 +122,7 @@ allowlist 가 꺼져 있으면 `kube_node_labels` 가 **시리즈 0개**라 셀�
 
 **남긴 5개** = `MpBackupProbeMissing` · `MpBackupProbeFailed` · `MpBackupWalArchivingStalled` ·
 `MpBackupPgBaseStale` · `MpBackupSecretsStale`. 대상이 AWS 에도 실재한다
-(CNPG barman-cloud → S3 의 WAL·베이스 백업 = C-15 · 비밀 = SSM).
+(CNPG barman-cloud → S3 의 WAL·베이스 백업 = C-15 · 비밀 = Secrets Manager).
 
 🔴 **`MpBackupProbeMissing`(= `absent(mp_backup_check_timestamp_seconds)`)은 EKS 에서 즉시 발화한다.
    그리고 그것이 맞다.** `mp_backup_*` 를 만드는 주체는 앱 레포 Ansible 롤(`backup_freshness`)의

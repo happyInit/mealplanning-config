@@ -6,7 +6,7 @@ kind: Kustomization
 # 🔴 **이 트랙은 EKS 에서 렌더 결과가 빈다.** base 의 유일한 리소스가 Harbor pull secret 인데
 #    ECR 은 kubelet 이 노드 인스턴스 롤로 당기므로(IRSA/Pod Identity 는 파드 전용이라 이미지 풀에
 #    관여하지 않는다) dockerconfigjson 이 불요하다.
-#    남기면 온프렘 `fb-secrets` 의 `harbor-pull` 을 EKS 스토어(SSM, C-23)에서 찾다가
+#    남기면 온프렘 `fb-secrets` 의 `harbor-pull` 을 EKS 스토어(Secrets Manager, C-36)에서 찾다가
 #    **영구 SecretSyncedError** 가 된다.
 #
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
@@ -26,16 +26,16 @@ resources:
 
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
 patches:
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
   - target: {group: external-secrets.io, kind: ExternalSecret}
     patch: |-
@@ -45,7 +45,7 @@ patches:
       spec:
         secretStoreRef:
           kind: ClusterSecretStore
-          name: mp-aws-ssm
+          name: mp-aws-secrets
   - target:
       group: external-secrets.io
       kind: ExternalSecret

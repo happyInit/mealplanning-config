@@ -120,7 +120,7 @@ MinIO 엔드포인트 · 물리계층 알림)은 **지우면 안 되고 `overlay
 > 신설 2026-08-10. 근거 = 체크리스트 **0-2**·**0-16**, 결정 **C-23**(비밀 = 양 사이트 독립).
 > 스토어 본문·값 적재·IAM 최소권한·미결 = **`bootstrap/eso/README.md`**.
 
-**온프렘 = `fb-kubernetes`(K8s provider) 유지 / EKS = `mp-aws-ssm`(SSM ParameterStore + IRSA).**
+**온프렘 = `fb-kubernetes`(K8s provider) 유지 / EKS = `mp-aws-secrets`(Secrets Manager + IRSA).**
 
 ### 갈리는 것은 한 필드다
 
@@ -129,7 +129,7 @@ MinIO 엔드포인트 · 물리계층 알림)은 **지우면 안 되고 `overlay
 
 | 전제 | 왜 |
 |---|---|
-| 스토어의 `spec.provider.aws.prefix: /mp/prod/` | key 앞에 그대로 이어 붙어 파라미터 이름이 된다(`app-secrets` → `/mp/prod/app-secrets`). 🔴 **끝 슬래시가 load-bearing** — 없으면 `/mp/prodapp-secrets` 가 된다 |
+| 스토어의 `spec.provider.aws.prefix: mp/prod/` | key 앞에 그대로 이어 붙어 파라미터 이름이 된다(`app-secrets` → `mp/prod/app-secrets`). 🔴 **끝 슬래시가 load-bearing** — 없으면 `/mp/prodapp-secrets` 가 된다 |
 | `property` 이름에 gjson 메타문자 0건 | AWS provider 는 `property` 를 JSON 값 안의 gjson 경로로 읽는다. 67/67 실측 — **새 키 이름에 `.` 을 넣지 말 것** |
 
 이걸 안 지키면 구현자가 67엔트리에 경로를 손으로 붙이기 시작하고, 그 순간 두 사이트의
@@ -591,7 +591,7 @@ eks 오버레이가 조용히 썩는다. 비어 있음은 실수가 아니라 �
 그 외 이 레포 밖 전제 2건:
 - `ExternalSecret/observability/mp-alertmanager-slack` — **config 레포에 없다**(§0-2 "이 레포 밖에 남은
   ExternalSecret 2개"). 없으면 Alertmanager 파드가 시크릿 마운트 실패로 **아예 안 뜬다.**
-- SSM `/mp/prod/observability-secrets` 에 `GRAFANA_ADMIN_USER`·`GRAFANA_ADMIN_PASSWORD`
+- Secrets Manager `mp/prod/observability-secrets` 에 `GRAFANA_ADMIN_USER`·`GRAFANA_ADMIN_PASSWORD`
   (→ `platform/observability/overlays/eks/externalsecret-grafana-admin.yaml`).
   🔴 온프렘 values 는 `grafana.adminPassword` 를 평문으로 갖지만 그 파일은 git 밖이다.
   **이 레포는 공개**라 같은 방법을 쓸 수 없어 `admin.existingSecret` 으로 우회했다.

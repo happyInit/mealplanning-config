@@ -45,9 +45,9 @@ patches:
         value: 105
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
   - target: {group: external-secrets.io, kind: ExternalSecret}
     patch: |-
@@ -57,7 +57,7 @@ patches:
       spec:
         secretStoreRef:
           kind: ClusterSecretStore
-          name: mp-aws-ssm
+          name: mp-aws-secrets
 
 # ── 0-14c 워크로드별 SA (EKS 전용 · C-83 덧셈) ─────────────────────────────────
 # 🔴 merge 패치로 `serviceAccountName` **한 필드만** 얹는다. Rollout 은 CRD 라 kustomize 가

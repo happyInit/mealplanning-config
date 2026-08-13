@@ -28,15 +28,15 @@ images:
     newTag: "5b4e66c723bbee21bf41066d4736b72fa53aa994"
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
 patches:
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).
+# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: /mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → /mp/prod/app-secrets).
+#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
   - target: {group: external-secrets.io, kind: ExternalSecret}
     patch: |-
@@ -46,7 +46,7 @@ patches:
       spec:
         secretStoreRef:
           kind: ClusterSecretStore
-          name: mp-aws-ssm
+          name: mp-aws-secrets
 
 # ══ 0-8d — emptyDir `sizeLimit` (2026-08-13) ═══════════════════════════════════
 # 🔴 **eks 오버레이에만 건다** — 온프렘에 걸면 잘못된 값이 곧 파드 축출이다(C-83 형상 동결).
