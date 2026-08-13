@@ -52,10 +52,10 @@ images:
 # 호스트 정본 = scripts/sites.yaml `eks.registry`. 계정 ID 가 정해지면 거기를 고치고
 # validate.py 가 잡아 주는 목록대로 각 오버레이를 맞춘다(불일치 = 실패).
   - name: 192.168.0.10/mealplanning/mp-data-pipeline
-    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-data-pipeline
+    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-data-pipeline
     newTag: "710b056de8174c5026ab3c5273d4dee973da4ff7"
   - name: 192.168.0.10/mealplanning/mp-crawler-kurly
-    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-crawler-kurly
+    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-crawler-kurly
     newTag: "1ea4a8be3d274a675a419a34aaa91366e2cc8980"
 
 
