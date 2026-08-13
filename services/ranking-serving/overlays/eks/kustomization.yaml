@@ -14,7 +14,7 @@ resources:
 #    ⚠️ 그 emptyDir 은 지금 sizeLimit 이 없다 — 0-8d 대상. 모델 1개(0.95 MiB)라 위험도는 낮다.
 images:
   - name: 192.168.0.10/mealplanning/mp-ranking-serving
-    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-ranking-serving
+    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-ranking-serving
     newTag: "a2268432159f3093e6ef85478393102260939c7b"
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────

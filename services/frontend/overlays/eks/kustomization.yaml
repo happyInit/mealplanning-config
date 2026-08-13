@@ -6,7 +6,7 @@ resources:
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
 images:
   - name: 192.168.0.10/mealplanning/mp-frontend
-    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-frontend
+    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-frontend
     newTag: "1da39a957d91519e09ffd64a807d6a5996ba6d59"
 
 # ── 0-6 hard TSC 완화 (2026-08-10) ────────────────────────────────────────────
