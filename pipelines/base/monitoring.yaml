@@ -38,14 +38,16 @@ spec:
   groups:
     - name: mp-pipeline
       rules:
-        # 구 DataPollerStale 임계의 K8s 크론잡 매핑. 구 oasis 16h(일2회 단일 폴러)는 dawn/noon
+        # 구 DataPollerStale 임계의 K8s 크론잡 매핑. 컬리는 아래 전용 freshness 규칙으로
+        # 분리한다. 실패 Job마다 KubeJobFailed가 남는 대신, 운영자는 데이터가 실제로 얼마나
+        # 오래됐는지 한 알림으로 본다.
         # 분리로 각자 일1회가 되어 30h 버킷으로 이동. deal-pruner(10분 주기)·user-data-pruner·
         # chat-insights 는 구 규칙에 없던 신규 편입. 🔴 시리즈는 첫 성공 후에만 존재한다 —
         # 한 번도 성공 못 한 크론잡은 이 규칙이 못 보고, 그 구간은 KubeJobFailed 가 잡는다.
         - alert: MpPollerStale
           expr: |
             (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-price-matview|mp-deal-pruner"} > 10800)
-            or (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-kurly|mp-poller-oasis-dawn|mp-poller-oasis-noon|mp-poller-deal-timesale|mp-poller-deal-closesale|mp-user-data-pruner|mp-chat-insights"} > 108000)
+            or (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-oasis-dawn|mp-poller-oasis-noon|mp-poller-deal-timesale|mp-poller-deal-closesale|mp-user-data-pruner|mp-chat-insights"} > 108000)
             or (time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob=~"mp-poller-recipe|mp-poller-es-recipes"} > 432000)
           for: 5m
           labels:
@@ -53,7 +55,46 @@ spec:
             service: data-pipeline
           annotations:
             summary: "{{ $labels.cronjob }} 성공이 예정 주기보다 오래 갱신되지 않음"
-            description: "마지막 성공 이후 임계(빈도별 3h/30h/120h)를 초과. 잡 자체가 실패 중이면 KubeJobFailed 가 동반 발화한다."
+            description: "마지막 성공 이후 임계(빈도별 3h/30h/120h)를 초과. 컬리는 전용 freshness 규칙으로 분리했다."
+
+        # 컬리는 매일 한 번이므로 단일 실패로 사람을 깨우지 않는다. 36시간에는 운영 경고,
+        # 48시간에는 데이터 신선도 장애(P2)로 승격한다. 두 규칙은 Alertmanager에서 중복 억제한다.
+        - alert: MpKurlyDataStaleWarning
+          expr: time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob="mp-poller-kurly"} > 129600
+          for: 15m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "컬리 정상 수집 시각이 36시간 넘게 갱신되지 않음"
+            description: "컬리 데이터가 하루 이상 신선하지 않다. 최근 Job 로그와 카테고리별 수집 결과를 확인한다."
+
+        - alert: MpKurlyDataStaleCritical
+          expr: time() - kube_cronjob_status_last_successful_time{namespace="pipeline", cronjob="mp-poller-kurly"} > 172800
+          for: 15m
+          labels:
+            severity: critical
+            service: data-pipeline
+          annotations:
+            summary: "컬리 정상 수집 시각이 48시간 넘게 갱신되지 않음"
+            description: "컬리 가격·상품 데이터가 이틀 이상 오래됐다. 사용자 API 전체 장애는 아니지만 데이터 신뢰도 장애로 즉시 확인한다."
+
+        # 실패한 Job 오브젝트는 history limit까지 남아 KubeJobFailed를 매일 추가 발화시킨다.
+        # 최근 36시간의 실패만 하나로 집계해 P3에 보이고, 개별 KubeJobFailed는 Alertmanager에서 버린다.
+        - alert: MpKurlyLatestRunFailed
+          expr: |
+            max(
+              (kube_job_failed{namespace="pipeline", job_name=~"mp-poller-kurly-[0-9]+"} > 0)
+              and on(namespace, job_name)
+              (time() - kube_job_status_start_time{namespace="pipeline", job_name=~"mp-poller-kurly-[0-9]+"} < 129600)
+            ) > 0
+          for: 10m
+          labels:
+            severity: warning
+            service: data-pipeline
+          annotations:
+            summary: "최근 컬리 수집 실행이 실패함"
+            description: "개별 실패 Job 이력 대신 최신 실패 상태 하나만 알린다. 다음 정상 수집이 성공하면 자동 해소된다."
 
         # ── 컬리 크롤의 "조용한 절단" 감지 (2026-08-04 실장애) ──────────────────────
         # 🔴 위 MpPollerStale 로는 원리적으로 못 잡는 사고가 있었다. 컬리가 3,324건 대신
@@ -208,7 +249,6 @@ spec:
           expr: |
             absent_over_time(kafka_consumergroup_lag{consumergroup="retail-refiner"}[10m])
             or absent_over_time(kafka_consumergroup_lag{consumergroup="deal-notifier"}[10m])
-            or absent_over_time(kafka_consumergroup_lag{consumergroup="user-event-sink"}[10m])
             or absent_over_time(kafka_consumergroup_lag{consumergroup="recipe-refiner"}[10m])
           for: 1h
           labels:
