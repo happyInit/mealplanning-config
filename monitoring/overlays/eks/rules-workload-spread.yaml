@@ -1,0 +1,171 @@
+# 워크로드 몰림 감시 — 🔴 **EKS 사이트 전용 재작성** (1-28, 2026-08-13).
+#
+# base 의 `PrometheusRule/mp-workload-spread` 는 이 오버레이에서 **통째로 삭제**하고 이 파일로
+# 갈아 끼운다(삭제 = `kustomization.yaml` 의 `$patch: delete`). 알람 이름·의도·임계값·결측 내성
+# 설계는 **한 글자도 안 바꿨다** — 바뀐 것은 **zone 을 어디서 얻는가** 하나뿐이다.
+#
+# ══ 왜 갈아 끼우나 ═════════════════════════════════════════════════════════════
+# base 는 zone 을 노드 **이름 정규식**으로 파생한다(`k8s-worker-([ab])[0-9]+` · `k8s-master`).
+# EKS 노드 이름은 `ip-10-…` 이라 **하나도 안 맞는다.** 그대로 상속하면 둘 다 오작동한다:
+#   · `MpNodeZoneMapUnknown` → 전 노드에서 **영구 발화**
+#   · zone 파생이 전부 빈 라벨로 접혀 `mp:deployment_single_zone:bool` 이 항상 1 →
+#     `MpDeploymentPodsOnSingleZone` 이 **replica 2 이상인 전 Deployment 에서 오발화**
+# 0-3c(`mp-physical-layer`)·C-18(`mp-minio`)과 **같은 실패 유형**이다 — 타깃이 없는 룰을
+# 상속해 영구 발화를 만드는 것.
+#
+# ══ EKS 에서는 오히려 더 정확해진다 ════════════════════════════════════════════
+# 온프렘이 이름 규칙을 쓴 이유는 **KSM 이 `kube_node_labels` 를 안 내보냈기 때문**이다
+# (2026-07-31 실측: 쿼리 결과 0건). base 주석이 "✅ 제대로 된 해법" 으로 적어 둔 것이 바로 이 파일이다.
+# EKS 에서는 그 전제가 사라진다:
+#   ① `topology.kubernetes.io/zone` 에 **진짜 AZ**(`ap-northeast-2a`…)가 들어간다 — 파생이 아니라 실값.
+#   ② KSM allowlist 를 **우리가 켤 수 있다** — 스택 Application 이 이제 config 소유이기 때문이다
+#      (`platform/argocd/overlays/eks/kube-prometheus-stack.yaml` 의
+#       `--metric-labels-allowlist=nodes=[topology.kubernetes.io/zone]`).
+#      🔴 **그 한 줄이 이 파일의 전제다.** 빠지면 `label_topology_kubernetes_io_zone` 시리즈가
+#         아예 없어 join 이 비고, 아래 `MpNodeZoneMapUnknown` 이 그 사실을 잡아 준다(의도된 가드).
+#
+# ══ ⚠️ EKS 에서 `MpDeploymentPodsOnSingleZone` 은 **구조적으로 휴면**이다 ═════════
+# C-29 = `m7g.xlarge` × 3 · **AZ 당 1대** ⇒ 노드:AZ = 1:1.
+# 이 알람의 가드가 `mp:deployment_pod_nodes:count > 1`(노드 2종 이상)인데, 1:1 에서는
+# 노드가 2종이면 zone 도 자동으로 2종이라 `single_zone` 이 0 이 된다 → **발화 조건이 성립하지 않는다.**
+# 🔴 이것은 고장이 아니라 **토폴로지의 결과**다. 지우지 않는 이유:
+#   · AZ 당 노드가 2대 이상이 되는 순간(스케일아웃·Karpenter) 즉시 의미가 생긴다.
+#   · 그때 룰을 새로 쓰는 것보다 휴면으로 두는 편이 싸다.
+#   ⇒ 이 국면에서 실제로 신호를 나르는 것은 `MpDeploymentPodsOnSingleNode` 쪽이다.
+#
+# 🔴 `metadata.name` 이 base 와 다른 이유(`-eks` 접미) = 같은 이름이면 kustomize 가 리소스를
+#    **수집하는 단계**에서 ID 충돌로 죽는다(patch 로 지우는 것은 그 뒤 단계다).
+#    **알람 이름(`alert:`)은 base 와 동일하게 유지한다** — 런북·대시보드·Alertmanager 라우팅이
+#    무는 것은 파일명이 아니라 alertname 이다. 사이트마다 alertname 이 달라지면 그것들이 갈린다.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-workload-spread-eks
+  namespace: app
+spec:
+  groups:
+    - name: mp-workload-spread
+      # base 와 동일. [20m] 창의 기대 표본 20개 ↔ 아래 count_over_time 하한 10 과 한 세트.
+      interval: 1m
+      rules:
+        # ── ① 노드 종류 수 — base 와 **완전히 동일**(zone 이 안 끼어 있어 사이트 무관) ────
+        - record: mp:deployment_pod_nodes:count
+          expr: |
+            count by (namespace, deployment) (
+              count by (namespace, deployment, node) (
+                label_replace(
+                  kube_pod_info{created_by_kind="ReplicaSet", node!=""},
+                  "deployment", "$1", "created_by_name", "(.+)-[^-]+"
+                )
+              )
+            )
+
+        # ── ② zone 종류 수 — 🔴 **여기만 바뀐다.** 이름 파생 → `kube_node_labels` 조인 ──
+        # `kube_node_labels` 는 노드당 1 시리즈이고 라벨 키가
+        # `label_topology_kubernetes_io_zone` 으로 정규화돼 실린다(KSM 의 라벨 이름 규칙:
+        # `label_` 접두 + 비영숫자 → `_`). allowlist 를 안 켜면 **이 라벨 자체가 없다.**
+        #
+        # 🔴 `max by (node, ...)` 로 한 번 접는 이유 — KSM 이 재시작 중이거나 중복 스크레이프가
+        #    겹치면 같은 node 에 시리즈가 2개 보일 수 있고, 그러면 `group_left` 가
+        #    "multiple matches for labels" 로 **룰 평가를 통째로 실패**시킨다.
+        #    실패한 record 는 조용히 사라지고 뒤따르는 알람도 같이 침묵한다 — 가장 나쁜 실패 유형이다.
+        # 🔴 곱셈(`*`)을 쓰는 이유 — `kube_pod_info` 와 `kube_node_labels` 는 값이 둘 다 1 이라
+        #    곱이 1 로 유지된다. `and` 는 오른쪽 라벨을 안 가져오므로 여기서는 못 쓴다.
+        - record: mp:deployment_pod_zones:count
+          expr: |
+            count by (namespace, deployment) (
+              count by (namespace, deployment, label_topology_kubernetes_io_zone) (
+                label_replace(
+                  kube_pod_info{created_by_kind="ReplicaSet", node!=""},
+                  "deployment", "$1", "created_by_name", "(.+)-[^-]+"
+                )
+                  * on(node) group_left(label_topology_kubernetes_io_zone)
+                    max by (node, label_topology_kubernetes_io_zone) (kube_node_labels)
+              )
+            )
+
+        # ── ③ 0/1 게이지 — base 와 동일(근거는 base 주석 ③) ─────────────────────────
+        - record: mp:deployment_single_node:bool
+          expr: |
+            (mp:deployment_pod_nodes:count == bool 1)
+              * on(namespace, deployment)
+                (max by (namespace, deployment) (kube_deployment_spec_replicas) >= bool 2)
+
+        - record: mp:deployment_single_zone:bool
+          expr: |
+            (mp:deployment_pod_zones:count == bool 1)
+              * on(namespace, deployment)
+                (max by (namespace, deployment) (kube_deployment_spec_replicas) >= bool 2)
+
+        # ── ④ 알람 — 이름·임계값·문구 전부 base 그대로. 런북 경로만 EKS 사정에 맞춰 조정 ──
+        - alert: MpDeploymentPodsOnSingleNode
+          expr: |
+            min_over_time(mp:deployment_single_node:bool[20m]) == 1
+              and count_over_time(mp:deployment_single_node:bool[20m]) >= 10
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.deployment }} replica 가 2개 이상인데 20분째 **노드 1개**에 다 몰려 있다 — 이중화가 사실상 무효"
+            description: >-
+              soft TSC(ScheduleAnyway)가 안 지켜진 상태다. 🔴 EKS 는 AZ 당 노드 1대(C-29)라
+              노드 1개 몰림 = **AZ 1개 몰림**이다. 그 노드를 잃으면 replica 1 때와 똑같이
+              서비스가 통째로 내려간다. 확인 = kubectl -n {{ $labels.namespace }} get pods -o wide.
+              원인은 대개 ⑴ 다른 노드에 메모리 자리가 없음 ⑵ 노드 교체 직후 재배치가 한 노드로 몰림.
+              해소 = 자리를 만든 뒤 kubectl -n {{ $labels.namespace }} rollout restart deploy/{{ $labels.deployment }}.
+
+        - alert: MpDeploymentPodsOnSingleZone
+          expr: |
+            min_over_time(mp:deployment_single_zone:bool[20m]) == 1
+              and count_over_time(mp:deployment_single_zone:bool[20m]) >= 10
+              and on(namespace, deployment) (mp:deployment_pod_nodes:count > 1)
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.deployment }} replica 가 20분째 **AZ 1개** 안에만 있다 — 그 AZ 가 죽으면 전멸"
+            description: >-
+              노드끼리는 흩어졌지만 topology.kubernetes.io/zone 이 같다.
+              ⚠️ AZ 당 노드 1대(C-29) 구성에서는 이 조건이 성립하지 않는다 — 이 알람이 울렸다면
+              **AZ 당 노드가 2대 이상으로 늘어난 것**이고, 그 자체가 먼저 확인할 사실이다.
+              확인 = kubectl get nodes -L topology.kubernetes.io/zone.
+
+        # ── ⑤ 가드 — zone 라벨을 못 얻는 상태를 잡는다 ─────────────────────────────
+        # 🔴 base 의 같은 이름 알람과 **의미가 다르다.** base 는 "이름 규칙에 안 맞는 노드"를 봤고,
+        #    여기서는 "**zone 을 아는 노드 수가 전체 노드 수보다 적다**" 를 본다. 셋을 한 번에 잡는다:
+        #      ① KSM allowlist 미적용 → `kube_node_labels` 가 **시리즈 0개**
+        #      ② 일부 노드에 AZ 라벨이 실제로 없음
+        #      ③ 라벨은 있는데 값이 빈 문자열
+        #    이 가드가 없으면 ①일 때 `mp:deployment_pod_zones:count` 가 조용히 비고,
+        #    `MpDeploymentPodsOnSingleZone` 이 **영영 안 울리는데 아무도 모른다**(침묵 = 정상과 구분 불가).
+        #
+        # 🔴 **`kube_node_labels{label_...=""} > 0` 로 쓰면 안 된다** — ①의 경우 셀렉터가
+        #    매칭할 시리즈가 아예 없어 결과가 **빈 벡터**가 되고 알람이 안 울린다.
+        #    가장 중요한 케이스에서 침묵하는 가드가 된다. (실측 2026-08-13: 라이브 KSM 은
+        #    allowlist 가 꺼져 있어 `kube_node_labels` 가 **0 series** — `count()` 도 빈 벡터다.)
+        # 🔴 그래서 `count(...) or vector(0)` 로 **0 을 만들어** 뺀다. 라이브 검산:
+        #      count(kube_node_info) = 5
+        #      count(kube_node_labels{label_topology_kubernetes_io_zone!=""}) or vector(0) = 0
+        #      → 5 > 0 = 발화 ✅ (allowlist 누락을 정확히 잡는다)
+        # ⚠️ 대가 = 결과에 `node` 라벨이 없다(집계식이라). 어느 노드인지는 아래 확인 명령으로 찾는다 —
+        #    "몇 대가 비었나" 를 놓치지 않는 쪽이 "어느 대인가" 보다 중요하다고 판단했다.
+        - alert: MpNodeZoneMapUnknown
+          expr: |
+            count(kube_node_info)
+              - (count(kube_node_labels{label_topology_kubernetes_io_zone!=""}) or vector(0))
+              > 0
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "노드 {{ $value }}대에 topology.kubernetes.io/zone 이 안 잡힌다 — AZ 몰림 감시가 무효"
+            description: >-
+              zone 조인이 비어 mp:deployment_pod_zones:count 가 부정확해지고
+              MpDeploymentPodsOnSingleZone 이 침묵한다.
+              🔴 **전 노드 수와 같은 값이면 KSM allowlist 누락을 먼저 의심할 것** —
+              kube-state-metrics.extraArgs 에
+              --metric-labels-allowlist=nodes=[topology.kubernetes.io/zone] 이 있어야 한다
+              (platform/argocd/overlays/eks/kube-prometheus-stack.yaml).
+              확인 = kubectl get nodes -L topology.kubernetes.io/zone 으로 라벨 실재를 먼저 보고,
+              노드에는 라벨이 있는데도 울리면 KSM 설정 쪽 문제다.

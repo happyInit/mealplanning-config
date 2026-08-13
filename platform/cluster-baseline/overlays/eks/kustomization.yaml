@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── EKS 사이트 오버레이 — 클러스터/네임스페이스 베이스라인 (0-3, 2026-08-13) ────
+#
+# 🔴 여기가 **본문의 유일한 자리**다. base 는 비어 있고 그것이 의도다(base/kustomization.yaml 참조).
+#    C-83 = 온프렘 형상 동결 · AWS 는 덧셈만. 온프렘 쪽 Ansible 소유는 그대로 둔다.
+#
+# 🔴 `namespace:` 를 넣지 말 것 — Namespace·PriorityClass 는 클러스터 스코프이고
+#    ResourceQuota·LimitRange 는 **서로 다른 ns**(app·pipeline·mp-ingress)에 간다.
+#    하나로 강제하면 3개 중 2개가 엉뚱한 ns 로 간다.
+#
+# 🔴 sync-wave — 이 트랙은 **다른 모든 것보다 먼저** 적용돼야 한다:
+#      Namespace 없음 → 워크로드 배포 거부 / PriorityClass 없음 → 파드 admission 거부.
+#    ArgoCD 는 Application 간 순서를 보장하지 않으므로 Application 쪽 wave(-10)로 앞세운다
+#    (`platform/argocd/overlays/eks/cluster-baseline.yaml`).
+#    ⚠️ 오브젝트 단위 wave 는 여기 안 붙였다 — 한 Application 안에서는 ArgoCD 의 기본
+#       리소스 순서(Namespace → 나머지)가 이미 맞다.
+#
+# ── 🔴 이 Application 이 sync 되려면 앱 레포(Ansible) 선행이 필요하다 ──────────
+# 실측(2026-08-13) `AppProject/platform`:
+#   · destinations 에 **`app` · `pipeline` · `mp-ingress` 가 없다**(observability·kube-system·
+#     data·cnpg-system·elastic-system·strimzi-system·redis-operator-system·keda·argo-rollouts 뿐).
+#   · clusterResourceWhitelist 에 **`scheduling.k8s.io/PriorityClass` 와 `/Namespace` 가 없다**
+#     (ClusterRole·ClusterRoleBinding·CRD·Validating·Mutating·APIService 6종뿐).
+# ⇒ 지금 이대로 sync 하면 **"destination is not permitted"** / **"resource not permitted in project"**
+#    로 거부된다. descheduler·mp-ingress 가 같은 방식으로 이미 한 번 죽은 전례가 있다.
+#    명세 = 이 디렉터리의 `README.md` "앱 레포에 필요한 변경".
+resources:
+  - priorityclasses.yaml
+  - namespaces.yaml
+  - quotas.yaml

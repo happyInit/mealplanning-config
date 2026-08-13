@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── 온프렘 사이트 오버레이 — 🔴 렌더가 **비어 있는 것이 정답이다** ──────────────
+#
+# 온프렘의 PriorityClass·Namespace(PSA)·ResourceQuota·LimitRange 는 **Ansible 소유**다
+# (ArgoCD 밖). C-83 = 온프렘 형상 동결이므로 이 트랙은 온프렘에 **아무것도 추가하지 않는다.**
+#
+# 🔴 그래서 이 트랙에는 **온프렘 ArgoCD Application 이 없다** —
+#    `platform/argocd/base` 에 등록하지 않았고 `platform/argocd/overlays/eks` 에만 넣었다.
+#    (등록해 두고 렌더가 비면 ArgoCD 가 "리소스 0개인 Application" 을 계속 Healthy 로 들고 있게 되는데,
+#     `platform-root` 는 prune:false 라 무해하지만 읽는 사람에게 "온프렘도 config 소유"라는 오해를 준다.)
+#
+# ⚠️ 이 파일이 존재해야 하는 이유는 배포가 아니라 **검사**다 —
+#    `validate.py check_site_overlays()` 는 `base/` 가 있는데 `overlays/onprem` 이 없으면 실패시킨다
+#    ("배포 경로가 사라진다"). 그 검사는 워크로드 트랙을 위한 것이고 여기서는 형식만 만족시킨다.
+resources:
+  - ../../base

@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── cluster-baseline — 🔴 base 가 **의도적으로 비어 있다** ────────────────────────
+# 신설 = 0-3(2026-08-13). 근거 = 앱 레포 `docs/mp_aws_prep_checklist.md` **0-3** · 결정 **C-83**.
+#
+# 이 트랙이 담는 것 = 어떤 워크로드에도 속하지 않는 **클러스터/네임스페이스 베이스라인**:
+#   PriorityClass 3 · Namespace(PSA 라벨) · ResourceQuota 2 · LimitRange 3.
+#
+# 🔴 **왜 base 가 비어 있는가** — C-83(온프렘 동결·덧셈만). 위 오브젝트들은 온프렘에서
+#    **Ansible 이 소유**한다(ArgoCD 밖). base 에 본문을 넣으면 `overlays/onprem` 이 그것을
+#    상속해 렌더에 나타나고, 그 순간 두 가지가 동시에 일어난다:
+#      ① 온프렘 렌더가 바뀐다 = C-83 위반(형상 동결).
+#      ② 라이브 오브젝트의 소유권이 Ansible ↔ ArgoCD 로 이중이 된다 = selfHeal 왕복(flap).
+#    ⇒ 그래서 **본문은 `overlays/eks` 에만 둔다.** 사이트 공통 본문이 0 이므로 base 도 0 이다.
+#
+# 🔴 **비어 있음은 실수가 아니라 계약이다.** 누가 "base 가 비었으니 여기로 올리자"고 파일을
+#    옮기면 위 ①②가 그대로 발생한다. 온프렘 쪽 이전은 **하지 않는다** —
+#    종전 0-3 계획("온프렘 소유권을 ArgoCD 로 이전")은 C-83 으로 **철회**됐다.
+#    그 계획은 ArgoCD 가 prune 할 수 있는 유일한 국면이었고, 라이브 PVC 21/21 이
+#    reclaimPolicy=Delete 라 Prometheus 30Gi 가 날아갈 수 있었다(체크리스트 0-8b).
+#
+# 🔴 `base/` 자체를 지우지 말 것 — `validate.py check_site_overlays()` 가 `base/` 를 기준으로
+#    트랙을 발견한다. base 가 없으면 이 트랙은 **어떤 검사에도 안 걸리고** eks 오버레이가
+#    조용히 썩는다(그 함수 docstring 이 경고하는 바로 그 실패 유형).
+resources: []

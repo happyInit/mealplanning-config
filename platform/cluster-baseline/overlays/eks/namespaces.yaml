@@ -1,0 +1,102 @@
+# Namespace 5종 + PSA(Pod Security Admission) 라벨 — EKS 사이트 정본 (0-3).
+#
+# 🔴 **PSA 는 Namespace 라벨이다.** 다른 오브젝트에 적을 자리가 없다 — 그래서 "PSA 를 config 로"
+#    는 필연적으로 "Namespace 오브젝트를 config 로" 가 된다. 온프렘에서는 Ansible 이 ns 를
+#    만들면서 같이 붙인다(그쪽은 C-83 으로 동결 — 건드리지 않는다).
+#
+# 🔴 **EKS 는 PSA 를 기본으로 안 켜준다.** EKS 클러스터의 네임스페이스는 라벨이 없으면
+#    `enforce` 가 없는 상태(=privileged 와 동등)다. 즉 이 파일이 없으면 온프렘에서 통과하던
+#    하드닝(#505)이 AWS 에서 **조용히 사라진다** — 파드는 전부 잘 뜨기 때문에 아무도 모른다.
+#    보안 회귀 중 가장 발견이 늦는 유형이다.
+#
+# 라벨 값은 온프렘 라이브 실측(2026-08-13)과 **동일**하다. 사이트별로 다르게 둘 이유가 없고,
+# 다르면 "온프렘에서 통과한 파드가 AWS 에서 거부"가 된다:
+#   app        enforce=restricted  audit=restricted  warn=restricted   (+ istio-injection=enabled)
+#   data       enforce=baseline    audit=restricted  warn=restricted
+#   pipeline   enforce=baseline    audit=restricted  warn=restricted
+#   mp-ingress enforce=restricted  audit=restricted  warn=restricted
+#   observability enforce=baseline audit=restricted  warn=restricted
+#
+# 🔴 **data·pipeline·observability 가 baseline 인 것은 완화가 아니라 사실 기록이다** —
+#    CNPG·ECK·Strimzi·kube-prometheus-stack 이 restricted 를 통과하지 못한다(fsGroup·볼륨 초기화).
+#    restricted 로 올리면 데이터 티어가 통째로 admission 거부된다. 올리려면 각 오퍼레이터의
+#    securityContext 를 먼저 손봐야 하고, 그건 이관과 무관한 별건이다.
+#
+# 🔴 여기 **없는 네임스페이스**(= 이 파일이 책임지지 않는 것):
+#    · 차트/오퍼레이터가 자기 ns 를 만드는 것 — `cnpg-system` `elastic-system` `strimzi-system`
+#      `keda` `argo-rollouts` `cost` `external-secrets` `cert-manager` `istio-system` `argocd`.
+#      🔴 **이들의 PSA 라벨은 EKS 에서 아무도 안 붙인다** — 온프렘은 Ansible 이 붙였다.
+#      ArgoCD Application 의 `CreateNamespace=true` 는 ns 를 만들지만 **PSA 라벨은 안 붙인다.**
+#      ⇒ 미결(사람 결정): ⑴ 여기에 추가 / ⑵ Terraform EKS 모듈이 붙임 / ⑶ AWS 에서는 포기.
+#    · 온프렘 물리에만 있는 것 — `metallb-system` `openebs` `cilium-secrets` `fb-secrets`
+#      (C-16 으로 OpenEBS 없음 · MetalLB 는 NLB 로 대체(C-26) · ESO 백엔드는 SSM(C-23)).
+#    · `mp-users` — 사람 RBAC 용(앱 레포 `k8s_team_rbac` 롤). RBAC 이관 자체가 미결이라 제외.
+#
+# ── 🔴 `app` = restricted + istio-injection 의 숨은 전제: **istio-cni** ────────
+# restricted PSA 아래서는 `NET_ADMIN`·`NET_RAW` 를 가진 initContainer 가 금지된다. 그런데
+# Istio 의 기본 주입 방식(`istio-init`)이 정확히 그 권한을 요구한다 → **사이드카 주입이 PSA 에
+# 거부되어 파드가 아예 안 뜬다.**
+# 온프렘이 restricted 로 굴러가는 이유는 **istio-cni 가 깔려 있어서**다(P0 에서 같이 설치했다) —
+# CNI 플러그인이 iptables 를 대신 잡아 주므로 특권 initContainer 가 필요 없다.
+# 🔴 **EKS 에도 istio-cni 가 반드시 먼저 있어야 한다.** 그건 이 레포 밖(Istio 설치 = 앱 레포 Ansible)
+#    이고, 순서가 어긋나면 `app` ns 워크로드 전부가 기동 실패한다.
+#    ⚠️ 완화책으로 `app` 을 baseline 으로 낮추지 말 것 — 그러면 하드닝(#505)이 사라진다.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    # 🔴 Istio sidecar 주입 스위치. 없으면 사이드카가 안 붙고, mTLS STRICT(PeerAuthentication)
+    #    아래에서 **평문으로 말하는 파드**가 되어 서비스 간 통신이 전부 막힌다.
+    istio-injection: enabled
+  annotations:
+    # 🔴 Namespace prune 은 그 안의 전부를 데려간다. Application 쪽 prune=false 와 이중 방어.
+    argocd.argoproj.io/sync-options: Prune=false
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pipeline
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mp-ingress
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false

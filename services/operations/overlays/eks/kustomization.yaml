@@ -39,3 +39,23 @@ patches:
         template:
           spec:
             serviceAccountName: mp-operations
+# ══ 0-8d — emptyDir `sizeLimit` (2026-08-13) ═══════════════════════════════════
+# 🔴 **eks 오버레이에만 건다** — 온프렘에 걸면 잘못된 값이 곧 파드 축출이다(C-83 형상 동결).
+# 값의 근거·실측·안전 검산 = `docs/eks-emptydir-sizing.md`. 요약:
+#   상한 없는 emptyDir 은 노드 ephemeral-storage 를 무제한으로 먹고, 노드가 DiskPressure 에
+#   들어가면 kubelet 이 **폭주한 파드가 아니라 이웃 파드들까지** 축출한다. 상한이 있으면
+#   초과한 그 파드 하나만 죽는다.
+#   라이브 관측(2026-08-13, kubelet /stats/summary): config 레포 소유 emptyDir(EKS 대상 19개)의 최대는
+#   **32 KiB**. 아래 값은 관측의 수천 배이고, 19개가 동시에 상한까지 차도 합계 3.4 GiB =
+#   노드 allocatable ephemeral 43.7 GiB 의 8% 다(sizeLimit 은 예약이 아니라 상한).
+# 🔴 `op: test` 를 앞에 두는 이유 = 인덱스 기반 JSON6902 는 base 의 volumes 순서가 바뀌면
+#    **엉뚱한 볼륨에 상한을 건다.** test 가 깨지면 렌더가 죽어서 validate.py 가 잡는다.
+  - target: {group: apps, version: v1, kind: Deployment, name: mp-operations}
+    patch: |-
+      # tmp → 64Mi — readOnlyRootFilesystem 스크래치 · 관측 4KiB
+      - op: test
+        path: /spec/template/spec/volumes/0/name
+        value: tmp
+      - op: add
+        path: /spec/template/spec/volumes/0/emptyDir/sizeLimit
+        value: 64Mi

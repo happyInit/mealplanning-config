@@ -23,6 +23,30 @@ kind: Kustomization
 resources:
   - ../../base
 
+  # ── 0-3 (2026-08-13) — 🔴 **EKS 에만 있는 child 4개.** ArgoCD 밖(순수 Helm/Ansible)이던
+  #    것을 AWS 쪽에서만 config 소유로 **신설**한다. base 에 넣지 않는 이유 = C-83
+  #    (온프렘 형상 동결 · AWS 는 덧셈만). 온프렘의 Helm 소유는 **그대로 둔다** —
+  #    종전 계획이던 "온프렘 소유권을 ArgoCD 로 이전" 은 철회됐다(그 국면이 ArgoCD 가
+  #    prune 할 수 있는 유일한 창이었고, 라이브 PVC 21/21 이 reclaimPolicy=Delete 라
+  #    Prometheus 30Gi 가 날아갈 수 있었다 — 체크리스트 0-8b).
+  #
+  #    실측(2026-08-13 `helm list -A` + tracking-id 부재)으로 확인한 ArgoCD 밖 릴리스는 **4종**:
+  #      ① metrics-server        (kube-system)   → 신설 ✅  🔴 **EKS 기본 제공 아님 · HPA 가 의존**
+  #      ② node-exporter         (kube-system)   → 신설 ✅
+  #      ③ kube-prometheus-stack (observability) → 신설 ✅  (+ 0-3b · 1-27 · 0-3c · 0-5 · 0-8 동시 해소)
+  #      ④ minio                 (observability) → 🔴 **신설하지 않는다. 그게 정답이다.**
+  #         C-18 = MinIO 삭제 · S3 전환. AWS 에 MinIO 를 다시 세우면 이관의 목적을 되돌린다.
+  #         소비자(Loki·Tempo)는 이미 이 오버레이의 패치로 S3 + IRSA 를 보고 있고,
+  #         `mp-data-tier` 의 `mp-minio` 알림 그룹은 `monitoring/overlays/eks` 가 제거했다.
+  #         ⚠️ 온프렘 MinIO 는 그대로 산다 — `platform/pg` 의 `mp-pg-onsite-minio` 등 온사이트
+  #           백업 경로가 아직 쓴다(C-3 이중역할).
+  - metrics-server.yaml
+  - node-exporter.yaml
+  - kube-prometheus-stack.yaml
+  # 0-3 — 클러스터/ns 베이스라인(PriorityClass 3 · Namespace 5 PSA · RQ 2 · LR 3).
+  # 🔴 sync-wave -10. AppProject 선행 2건이 있다 — 그 파일 머리말 참조.
+  - cluster-baseline.yaml
+
 # ── 0-9 레지스트리 분기 — rollouts 플러그인 이미지 (2026-08-10) ────────────────
 # 🔴 **`images:` 트랜스포머로는 못 잡는다.** 이 이미지는 컨테이너 spec 이 아니라 Application 의
 #    `spec.source.helm.valuesObject` **안에** 있다. kustomize 의 기본 fieldSpec 은 컨테이너 경로만

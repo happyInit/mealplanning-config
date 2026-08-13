@@ -1,0 +1,91 @@
+# ResourceQuota 2 + LimitRange 3 — EKS 사이트 정본 (0-3).
+#
+# 온프렘 라이브 실측(2026-08-13)과 **같은 값**이다. 값을 옮기는 것이 이 항목이 아니고,
+# **"온프렘에서만 Ansible 이 만들던 것을 AWS 에서는 아무도 안 만든다"** 를 막는 것이 이 항목이다.
+#
+# ── 🔴 LimitRange 가 없으면 조용히 무너지는 것 ────────────────────────────────
+# `defaultRequest.cpu: 10m` · `defaultRequest.memory: 128Mi` · `default.memory: 512Mi`.
+# 요청을 안 적은 컨테이너(사이드카·initContainer·임시 Job)가 **요청 0** 으로 스케줄되면
+#   ① 스케줄러가 노드 용량을 과대평가해 과밀 배치하고,
+#   ② 메모리 압박 시 그 파드가 **BestEffort** 라 가장 먼저 죽는데, 정작 죽으면 안 되는 사이드카일 수 있다.
+# 온프렘에서는 이 세 줄이 그 구멍을 막고 있었다. EKS 에서 사라지면 증상이 "가끔 노드가 터진다" 로만 보인다.
+#
+# ── ⚠️ ResourceQuota 값은 **재검토 대상이지 이 PR 의 판단이 아니다** ──────────
+# 라이브 사용량(2026-08-13): app 3060m / 3904Mi (한도 6 / 6Gi) · pipeline 100m / 256Mi (한도 3 / 3Gi).
+# C-29 = `m7g.xlarge`(4 vCPU · 16 GiB) × 3 = 12 vCPU / 48 GiB 이므로 두 쿼터 합(9 vCPU / 9 GiB)은
+# 노드 용량 안에 들어간다 — 즉 **지금 값을 그대로 옮겨도 막히지 않는다.**
+# 🔴 다만 두 가지는 사람이 정해야 한다:
+#   ① **pipeline 쿼터를 EKS 에도 둘 것인가** — C-3 은 크롤(CronJob 7 + Kafka 3브로커)을
+#      **온프렘 상시 프로덕션**으로 남긴다. EKS 의 `pipeline` ns 에 무엇이 남는지가 미결이면
+#      3 vCPU / 3Gi 는 근거 없는 숫자가 된다. 지금은 **대칭 유지**를 택했다(빼는 쪽이 더 위험 —
+#      쿼터가 없으면 상한도 없다).
+#   ② **app 6Gi 가 HPA 최대 replica 를 막는가** — account HPA max × (요청 350m/…) 로 재계산해야 한다.
+#      쿼터 초과는 파드가 Pending 도 아니고 **ReplicaSet 이 생성 실패**로 나므로 HPA 가 조용히 죽는다.
+#      0-27(CPU 요청 재조정)이 끝난 뒤 한 번 검산할 것.
+#
+# 🔴 `mp-ingress` 에는 **ResourceQuota 를 일부러 두지 않는다**(라이브도 없다) — #532③ 에서
+#    ns 를 가른 근거가 "쿼터 결합만 끊는다" 였다. 여기에 쿼터를 새로 걸면 그 결정을 되돌리는 것이다.
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mp-app-quota
+  namespace: app
+spec:
+  hard:
+    requests.cpu: "6"
+    requests.memory: 6Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mp-pipeline-quota
+  namespace: pipeline
+spec:
+  hard:
+    requests.cpu: "3"
+    requests.memory: 3Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mp-app-defaults
+  namespace: app
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 10m
+        memory: 128Mi
+      default:
+        # 🔴 CPU limit 은 **일부러 없다**(§13.7). 넣으면 bcrypt·JIT 버스트가 스로틀돼
+        #    p95 가 튄다 — 온프렘에서 이미 내린 결정이고 사이트별로 다를 이유가 없다.
+        memory: 512Mi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mp-pipeline-defaults
+  namespace: pipeline
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 10m
+        memory: 128Mi
+      default:
+        memory: 512Mi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mp-ingress-defaults
+  namespace: mp-ingress
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 10m
+        memory: 128Mi
+      default:
+        memory: 512Mi
