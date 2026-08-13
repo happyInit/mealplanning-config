@@ -2,87 +2,35 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: app
 resources:
-  - ../../base
-  - serviceaccount.yaml
+- ../../base
+- serviceaccount.yaml
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
 images:
-  - name: 192.168.0.10/mealplanning/mp-ocr-service
-    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-ocr-service
-    newTag: "d20d3fdb3a4fe05d852bde354cca7991e11c6d59"
+- name: 192.168.0.10/mealplanning/mp-ocr-service
+  newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-ocr-service
+  newTag: d20d3fdb3a4fe05d852bde354cca7991e11c6d59
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
 #    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
 #    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
-patches:
-  - target: {group: external-secrets.io, kind: ExternalSecret}
-    patch: |-
-      apiVersion: external-secrets.io/v1
-      kind: ExternalSecret
-      metadata: {name: selected-by-target}   # target 이 고르므로 이 이름은 매칭에 안 쓰인다
-      spec:
-        secretStoreRef:
-          kind: ClusterSecretStore
-          name: mp-aws-secrets
 
 # ── 0-14c 워크로드별 SA (EKS 전용 · C-83 덧셈) ─────────────────────────────────
 # 🔴 merge 패치로 `serviceAccountName` **한 필드만** 얹는다. Rollout 은 CRD 라 kustomize 가
 #    스키마를 몰라 JSON merge 로 처리하는데, 패치에 리스트(`containers`)를 적으면 통째로
 #    **교체**된다. 이 패치는 리스트를 안 담으므로 안전하다(0-9 §rollouts initContainer 함정과 같은 축).
-  - target: {group: apps, kind: Deployment, name: mp-ocr}
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata: {name: mp-ocr}
-      spec:
-        template:
-          spec:
-            serviceAccountName: mp-ocr
-  - target: {group: batch, kind: CronJob, name: mp-ocr-config-canary}
-    patch: |-
-      apiVersion: batch/v1
-      kind: CronJob
-      metadata: {name: mp-ocr-config-canary}
-      spec:
-        jobTemplate:
-          spec:
-            template:
-              spec:
-                serviceAccountName: mp-ocr
 
 # ── 0-13 PG 서비스 롤 = svc_ocr (EKS 전용) ─────────────────────
 # 온프렘은 `fbapp` 단독 그대로다 — **권한을 회수하지 않는다**(라이브 앱 즉사).
 # AWS PG 는 처음부터 롤이 갈린 상태로 짓는다. 롤 실체 = platform/pg/overlays/eks,
 # GRANT = 앱 레포 `docs/prd/schema-roles.sql`(사람이 psql 로 1회).
 # 🔴 `env` 가 `envFrom` 을 이긴다 — app-common 의 `PGUSER: fbapp` 을 이 한 줄이 덮는다.
-  - target: {group: apps, kind: Deployment, name: mp-ocr}
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata: {name: mp-ocr}
-      spec:
-        template:
-          spec:
-            containers:
-              - name: ocr
-                env:
-                  - name: PGUSER
-                    value: svc_ocr
 # 🔴 비밀번호 출처도 같이 간다 — 유저명과 비번은 한 세트다. 한쪽만 바꾸면 인증이 전부 실패한다.
 #    `op: test` 로 base 의 순서 변경을 렌더 실패로 드러낸다(0-16 패치와 같은 규약).
-  - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-ocr-secrets}
-    patch: |-
-      - op: test
-        path: /spec/data/0/secretKey
-        value: PGPASSWORD
-      - op: replace
-        path: /spec/data/0/remoteRef
-        value: {key: pg-roles, property: svc_ocr}
 
 # ── Pooler 우회 (0-1 사이트 분기 누락분 · 2026-08-13) ─────────────────────────
 #    온프렘 overlays/onprem/pg-direct.yaml 과 같은 내용. 근거·해제조건은 그 파일에.
-  - path: pg-direct.yaml
 # ══ 0-8d — emptyDir `sizeLimit` (2026-08-13) ═══════════════════════════════════
 # 🔴 **eks 오버레이에만 건다** — 온프렘에 걸면 잘못된 값이 곧 파드 축출이다(C-83 형상 동결).
 # 값의 근거·실측·안전 검산 = `docs/eks-emptydir-sizing.md`. 요약:
@@ -94,21 +42,93 @@ patches:
 #   노드 allocatable ephemeral 43.7 GiB 의 8% 다(sizeLimit 은 예약이 아니라 상한).
 # 🔴 `op: test` 를 앞에 두는 이유 = 인덱스 기반 JSON6902 는 base 의 volumes 순서가 바뀌면
 #    **엉뚱한 볼륨에 상한을 건다.** test 가 깨지면 렌더가 죽어서 validate.py 가 잡는다.
-  - target: {group: apps, version: v1, kind: Deployment, name: mp-ocr}
-    patch: |-
       # tmp → 512Mi — 🔴 영수증 이미지 경로. 관측 4KiB 는 **저부하 시점**일 뿐이라 넓게 준다
-      - op: test
-        path: /spec/template/spec/volumes/0/name
-        value: tmp
-      - op: add
-        path: /spec/template/spec/volumes/0/emptyDir/sizeLimit
-        value: 512Mi
-  - target: {group: batch, kind: CronJob, name: mp-ocr-config-canary}
-    patch: |-
-      # tmp → 512Mi — 같은 이미지·같은 코드 경로 → Deployment 와 같은 값
-      - op: test
-        path: /spec/jobTemplate/spec/template/spec/volumes/0/name
-        value: tmp
-      - op: add
-        path: /spec/jobTemplate/spec/template/spec/volumes/0/emptyDir/sizeLimit
-        value: 512Mi
+# 🔴 아래 sizeLimit 주석을 `patch: |-` 블록 **안**에 두지 말 것 — kustomize 가 리터럴 안
+#    주석을 밖으로 한 벌 더 복제하면서 원본은 남겨서, CD 빌드마다 1줄씩 무한히 늘어난다
+#    (v5.4.3 실측 1→2→3→4). `patches:` 위 최상위 주석만 반복 edit 에 불변이다.
+#   tmp → 512Mi — 같은 이미지·같은 코드 경로 → Deployment 와 같은 값
+patches:
+- patch: |-
+    apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata: {name: selected-by-target}   # target 이 고르므로 이 이름은 매칭에 안 쓰인다
+    spec:
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: mp-aws-secrets
+  target:
+    group: external-secrets.io
+    kind: ExternalSecret
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata: {name: mp-ocr}
+    spec:
+      template:
+        spec:
+          serviceAccountName: mp-ocr
+  target:
+    group: apps
+    kind: Deployment
+    name: mp-ocr
+- patch: |-
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata: {name: mp-ocr-config-canary}
+    spec:
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              serviceAccountName: mp-ocr
+  target:
+    group: batch
+    kind: CronJob
+    name: mp-ocr-config-canary
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata: {name: mp-ocr}
+    spec:
+      template:
+        spec:
+          containers:
+            - name: ocr
+              env:
+                - name: PGUSER
+                  value: svc_ocr
+  target:
+    group: apps
+    kind: Deployment
+    name: mp-ocr
+- patch: |-
+    - op: test
+      path: /spec/data/0/secretKey
+      value: PGPASSWORD
+    - op: replace
+      path: /spec/data/0/remoteRef
+      value: {key: pg-roles, property: svc_ocr}
+  target:
+    group: external-secrets.io
+    kind: ExternalSecret
+    name: mp-ocr-secrets
+- path: pg-direct.yaml
+- patch: "# tmp → 512Mi — \U0001F534 영수증 이미지 경로. 관측 4KiB 는 **저부하 시점**일 뿐이라 넓게 준다\n-
+    op: test\n  path: /spec/template/spec/volumes/0/name\n  value: tmp\n- op: add\n
+    \ path: /spec/template/spec/volumes/0/emptyDir/sizeLimit\n  value: 512Mi"
+  target:
+    group: apps
+    kind: Deployment
+    name: mp-ocr
+    version: v1
+- patch: |-
+    - op: test
+      path: /spec/jobTemplate/spec/template/spec/volumes/0/name
+      value: tmp
+    - op: add
+      path: /spec/jobTemplate/spec/template/spec/volumes/0/emptyDir/sizeLimit
+      value: 512Mi
+  target:
+    group: batch
+    kind: CronJob
+    name: mp-ocr-config-canary

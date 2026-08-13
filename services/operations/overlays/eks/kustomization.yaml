@@ -31,6 +31,10 @@ images:
 #   노드 allocatable ephemeral 43.7 GiB 의 8% 다(sizeLimit 은 예약이 아니라 상한).
 # 🔴 `op: test` 를 앞에 두는 이유 = 인덱스 기반 JSON6902 는 base 의 volumes 순서가 바뀌면
 #    **엉뚱한 볼륨에 상한을 건다.** test 가 깨지면 렌더가 죽어서 validate.py 가 잡는다.
+# 🔴 아래 sizeLimit 주석을 `patch: |-` 블록 **안**에 두지 말 것 — kustomize 가 리터럴 안
+#    주석을 밖으로 한 벌 더 복제하면서 원본은 남겨서, CD 빌드마다 1줄씩 무한히 늘어난다
+#    (v5.4.3 실측 1→2→3→4). `patches:` 위 최상위 주석만 반복 edit 에 불변이다.
+#   tmp → 64Mi — readOnlyRootFilesystem 스크래치 · 관측 4KiB
 patches:
 - patch: |-
     apiVersion: external-secrets.io/v1
@@ -56,7 +60,6 @@ patches:
     kind: Deployment
     name: mp-operations
 - patch: |-
-    # tmp → 64Mi — readOnlyRootFilesystem 스크래치 · 관측 4KiB
     - op: test
       path: /spec/template/spec/volumes/0/name
       value: tmp

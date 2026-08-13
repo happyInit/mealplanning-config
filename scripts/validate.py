@@ -1277,6 +1277,41 @@ def run_kubeconform(res: Result) -> None:
             res.fail(f"[schema] {rel}\n{(p.stdout + p.stderr).strip()[:800]}")
 
 
+# `patch: |-` 리터럴 블록과 그 안의 주석 줄.
+PATCH_LITERAL = re.compile(r"patch: \|-\n((?:[ \t]+.*\n|\n)*)")
+
+
+def check_patch_literal_comments(res: Result) -> None:
+    """CD 가 편집하는 오버레이의 `patch: |-` 블록 안에 주석이 있나.
+
+    왜 있는가 — **주석이 무한히 불어난다.** Jenkins CD 는 `kustomize edit set image` 로
+    `services/<svc>/overlays/<site>/kustomization.yaml` 을 고치는데, kustomize v5.4.3 은
+    리터럴 블록 안 주석을 노드의 헤드 주석으로 **한 벌 더 뽑아내면서 블록 안 원본은 남긴다.**
+    빌드마다 1줄씩 늘어난다(실측 1 → 2 → 3 → 4, 상한 없음).
+
+    그리고 그 재직렬화가 파일 전체를 다시 쓰기 때문에, 열려 있던 PR 이 **그 파일 하나 때문에
+    통째로 충돌**한다(2026-08-13 config#165 가 이걸로 세 번 리베이스했다).
+
+    🔴 리스트 항목의 헤드 주석으로 옮기는 것도 안전하지 않다 — 파일에 따라 kustomize 가
+       위치를 다시 옮긴다. `patches:` **위쪽 최상위 주석**만 반복 edit 에 불변이다.
+
+    ⚠️ `platform/*` · `pipelines/*` 는 보지 않는다 — CD 가 안 건드려서 `kustomize edit` 이
+       돌지 않고, 따라서 증식하지 않는다. 거기 주석까지 걷는 것은 이득 없는 대량 변경이다.
+    """
+    for path in sorted(REPO.glob("services/*/overlays/*/kustomization.yaml")):
+        text = path.read_text(encoding="utf-8")
+        bad = [line.strip()
+               for m in PATCH_LITERAL.finditer(text)
+               for line in m.group(1).splitlines()
+               if line.strip().startswith("#")]
+        if bad:
+            rel = path.relative_to(REPO)
+            res.fail(f"[kustomize] {rel} :: `patch: |-` 블록 안 주석 {len(bad)}줄 — "
+                     "CD 의 `kustomize edit` 이 빌드마다 복제해 무한히 늘린다. "
+                     "`patches:` 위 최상위 주석으로 옮겨라\n  "
+                     + "\n  ".join(bad))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true",
@@ -1298,6 +1333,7 @@ def main() -> int:
     check_fqdn(res)
     check_image_tags(res, docs)
     check_tsc_duplicate_key(res, docs)
+    check_patch_literal_comments(res)
     check_cnpg_failsafe_netpol(res, docs)
     check_pgsync_stable_alias(res, docs)
     check_security_context(res, docs, list_only=False)
