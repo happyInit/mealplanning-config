@@ -3,13 +3,13 @@ kind: Kustomization
 namespace: app
 resources:
 - ../../base
-- model-pvc.yaml                # B1: 모델 PVC(재시작 durability)
+- model-pvc.yaml
 # 🔴 Pooler 우회 — pg-direct.yaml 주석의 해제 조건 참조(P3, 2026-07-30)
 patches:
 - path: pg-direct.yaml
-- path: model-volume.yaml       # /models emptyDir → PVC(mp-ranking-model)
+- path: model-volume.yaml
 # 🔴 Jenkins 가 아래 newTag 를 :sha 로 커밋(§7.4). :latest 금지.
 images:
 - name: 192.168.0.10/mealplanning/mp-ranking-serving
   newName: 192.168.0.10/mealplanning/mp-ranking-serving
-  newTag: cb5f77a04198d82830aef1139de98a2befba43ef
+  newTag: d53159a6574dc7ca09e475b6b152e74066f43eb8
