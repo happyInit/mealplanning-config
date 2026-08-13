@@ -1,0 +1,101 @@
+# StorageClass 2종 — EKS 사이트 정본 (0-8 · 0-8b/0-8e, 2026-08-13).
+#
+# 근거 = 앱 레포 `docs/mp_aws_prep_checklist.md` **0-8**(SC 파라미터화) · **0-8b**(reclaimPolicy
+# 의도와 실물 불일치) · 결정 **C-16**(EBS gp3 CSI) · **C-83**(온프렘 형상 동결 · AWS 는 덧셈만).
+#
+# ══ 왜 이 파일이 필요한가 ═══════════════════════════════════════════════════════
+# 🔴 **EBS CSI 애드온은 SC 를 하나도 만들지 않는다.** EKS 가 기본 제공하는 SC 는 `gp2` 하나뿐이고,
+#    우리 매니페스트 5곳이 이미 `gp3`/`gp3-retain` 을 이름으로 가리킨다(platform/{pg,es,kafka} ·
+#    kube-prometheus-stack). 이 파일이 없으면 **그 PVC 들이 전부 영구 Pending** 이다.
+#    → 종전 주석들이 "Terraform 이 만들어야 한다"고 적어 뒀지만, 앱 레포 `infra/terraform/` 에는
+#      **EKS 관련 `.tf` 가 0개**다(실측 2026-08-13). SC 는 순수 K8s 오브젝트이고 소비자가 전부
+#      config 레포에 있으므로, **cluster-baseline 트랙(0-3)이 소유**하는 것이 배선이 가장 짧다.
+#      PriorityClass·Namespace 와 같은 부류다 — "어떤 워크로드에도 속하지 않는 클러스터 베이스라인".
+#
+# ══ 🔴 0-8e — 온프렘이 만든 구멍을 EKS 에서 되풀이하지 않는다 ═══════════════════
+# 온프렘은 방어선을 **만들어 놓고 배선을 안 했다**:
+#   `openebs-lvm`(Delete, **default class**) + `openebs-lvm-retain`(Retain, **소비자 0**)
+#   → 실측 2026-08-13: PVC 21/21 이 전부 default 인 Delete 쪽에 붙어 있다.
+#   0-8b 가 라이브 PV 21개를 `kubectl patch` 로 Retain 으로 덮었지만(PV 의 reclaimPolicy 는 mutable),
+#   **default SC 는 그대로 Delete** 라 앞으로 생기는 볼륨은 다시 위험한 쪽으로 돌아간다.
+#   SC 의 reclaimPolicy 는 immutable 이라 온프렘에서 고치려면 SC 삭제·재생성이 필요하고,
+#   그건 C-83 이 금지한 형상 변경이다. → **온프렘은 운영 수칙으로, EKS 는 여기서 구조로 막는다.**
+#
+# 🔴 **그래서 default 를 안전한 쪽(`gp3-retain`)에 건다.** 온프렘과 반대다.
+#    판단 기준 = "명시를 잊었을 때 무엇을 잃는가":
+#      · default 가 Delete 면  → 사고 시 **데이터가 사라진다**(되돌릴 수 없다)
+#      · default 가 Retain 이면 → 사고 시 **Released PV 가 남아 EBS 요금이 계속 나간다**(되돌릴 수 있다)
+#    돈은 회수되고 데이터는 회수되지 않는다.
+# ⚠️ 대가를 정확히: Retain PV 는 PVC 가 사라져도 `Released` 로 남고 **자동 재사용이 안 된다**
+#    (`spec.claimRef` 를 사람이 지워야 다시 Bound 된다). "안 지워진다" ≠ "자동으로 돌아온다".
+#    orphan 청소는 운영 절차로 남는다 — 20Gi 하나가 월 $1.60 이다.
+#
+# ══ 🔴 선행 조건 — 이 파일만으로는 안 끝난다 (전부 이 레포 밖) ═══════════════════
+# ① **EKS 빌트인 `gp2` 의 default 표시를 반드시 내려야 한다.**
+#      kubectl annotate sc gp2 storageclass.kubernetes.io/is-default-class=false --overwrite
+#    default 가 둘이면 K8s 는 거부하지 않고 **가장 최근에 만들어진 것을 조용히 고른다**.
+#    즉 "동작은 하는데 어느 쪽이 붙었는지 모르는" 상태가 되고, 그게 정확히 0-8b 가 만든 사고 유형이다.
+#    🔴 config 레포에서는 못 한다 — `gp2` 는 EKS 가 소유하는 오브젝트다. Terraform/부트스트랩 몫.
+# ② `AppProject/platform.clusterResourceWhitelist` 에 **`storage.k8s.io/StorageClass`** 추가.
+#    실측 2026-08-13 기준 whitelist 는 ClusterRole·ClusterRoleBinding·CRD·Validating·Mutating·
+#    APIService 6종뿐이다 → 지금 이대로 sync 하면 `resource not permitted in project` 로 거부된다.
+#    (0-3 이 이미 `""/Namespace` · `scheduling.k8s.io/PriorityClass` 를 요구하고 있다. **여기에 한 줄 더**.)
+# ③ `aws-ebs-csi-driver` 애드온 + 그 IRSA/Pod Identity 롤. 없으면 프로비저닝 자체가 안 된다.
+#
+# ══ 파라미터를 왜 이렇게 잡았나 ═════════════════════════════════════════════════
+# 🔴 **SC 의 `parameters` 는 immutable 이다** — 나중에 바꾸려면 SC 를 지우고 다시 만들어야 하고,
+#    그러면 이름을 가리키던 PVC 전부가 영향을 받는다. 지금 정하는 값이 사실상 못 무르는 값이다.
+#  · `type: gp3`            C-16. gp2 대비 GB 단가 20% 싸고 IOPS/처리량이 용량과 분리된다.
+#  · `encrypted: "true"`    KMS 키를 지정하지 않으면 계정 기본 키(`aws/ebs`, AWS 관리형)를 쓴다 = **$0**.
+#                           🔴 나중에 켤 수 없는 부류다(기존 볼륨은 스냅샷 왕복이 필요) → 처음부터 켠다.
+#                           ⚠️ CMK 로 바꾸려면 SC 를 새로 만들어야 한다(위 immutable).
+#  · iops·throughput 미지정  gp3 기본 3000 IOPS / 125 MiB/s 는 **추가 요금이 없는 구간**이다.
+#                           실측 부하(PG 실사용 856 MiB · ES 15 MiB)에 3000 IOPS 는 과분하다.
+#  · `allowVolumeExpansion: true`  온프렘 2종과 동일. 줄이는 건 어차피 불가하고, 늘리는 길은 열어 둔다.
+#
+# 🔴 `volumeBindingMode: WaitForFirstConsumer` — **AZ 가 3개인 순간 선택이 아니라 필수**다.
+#    Immediate 면 파드가 어느 AZ 로 갈지 정해지기 전에 EBS 볼륨이 특정 AZ 에 생기고, EBS 는 AZ 를
+#    벗어나지 못하므로 스케줄러가 그 AZ 에 자리를 못 찾으면 **영구 Pending** 이다.
+#    온프렘 LocalPV 가 노드 단위로 겪던 것과 같은 실패인데(§6.2), EKS 에서는 축이 노드 → AZ 로 바뀐다.
+#    C-21(정족수 AZ 당 1개)이 이 제약을 전제로 짜여 있다.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    # 🔴 클러스터 스코프 + immutable 이다. 실수로 prune 되면 다시 만들 수는 있지만, 그동안 새 PVC 가
+    #    전부 Pending 이고 이미 Bound 된 PVC 도 확장·스냅샷 경로가 끊긴다(Application 쪽
+    #    automated.prune=false 와 이중 방어).
+    argocd.argoproj.io/sync-options: Prune=false
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+  csi.storage.k8s.io/fstype: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+# 재파생 가능한 것 전용 — Loki 로컬 캐시(청크 정본 = S3) · Tempo 로컬(블록 정본 = S3) ·
+# Alertmanager(silence 0.53 MiB). 이들은 볼륨을 잃어도 다시 만들면 되고, 오히려 orphan 이
+# 쌓이는 쪽이 손해다. 🔴 **default 가 아니다** — 이 SC 를 쓰려면 이름을 적어야 한다.
+reclaimPolicy: Delete
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3-retain
+  annotations:
+    # 🔴 **default class.** 위 "0-8e" 절 참조 — 명시를 잊은 볼륨은 안전한 쪽에 붙어야 한다.
+    storageclass.kubernetes.io/is-default-class: "true"
+    argocd.argoproj.io/sync-options: Prune=false
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+  csi.storage.k8s.io/fstype: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+# 재파생 불가·비싼 것 — PG 데이터/WAL · ES · Kafka · Prometheus.
+# 🔴 이 SC 는 CR 을 실수로 지웠을 때의 **마지막 방어선**이지 백업이 아니다. PG 의 실제 복구
+#    경로는 barman → S3(C-78/0-32)이고, 이건 그 앞에서 "즉사"만 막는다.
+reclaimPolicy: Retain

@@ -7,7 +7,7 @@
 #   · 1-27 `retentionSize`                    (SITE-SPLIT §3)
 #   · 0-3c 나머지 = 스크레이프 job 4종 제거    (SITE-SPLIT §4)
 #   · 0-5  `nodeSelector zone: host-b` 제거    (SITE-SPLIT §4 표)
-#   · 0-8  `storageClassName openebs-lvm→gp3`  (SITE-SPLIT §4 표)
+#   · 0-8  `storageClassName openebs-lvm→gp3`  (SITE-SPLIT §4 표 · Prometheus 는 **gp3-retain**)
 #   · 1-28 KSM zone 라벨 allowlist             (SITE-SPLIT §5-C — 아래 kube-state-metrics)
 # 🔴 **온프렘 values(앱 레포 Ansible 템플릿)는 손대지 않는다.** C-83 = 형상 동결·덧셈만.
 #    SITE-SPLIT.md 의 그 명세들은 **온프렘 쪽에 대해서는 여전히 유효한 미결**로 남는다.
@@ -141,9 +141,16 @@ spec:
                 spec:
                   accessModes:
                     - ReadWriteOnce
-                  # 🔴 0-8 · C-16 — `openebs-lvm` → `gp3`, 30Gi → **20Gi**.
+                  # 🔴 0-8 · C-16 — `openebs-lvm` → `gp3-retain`, 30Gi → **20Gi**.
                   #    위 retentionSize 14GiB 와 한 묶음이다. 하나만 바꾸면 디스크가 찬다.
-                  storageClassName: gp3
+                  # 🔴 **0-8b — Prometheus 는 Retain 쪽이다**(2026-08-13, 0-8e 레인).
+                  #    온프렘 SC 주석은 Prometheus 를 "재생성 가능"으로 분류했지만 그건 틀렸다:
+                  #    실사용 7,731 MiB 는 **재파생 원본이 없는 시계열 이력**이고, 0-3 이
+                  #    "온프렘 소유권 이전"을 철회한 근거 자체가 *"Prometheus 30Gi 가 날아갈 수
+                  #    있다"* 였다. 0-8b 도 라이브 PV 를 덮을 때 이걸 포함시켰다.
+                  #    ⚠️ 재파생 불가지만 **백업 대상은 아니다** — C-68 은 AWS Backup 을 기각하고
+                  #      `replicas: 2` 를 대안으로 봤다. Retain 은 그 사이의 최소 방어선이다.
+                  storageClassName: gp3-retain
                   resources:
                     requests:
                       storage: 20Gi
@@ -166,7 +173,10 @@ spec:
                 spec:
                   accessModes:
                     - ReadWriteOnce
-                  storageClassName: gp3 # 0-8
+                  # 0-8 — Alertmanager 는 **Delete 쪽**이다(0-8e 레인 판정, 2026-08-13).
+                  # 담는 것이 silence·notification log 뿐이고 실사용 0.53 MiB 다(C-16).
+                  # 잃어도 재파생 대상이 아니라 **잃을 것이 없다** → orphan PV 가 쌓이는 쪽이 손해다.
+                  storageClassName: gp3
                   resources:
                     requests:
                       storage: 2Gi

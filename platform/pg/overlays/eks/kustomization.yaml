@@ -5,13 +5,13 @@ kind: Kustomization
 #    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
 #
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - ✅ 0-8 SC 2곳 → gp3 (아래 patch)
+#    - ✅ 0-8 SC 2곳 → **gp3-retain** (아래 patch · 0-8b 판정 = Retain)
 #    - C-15 CNPG 유지(RDS/Aurora 미채택) · C-21 **인스턴스 2 → 3**(AZ 당 1개) — 미착수
 #    - C-16 용량 **20Gi → 10Gi · WAL 10Gi → 4Gi**(AZ 당 1개 × 3) — 미착수
 #    - 0-13 스키마별 롤(현재 단일 슈퍼유저) 이 IRSA 의 전제
 #    - objectstore.yaml 자격증명 = 0-16(정적 키 제거 → IRSA)
 #    - C-15 CNPG 유지(RDS/Aurora 미채택) · C-21 **인스턴스 2 → 3**(AZ 당 1개)
-#    - 0-8 SC 2곳 → gp3 · 0-13 스키마별 롤(현재 단일 슈퍼유저) 이 IRSA/Pod Identity 의 전제
+#    - 0-13 스키마별 롤(현재 단일 슈퍼유저) 이 IRSA/Pod Identity 의 전제
 #    - ✅ objectstore.yaml 자격증명 = 0-16 (2026-08-10, IRSA `inheritFromIAMRole` — 아래 patches)
 #    - onsite-backup.yaml 은 온프렘 전용(MinIO 목적지). C-18 = barman 과 **다른 버킷/계정**
 #    - ✅ 0-27 CPU 요청 500m → 250m (인스턴스당) — 아래
@@ -28,13 +28,17 @@ resources:
 # 🔴 CPU limits 는 여전히 없다(§13.7) — 요청은 천장이 아니라 포화 시 보장 몫이다. 체크포인트·VACUUM
 #    버스트는 그대로 위로 뚫는다.
 # ⚠️ C-21(인스턴스 2 → 3)이 붙으면 총 요청은 250m × 3 = 750m 다. 그래도 현행 1.0 코어보다 작다.
-# ── 0-8 StorageClass = gp3 ─────────────────────────────────────────────────────
-# 🔴 SC 이름 `gp3` 는 **EBS CSI 애드온이 자동으로 만들어 주지 않는다.** EKS 기본 SC 는 `gp2`
-#    (in-tree 후신)뿐이라, 이 이름의 SC 를 Terraform 이 별도로 만들어야 PVC 가 바인딩된다.
-#    → 앱 레포 IaC 선행 항목. 안 만들면 PG 가 영구 Pending 이다.
-# 🔴 0-8b(reclaimPolicy) 미결 — 온프렘 의도는 "PG·ES·Kafka = Retain" 이었는데 배선이 없었다.
-#    EKS 에서 그 의도를 실구현하려면 SC 를 하나 더 만들어(`gp3-retain`, reclaimPolicy=Retain)
-#    여기를 그 이름으로 써야 한다. **어느 쪽인지 사람이 정할 것** — SC 이름은 나중에 못 바꾼다.
+# ── 0-8 StorageClass = gp3-retain ──────────────────────────────────────────────
+# 🔴 SC 는 **EBS CSI 애드온이 자동으로 만들어 주지 않는다.** EKS 기본 SC 는 `gp2`(in-tree 후신)
+#    뿐이라 이 이름의 SC 를 누군가 만들어야 PVC 가 바인딩된다. 안 만들면 PG 가 영구 Pending 이다.
+#    → ✅ **해소(0-8e, 2026-08-13)** = `platform/cluster-baseline/overlays/eks/storageclasses.yaml`
+#      가 `gp3`(Delete) · `gp3-retain`(Retain · **default**) 2종을 만든다. **Terraform 이 아니라 config
+#      소유**다 — 종전 주석이 미루던 "앱 레포 IaC 선행"은 실행된 적이 없다(EKS `.tf` 0개, 실측 2026-08-13).
+# 🔴 **✅ 0-8b 판정 = `gp3-retain`**(2026-08-13). 온프렘 의도("PG·ES·Kafka = Retain")를 EKS 에서는
+#    실제로 배선한다. PG 는 재파생 경로가 없는 유일한 정본이라 가장 명확한 대상이다.
+# ⚠️ 이건 **백업이 아니라 즉사 방지**다. 실제 복구 경로는 barman → S3(C-78 · 0-32)이고, Retain 은
+#    "Cluster CR 을 실수로 지워도 EBS 볼륨이 함께 사라지지 않는다"까지만 보장한다. PVC 가 사라지면
+#    PV 는 `Released` 로 남고 **사람이 `spec.claimRef` 를 지워야** 다시 Bound 된다(자동 재사용 아님).
 patches:
   - target:
       group: postgresql.cnpg.io
@@ -61,9 +65,9 @@ patches:
         name: pg
       spec:
         storage:
-          storageClass: gp3
+          storageClass: gp3-retain
         walStorage:
-          storageClass: gp3
+          storageClass: gp3-retain
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-ssm`(SSM ParameterStore + IRSA).

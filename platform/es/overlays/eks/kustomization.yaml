@@ -19,10 +19,10 @@ kind: Kustomization
 #         nodeSet `b` 의 파드 2개가 같은 AZ 에 떠도 ES 는 "다른 zone" 이라고 믿는다.
 #         C-21(= master-eligible AZ 당 1개)이 nodeSets 를 3×1 로 재편하면서 함께 풀어야 한다.
 #         **그 전에는 EKS 에 붙이지 말 것.** (이 레인 0-5 의 범위 밖 — 사람 판단 필요)
-#    - ✅ 0-8 SC → gp3 (아래 patch). 🔴 vct 는 immutable 이라 **이관 시점이 유일한 무비용 창**이다
+#    - ✅ 0-8 SC → **gp3-retain** (아래 patch). 🔴 vct 는 immutable 이라 **이관 시점이 유일한 무비용 창**이다
 #    - C-16 용량 **10Gi → 8Gi × 3** — 미착수
-#    - 0-8b ECK `volumeClaimDeletePolicy` = 미설정(기본 DeleteOnScaledownAndClusterDeletion) 노출.
-#      🔴 **아래 "0-8b 미결" 참조 — EKS 에서 이 비대칭을 재현할지 사람이 정할 것**
+#    - ✅ 0-8b ECK `volumeClaimDeletePolicy` → **DeleteOnScaledownOnly** (아래 patch, 2026-08-13).
+#      기본값(DeleteOnScaledownAndClusterDeletion)은 **Elasticsearch CR 삭제 = PVC 삭제**였다.
 #    - 0-15 ES PoLP(슈퍼유저 4곳) · HTTP TLS 는 현행대로 끔
 #
 # 🔴 **아래 patch 는 인덱스 지정(JSON6902)이다.** 지금 nodeSets 순서 = [0]=b · [1]=a.
@@ -58,20 +58,25 @@ images:
 # 🔴 메모리(1536Mi req==limit)는 **건드리지 않는다** — 실사용과 거의 같고 축출 보호가 걸려 있다.
 # 🔴 온프렘 base 는 500m 그대로다(사이트 분리 근거 = 이 파일 하단 "왜 eks 에만" 참조).
 #
-# ── 0-8 StorageClass = gp3 ─────────────────────────────────────────────────────
-# 🔴 SC 이름 `gp3` 는 EBS CSI 애드온이 자동 생성하지 않는다(기본 SC 는 `gp2` 하나뿐).
-#    Terraform 이 만들어야 바인딩된다 — 앱 레포 IaC 선행 항목.
+# ── 0-8 StorageClass = gp3-retain · ✅ 0-8b 판정 (2026-08-13) ──────────────────
+# 🔴 SC 는 EBS CSI 애드온이 자동 생성하지 않는다(EKS 빌트인은 `gp2` 하나뿐).
+#    → ✅ **해소(0-8e)** = `platform/cluster-baseline/overlays/eks/storageclasses.yaml` 가
+#      `gp3`(Delete) · `gp3-retain`(Retain · default) 2종을 만든다. Terraform 이 아니라 config 소유다.
 #
-# ── 🔴 0-8b 미결 (여기서 정하지 않았다) ────────────────────────────────────────
 # 온프렘 IaC 의도 = "PG·ES·Kafka 는 Retain — CR 을 실수로 지워도 데이터가 즉사하지 않는 마지막 방어선".
-# 그런데 온프렘 라이브는 **PV 21/21 이 Delete** 이고 `openebs-lvm-retain` SC 는 소비자가 0 이다.
-# ES 는 그 위에 **한 겹 더 노출**돼 있다 — `spec.volumeClaimDeletePolicy` 미설정 = ECK 기본
+# 그런데 온프렘은 그 SC 를 만들어만 두고 **아무도 안 썼다**(`openebs-lvm-retain` 소비자 0).
+# ES 는 그 위에 **한 겹 더 노출**돼 있었다 — `spec.volumeClaimDeletePolicy` 미설정 = ECK 기본
 # `DeleteOnScaledownAndClusterDeletion`(Kafka 는 `deleteClaim:false` 로 오퍼레이터가 막아준다).
-# EKS 에서 이 비대칭을 **재현할지 고칠지**는 사람이 정할 일이라 손대지 않았다. 고치려면 둘 다 필요:
-#   ① SC = `gp3-retain`(reclaimPolicy=Retain) 을 Terraform 에 추가하고 아래 값을 그 이름으로
-#   ② `spec.volumeClaimDeletePolicy: DeleteOnScaledownOnly` 를 patch 로 추가
+# **EKS 에서는 재현하지 않고 고친다.** 둘 다 필요해서 둘 다 넣었다:
+#   ① SC = `gp3-retain` (아래 storageClassName patch)
+#   ② `spec.volumeClaimDeletePolicy: DeleteOnScaledownOnly` (아래 merge patch)
 # ⚠️ ①만 하면 반쪽이다 — ECK 가 PVC 를 지우면 Retain PV 는 `Released` 로 남아 **자동 재사용이 안 된다**
 #    (수동 `claimRef` 해제 필요). "안 지워진다"와 "자동으로 돌아온다"는 다르다.
+#
+# ⚠️ **ES 데이터는 재파생 가능하다**(C-16: 인덱스 24.2mb · 재색인 1.0초). 그런데도 Retain 인 이유 =
+#    재색인의 원본이 **PG** 라, PG 가 성한 국면에서만 성립한다. 0-8b 가 온프렘 라이브 PV 21개를
+#    Retain 으로 덮을 때 ES 3개를 포함시킨 근거와 같다 — 실제 사고는 PG 와 ES 를 같이 데려갔다.
+#    비용은 8Gi × 3 = 24Gi(월 $1.92)뿐이다.
 patches:
 # ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
 # 실측(C-29): 클러스터 CPU 요청 10.780 코어 ↔ 실사용 1.145(9.4배). 스케줄러는 **요청**으로 배치하므로
@@ -84,20 +89,6 @@ patches:
 # 🔴 메모리(1536Mi req==limit)는 **건드리지 않는다** — 실사용과 거의 같고 축출 보호가 걸려 있다.
 # 🔴 온프렘 base 는 500m 그대로다(사이트 분리 근거 = 이 파일 하단 "왜 eks 에만" 참조).
 #
-# ── 0-8 StorageClass = gp3 ─────────────────────────────────────────────────────
-# 🔴 SC 이름 `gp3` 는 EBS CSI 애드온이 자동 생성하지 않는다(기본 SC 는 `gp2` 하나뿐).
-#    Terraform 이 만들어야 바인딩된다 — 앱 레포 IaC 선행 항목.
-#
-# ── 🔴 0-8b 미결 (여기서 정하지 않았다) ────────────────────────────────────────
-# 온프렘 IaC 의도 = "PG·ES·Kafka 는 Retain — CR 을 실수로 지워도 데이터가 즉사하지 않는 마지막 방어선".
-# 그런데 온프렘 라이브는 **PV 21/21 이 Delete** 이고 `openebs-lvm-retain` SC 는 소비자가 0 이다.
-# ES 는 그 위에 **한 겹 더 노출**돼 있다 — `spec.volumeClaimDeletePolicy` 미설정 = ECK 기본
-# `DeleteOnScaledownAndClusterDeletion`(Kafka 는 `deleteClaim:false` 로 오퍼레이터가 막아준다).
-# EKS 에서 이 비대칭을 **재현할지 고칠지**는 사람이 정할 일이라 손대지 않았다. 고치려면 둘 다 필요:
-#   ① SC = `gp3-retain`(reclaimPolicy=Retain) 을 Terraform 에 추가하고 아래 값을 그 이름으로
-#   ② `spec.volumeClaimDeletePolicy: DeleteOnScaledownOnly` 를 patch 로 추가
-# ⚠️ ①만 하면 반쪽이다 — ECK 가 PVC 를 지우면 Retain PV 는 `Released` 로 남아 **자동 재사용이 안 된다**
-#    (수동 `claimRef` 해제 필요). "안 지워진다"와 "자동으로 돌아온다"는 다르다.
   - target:
       group: elasticsearch.k8s.elastic.co
       version: v1
@@ -112,10 +103,35 @@ patches:
         value: 250m
       - op: add
         path: /spec/nodeSets/0/volumeClaimTemplates/0/spec/storageClassName
-        value: gp3
+        value: gp3-retain
       - op: add
         path: /spec/nodeSets/1/volumeClaimTemplates/0/spec/storageClassName
-        value: gp3
+        value: gp3-retain
+
+  # ── ✅ 0-8b ② ECK volumeClaimDeletePolicy (2026-08-13) ──────────────────────
+  # 🔴 **같은 오브젝트인데 patches 항목이 둘인 이유 = 패치 방언이 다르다** — 위는 JSON6902(op 목록),
+  #    아래는 merge 패치(매핑)다. 한 `patch:` 문자열은 둘 중 하나여야 해서 합칠 수 없다.
+  #    여기서 merge 를 고른 것은 더 안전하기도 하다 — `op: add` 는 부모 경로가 없으면 렌더가 죽는데
+  #    `volumeClaimDeletePolicy` 는 base 에 **없는 필드**다.
+  #
+  # 기본값 `DeleteOnScaledownAndClusterDeletion` = **Elasticsearch CR 을 지우면 ECK 가 PVC 도 지운다.**
+  # `DeleteOnScaledownOnly` = 축소(nodeSet 을 줄임)일 때만 지우고, CR 삭제 시에는 PVC 를 남긴다.
+  # 🔴 SC 의 Retain 과 **막는 지점이 다르다** — Retain 은 "PVC 가 사라져도 PV 는 남는다",
+  #    이건 "PVC 자체가 안 사라진다"다. 둘을 다 걸어야 CR 삭제가 데이터까지 내려가지 않는다
+  #    (0-8b 가 말한 "①만 하면 반쪽" 이 이것이다).
+  # ⚠️ 대가 = ES 를 정말로 걷어낼 때 PVC 가 남아 EBS 요금이 계속 나간다. 8Gi × 3 = 월 $1.92.
+  - target:
+      group: elasticsearch.k8s.elastic.co
+      version: v1
+      kind: Elasticsearch
+      name: es
+    patch: |-
+      apiVersion: elasticsearch.k8s.elastic.co/v1
+      kind: Elasticsearch
+      metadata:
+        name: es
+      spec:
+        volumeClaimDeletePolicy: DeleteOnScaledownOnly
 
 # ── 왜 eks 에만 — 온프렘 base 는 그대로 둔다 ──────────────────────────────────
 # ① 이득이 사이트마다 다르다. AWS 에서 CPU 요청은 **인스턴스 대수 = 청구서**다(3대 vs 4대 = $146.44/월).
