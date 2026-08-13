@@ -1,0 +1,80 @@
+# metrics-server — 🔴 **EKS 사이트 전용 child Application** (0-3, 2026-08-13).
+#
+# ══ 이 파일이 이 레인에서 가장 중요한 한 개다 ══════════════════════════════════
+# **EKS 는 metrics-server 를 기본 제공하지 않는다.** (GKE·AKS 와 다르다. EKS 의 기본 애드온은
+# vpc-cni · kube-proxy · CoreDNS · EBS CSI 뿐이고 metrics-server 는 사용자 설치다.)
+#
+# 그런데 라이브 **account HPA 가 여기에 의존한다** — HPA 의 `containerResource` 메트릭은
+# `metrics.k8s.io` API 로 읽고, 그 API 를 제공하는 것이 metrics-server 다.
+# 🔴 없으면 **파드는 멀쩡히 뜨고 스케일만 조용히 죽는다**:
+#   · HPA `status.conditions[ScalingActive]=False` (`FailedGetResourceMetric`)
+#   · `kubectl top` 도 안 된다
+#   · **알람이 안 울린다** — 우리 룰셋에 "HPA 가 메트릭을 못 읽는다"를 보는 룰이 없다
+#     (kube-prometheus-stack 의 `KubeHpaMaxedOut` 은 maxReplicas 도달을 볼 뿐,
+#      메트릭 부재는 못 본다). 이관일에 부하가 올 때까지 아무도 모른다.
+#
+# ── 소유권 근거 (실측 2026-08-13) ──────────────────────────────────────────────
+# 온프렘 `kube-system/metrics-server` Deployment:
+#   labels  app.kubernetes.io/instance=metrics-server · managed-by=Helm · helm.sh/chart=metrics-server-3.13.1
+#   annot.  meta.helm.sh/release-{name,namespace}=metrics-server/kube-system
+#   🔴 `argocd.argoproj.io/tracking-id` **없음** → ArgoCD 소유가 아니다 = 순수 Helm(Ansible) 소유.
+#   `helm list -A` 에도 release `metrics-server` / chart `metrics-server-3.13.1` / app 0.8.1 로 잡힌다.
+#
+# 🔴 **온프렘 쪽은 건드리지 않는다**(C-83). 이 Application 은 `platform/argocd/overlays/eks` 에만
+#    있고 base 에는 등록하지 않았다 — 즉 온프렘 `platform-root` 는 이 파일을 영원히 안 본다.
+#    (종전 0-3 계획 "온프렘 소유권을 ArgoCD 로 이전" 은 C-83 으로 철회됐다.)
+#
+# ── values 근거 = 온프렘 릴리스의 user-supplied values 전부(실측) ──────────────
+#   args: [--kubelet-insecure-tls] · resources.requests: {cpu 10m, memory 64Mi}
+# 두 값 다 **EKS 에서도 그대로 필요하다**:
+#   · `--kubelet-insecure-tls` — EKS 의 kubelet serving 인증서는 노드가 self-sign 하고
+#     CSR 승인 컨트롤러가 없다. 이 플래그가 없으면 metrics-server 가 kubelet 스크레이프를
+#     TLS 검증 실패로 전부 버리고 `metrics not available yet` 에서 안 벗어난다.
+#     (AWS 공식 설치 매니페스트도 같은 플래그를 쓴다.)
+#   · resources — 3노드 규모에서 실측치 그대로면 충분하다. 노드가 늘면 재검토.
+#
+# 🔴 **선행(앱 레포 Ansible)** — 지금 이대로면 sync 가 거부된다:
+#    `AppProject/platform.sourceRepos` 에 `https://kubernetes-sigs.github.io/metrics-server/` 가
+#    **없다**(실측 2026-08-13). keda 가 같은 이유로 한 번 막힌 전례가 있다(base/keda.yaml 주석).
+#    `kube-system` 은 destinations 에 **이미 있다** — 그쪽은 추가 불요.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metrics-server
+  namespace: argocd
+  finalizers:
+    # APIService(v1beta1.metrics.k8s.io) 를 남기면 apiserver 가 죽은 백엔드를 계속 호출해
+    # `kubectl get --raw /apis` 가 느려지고 Aggregated API 에러 알람이 뜬다.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://kubernetes-sigs.github.io/metrics-server/
+    chart: metrics-server
+    targetRevision: "3.13.1" # = 온프렘 라이브와 동일. appVersion 0.8.1
+    helm:
+      valuesObject:
+        args:
+          - --kubelet-insecure-tls
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      # 🔴 prune:false — metrics-server 가 prune 되면 HPA 가 조용히 멎는다(위 참조).
+      #    자동 삭제를 허용할 만한 오브젝트가 아니다.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false # kube-system 은 항상 존재한다
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

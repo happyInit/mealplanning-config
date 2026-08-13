@@ -1,0 +1,56 @@
+# PriorityClass 3종 — EKS 사이트 정본 (0-3).
+#
+# 🔴 **이게 없으면 이걸 참조하는 워크로드가 통째로 안 뜬다.** `priorityClassName` 이 존재하지 않는
+#    PriorityClass 를 가리키면 파드는 Pending 이 아니라 **admission 에서 거부**된다
+#    (`pods "x" is forbidden: no PriorityClass with name app-normal was found`).
+#    Deployment/Rollout 은 ReplicaSet 생성이 조용히 실패하므로 "이미지 문제인가?" 로 한참 헤매는 부류다.
+#
+#    참조 규모 (실측 2026-08-13, 두 가지로 셌다 — 세는 방법에 따라 수가 달라져서 둘 다 적는다):
+#      · config 레포 매니페스트의 `priorityClassName` 지정 **56곳**
+#        (app-normal 26 · data-critical 7 · pipeline-low 23)
+#      · 라이브 파드 **76개** (app-normal 23 · data-critical 15 · pipeline-low 38 —
+#        pipeline-low 가 큰 것은 완료된 CronJob Job 파드가 남아 있어서다)
+#
+# ⚠️ 값(value)은 온프렘 라이브와 **동일하게 둔다.** 상대 순서만 의미가 있고, 절대값을 바꾸면
+#    kubelet 축출 순서와 preemption 판단이 사이트별로 갈려 "온프렘에서 재현이 안 되는" 사고가 된다.
+#    라이브 실측: app-normal=100000 · data-critical=1000000 · pipeline-low=1000
+#    (system-cluster-critical=2000000000 · system-node-critical=2000001000 은 K8s 빌트인 —
+#     우리가 만들지 않는다. EKS 도 기본 제공한다.)
+#
+# ⚠️ 🔴 **`lvm-localpv-*-critical` 2종은 여기 없다** — OpenEBS LVM 차트가 만드는 것이고
+#    C-16(EBS gp3 CSI)로 EKS 에는 OpenEBS 가 없다. aws-ebs-csi-driver 는 자기 것을 들고 온다.
+#
+# 🔴 globalDefault 를 **아무 것에도 켜지 않는다**(라이브도 전부 <none>). 켜면 priorityClassName 을
+#    안 적은 파드 전부가 그 값을 받아, 축출 순서 설계(§13.7)가 조용히 무의미해진다.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: app-normal
+  annotations:
+    # 클러스터 스코프 · 사람이 다시 만들기 어려운 것도 아니지만, 실수 prune 이 곧 전면 admission
+    # 실패라 방어를 명시한다(Application 쪽 automated.prune=false 와 이중).
+    argocd.argoproj.io/sync-options: Prune=false
+value: 100000
+preemptionPolicy: PreemptLowerPriority
+description: 앱 11 워크로드 + PGSync(서빙 인덱스 생산자라 app 급 — object_spec §2.2)
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: data-critical
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+value: 1000000
+preemptionPolicy: PreemptLowerPriority
+description: PG·ES·Kafka·Redis — 마지막까지 살아남아야 하는 상태 저장 계층
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: pipeline-low
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+value: 1000
+preemptionPolicy: PreemptLowerPriority
+description: 크롤러·CronJob·재학습 — 압박 시 가장 먼저 밀려나야 하는 배치성 작업

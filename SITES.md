@@ -30,7 +30,7 @@ MinIO 엔드포인트 · 물리계층 알림)은 **지우면 안 되고 `overlay
 - `overlays/eks` 는 `kustomization.yaml` 머리말에 **그 트랙에서 갈라야 하는 것**을
   체크리스트 항목 번호와 함께 적어 뒀다. 거기서부터 시작하면 된다.
 
-### 트랙 목록 (32)
+### 트랙 목록 (34)
 
 | 부류 | 개수 | 트랙 |
 |---|---|---|
@@ -39,13 +39,15 @@ MinIO 엔드포인트 · 물리계층 알림)은 **지우면 안 되고 `overlay
 | 관측·파이프라인 | 2 | `monitoring` `pipelines` |
 | 데이터 CR | 6 | `platform/{pg,pooler,es,kafka,redis,pgsync}` |
 | 정책 | 5 | `platform/policies{,-data,-ingress,-observability,-pipeline}` |
-| 기타 | 1 | `platform/rollouts` |
+| 기타 | 3 | `platform/rollouts` · `platform/observability`(0-2 C-18 선행) · **`platform/cluster-baseline`**(0-3, 2026-08-13 — 아래 §0-3) |
 
 **분기 수단이 없던 18개**(= 위에서 `services/*` 를 뺀 전부)에 0-1 이 골격을 넣었다.
 
-> ℹ️ `bootstrap/argocd` 는 이 32개에 **들어가지 않는다** — 워크로드 트랙이 아니라
-> ArgoCD 자신을 세우는 부트스트랩이고, 두 뿌리의 감시 범위 밖이다(§0-4).
-> 다만 kustomize 디렉터리이긴 해서 `validate.py` 집계에는 잡힌다(32 → 33).
+> ℹ️ **위 34 는 "워크로드 트랙" 만이다.** `base/` 를 가진 디렉터리는 실제로 **37개**이고, 차이 3은:
+> `bootstrap/argocd`(ArgoCD 자신을 세우는 부트스트랩 — 두 뿌리의 감시 범위 밖, §0-4) +
+> **뿌리 트랙 2개**(`argocd` · `platform/argocd` — §0-4 컷오버로 생겼다. 이들은 *다른 트랙을 배포하는*
+> Application 목록이라 워크로드가 아니다).
+> 셋 다 kustomize 디렉터리이긴 해서 `validate.py` 집계에는 잡힌다(**34 → 37**).
 
 ## 경계 — 여기 없던 것 둘 (✅ 둘 다 해소, 2026-08-10)
 
@@ -519,3 +521,91 @@ patches:
 4. (선택) **정본 일원화** — 위 오브젝트들의 정본을 Ansible 템플릿에 계속 둘지,
    `bootstrap/argocd/` 로 옮기고 Ansible 은 `kubectl apply -k` 만 할지. **미결(사람 결정)**.
    지금은 Ansible 템플릿이 정본이고 `bootstrap/` 은 기록이다 — 둘이 갈리지 않게 하는 것이 관건.
+
+---
+
+# §0-3 — ArgoCD 밖(Ansible 단독)이던 것을 **EKS 쪽에만** config 로 (2026-08-13)
+
+> 근거 = 앱 레포 `docs/mp_aws_prep_checklist.md` **0-3** · 결정 **C-83**(온프렘 형상 동결 · AWS 는 덧셈만).
+> 함께 해소된 것 = **0-3b**(externalLabels) · **1-27**(retentionSize) · **0-3c 잔여**(스크레이프 job) ·
+> **1-28**(알림 룰셋 — `monitoring/EKS-RULESET.md`) · **0-8d**(emptyDir 상한 — `docs/eks-emptydir-sizing.md`).
+
+## 🔴 계획이 바뀌었다 — "소유권 이전" 이 아니라 "EKS 에 신설"
+
+종전 0-3 은 **온프렘의 Helm 소유를 ArgoCD 로 넘기는** 작업이었다. C-83 으로 **철회**한다.
+
+| | 종전 계획 | 지금 |
+|---|---|---|
+| 온프렘 | Helm/Ansible → ArgoCD 소유로 이전 | **손대지 않는다**(형상 동결) |
+| EKS | (이전된 것을 상속) | `overlays/eks` 에 **신설** |
+| 위험 | 🔴 ArgoCD 가 prune 할 수 있는 **유일한 국면**이었다. 라이브 PVC **21/21 이 reclaimPolicy=Delete** 라 Prometheus 30Gi·`ranker.pkl` 이 날아갈 수 있었다(체크리스트 0-8b) | **위험 소멸** — 온프렘 오브젝트를 ArgoCD 가 아예 안 본다 |
+
+## ArgoCD 밖 릴리스는 정확히 4종이었다 (실측 2026-08-13)
+
+판정 = `helm list -A` + 오브젝트에 `argocd.argoproj.io/tracking-id` **부재**.
+
+| 릴리스 | ns | 차트 | EKS 처리 |
+|---|---|---|---|
+| `metrics-server` | kube-system | `metrics-server-3.13.1` | ✅ 신설 — 🔴 **EKS 기본 제공 아님. 라이브 account HPA 가 의존한다** |
+| `node-exporter` | kube-system | `prometheus-node-exporter-4.56.1` | ✅ 신설(스택과 별개 릴리스 구조 유지) |
+| `kube-prometheus-stack` | observability | `kube-prometheus-stack-87.20.0` | ✅ 신설 |
+| `minio` | observability | `minio-5.4.0` | 🔴 **신설하지 않는다** — C-18(MinIO 삭제 · S3). 다시 세우면 이관 목적을 되돌린다 |
+
+🔴 **metrics-server 가 이 항목에서 제일 위험한 한 개다.** 없으면 **파드는 뜨고 스케일만 조용히 죽는다**
+(HPA `FailedGetResourceMetric` · `kubectl top` 불가). 우리 룰셋에 "HPA 가 메트릭을 못 읽는다" 를
+보는 알람이 **없어서** 부하가 올 때까지 아무도 모른다.
+
+## 새 트랙 `platform/cluster-baseline` — base 가 **의도적으로 비어 있다**
+
+담는 것 = **PriorityClass 3 · Namespace 5(PSA 라벨) · ResourceQuota 2 · LimitRange 3**.
+전부 온프렘에서는 Ansible 소유다 → base 에 본문을 두면 `overlays/onprem` 이 상속해
+① 온프렘 렌더가 바뀌고(C-83 위반) ② 라이브 오브젝트 소유가 Ansible↔ArgoCD 이중이 된다(selfHeal 왕복).
+
+```
+platform/cluster-baseline/
+  base/kustomization.yaml        resources: []   ← 사이트 공통 본문이 0 이라 비었다. 지우지 말 것
+  overlays/onprem/               렌더 0 바이트 = 정답 (Application 도 만들지 않았다)
+  overlays/eks/                  본문의 유일한 자리
+```
+
+🔴 **`base/` 를 지우면 `validate.py check_site_overlays()` 가 이 트랙을 발견하지 못해**
+eks 오버레이가 조용히 썩는다. 비어 있음은 실수가 아니라 계약이다.
+
+- **PriorityClass** — 없으면 참조하는 워크로드 **46개**가 Pending 이 아니라 **admission 에서 거부**된다.
+- **PSA** — 🔴 **EKS 는 PSA 라벨을 기본으로 안 붙인다.** 없으면 하드닝(#505)이 AWS 에서
+  **조용히 사라진다**(파드는 전부 잘 뜨므로 아무도 모른다). 보안 회귀 중 발견이 가장 늦는 유형이다.
+- **LimitRange** — 요청 미기재 컨테이너가 요청 0 으로 스케줄돼 스케줄러가 노드 용량을 과대평가한다.
+
+## 🔴 앱 레포(Ansible)에 필요한 변경 — 이것 없이는 **sync 가 거부된다**
+
+`AppProject` 는 IaC 밖 drift 이력이 있는 자리다(mp-ingress·descheduler 가 각각 한 번씩 죽었다).
+실측 2026-08-13 기준 **네 줄**이 빠져 있다:
+
+| # | 대상 | 넣을 것 | 없으면 |
+|---|---|---|---|
+| ① | `AppProject/platform.sourceRepos` | `https://kubernetes-sigs.github.io/metrics-server/` | metrics-server sync 거부 |
+| ② | 〃 | `https://prometheus-community.github.io/helm-charts` | node-exporter·kube-prometheus-stack sync 거부(**둘이 같은 레포**) |
+| ③ | `AppProject/platform.destinations` | `app` · `pipeline` · `mp-ingress` | ResourceQuota·LimitRange 가 "destination is not permitted" |
+| ④ | `AppProject/platform.clusterResourceWhitelist` | `""/Namespace` · `scheduling.k8s.io/PriorityClass` | "resource not permitted in project" |
+
+그 외 이 레포 밖 전제 2건:
+- `ExternalSecret/observability/mp-alertmanager-slack` — **config 레포에 없다**(§0-2 "이 레포 밖에 남은
+  ExternalSecret 2개"). 없으면 Alertmanager 파드가 시크릿 마운트 실패로 **아예 안 뜬다.**
+- SSM `/mp/prod/observability-secrets` 에 `GRAFANA_ADMIN_USER`·`GRAFANA_ADMIN_PASSWORD`
+  (→ `platform/observability/overlays/eks/externalsecret-grafana-admin.yaml`).
+  🔴 온프렘 values 는 `grafana.adminPassword` 를 평문으로 갖지만 그 파일은 git 밖이다.
+  **이 레포는 공개**라 같은 방법을 쓸 수 없어 `admin.existingSecret` 으로 우회했다.
+
+⚠️ **순서 의존 1건** — `observability-secrets` Application 의 `source.path` 가 아직
+`platform/observability/overlays/onprem` 이다(eks 렌더에서 git 소스 child **10개**가 여전히
+onprem 경로다 — §0-4 가 남긴 일괄 전환). 그 전환 전까지 위 Grafana ExternalSecret 은 무생물이다.
+
+## 검증 (이번 변경이 온프렘을 안 건드렸다는 증명)
+
+```
+onprem 오버레이 37개 렌더 — 작업 전후 **바이트 단위 동일** (cmp 37/37 통과)
+  집계 sha256(파일별 해시의 해시) = afe00ca088809759318066df81ae42b1a385ab1ccb0d3a789b8e9a74de6fccd7
+새 트랙 platform/cluster-baseline/overlays/onprem 렌더 = **0 바이트**
+python3 scripts/validate.py = ✅ 통과 (경고 2건 — 작업 전과 동일)
+  kustomization 37 → 38 (새 트랙의 onprem 오버레이 1개) · 매니페스트 287 → **287**(불변)
+```
