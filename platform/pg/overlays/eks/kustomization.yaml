@@ -107,6 +107,39 @@ patches:
       apiVersion: external-secrets.io/v1
       kind: ExternalSecret
       metadata: {name: mp-pg-backup-s3, namespace: data}
+
+  # ── 0-23 · 0-30 barman 경로 = EKS 사이트 (2026-08-10) ──────────────────────
+  # 🔴 **이 패치가 없으면 이관 당일 양쪽 백업이 동시에 못 쓰게 된다.**
+  #    barman 실경로 = `<destinationPath>/<serverName>/{base,wals}/`. 양 사이트 Cluster 가
+  #    둘 다 `pg` 라(C-3: 온프렘은 DR+크롤로 잔류) 기본값대로면 둘 다
+  #    `mp-backup-ap2/pg/pg/wals/` 에 쓴다. WAL 파일명은 타임라인+LSN 이고 두 사이트는
+  #    **각자 자기 타임라인을 처음부터 센다** ⇒ 이름이 겹친다 ⇒
+  #      · barman-cloud-wal-archive 가 기존 객체를 만나 실패 → **아카이빙 정지 → pg_wal 적재**
+  #      · 섞여 올라간 뒤엔 어느 WAL 이 어느 사이트 것인지 판별 불가 → **양쪽 PITR 불능**
+  #    C-51 페일백("AWS 를 버리고 온프렘에서 재구축")의 원본이 바로 이 아카이브다.
+  #
+  # 🔴 이름은 역할이 아니라 **사이트**다(`pg-eks`, `pg-dr` 아님) — C-51 은 리전 장애 시
+  #    온프렘을 승격시켜 **역할을 뒤바꾼다**. 사이트 이름은 페일오버해도 안 바뀐다.
+  #
+  # 🔴 **부트스트랩과 혼동하지 말 것.** 여기는 *쓰는 곳*(아카이브 목적지)이다.
+  #    EKS 최초 시딩이 온프렘 아카이브에서 온다면 그건 `cluster.yaml` 의
+  #    `bootstrap.recovery` + `externalClusters` 가 가리키는 **읽는 곳**이고, 그쪽 serverName 은
+  #    온프렘 값 `pg` 여야 한다. 그걸 `pg-eks` 로 적으면 빈 경로를 읽어 부트스트랩이 실패한다.
+  #    (cluster.yaml 은 이 레인 소유가 아니다 — 그 트랙에 전달할 제약이다.)
+  #
+  # ⚠️ 같은 버킷의 다른 프리픽스다. **버킷/계정 분리는 별건** — C-8(계정 3개)이 아직 없고,
+  #    C-18 이 요구하는 "다른 버킷/계정" 은 *온사이트 덤프* 트랙(2-8)에 걸린 요구다.
+  #    다만 IAM 은 지금 형상에서도 갈 수 있다: 온프렘 정적 키는 `pg/*` 만,
+  #    EKS IRSA 롤은 `pg-eks/*` 쓰기 + `pg/*` **읽기**(페일백 원본) — 0-16 과 한 트랙.
+  - target: {group: barmancloud.cnpg.io, kind: ObjectStore, name: mp-pg-backup}
+    patch: |-
+      apiVersion: barmancloud.cnpg.io/v1
+      kind: ObjectStore
+      metadata: {name: mp-pg-backup, namespace: data}
+      spec:
+        configuration:
+          destinationPath: s3://mp-backup-ap2/pg-eks
+          serverName: pg-eks
   # 🔴 PLACEHOLDER 는 services/* 오버레이의 ECR 레지스트리와 같은 규약이다 —
   #    계정 ID 가 아직 없다(C-8 계정 3개 미생성). 채우지 않고 배포하면 barman 이 인증에 실패한다.
   #    CNPG 가 이 애너테이션을 클러스터 SA(`pg`)에 얹고, barman-cloud 사이드카가 그 SA 로 STS 를 탄다.
