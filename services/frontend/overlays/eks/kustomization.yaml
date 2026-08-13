@@ -2,13 +2,13 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: app
 resources:
-  - ../../base
-  - serviceaccount.yaml
+- ../../base
+- serviceaccount.yaml
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
 images:
-  - name: 192.168.0.10/mealplanning/mp-frontend
-    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-frontend
-    newTag: "1da39a957d91519e09ffd64a807d6a5996ba6d59"
+- name: 192.168.0.10/mealplanning/mp-frontend
+  newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-frontend
+  newTag: 1aa85a300425b00821ee79e49597da9b1ffd8f31
 
 # ── 0-6 hard TSC 완화 (2026-08-10) ────────────────────────────────────────────
 # hostname 축만 ScheduleAnyway · zone 축 DoNotSchedule 유지. 근거 전문 =
@@ -16,30 +16,11 @@ images:
 # hostname 축은 EKS 에서 잉여, 반면 C-27 BG 에서는 Pending 유발원).
 #
 # 🔴 0-27 대상 아님 — frontend 요청은 이미 50m 다(nginx 정적). 더 내릴 것이 없다.
-patches:
-  - target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: mp-frontend
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/topologySpreadConstraints/1/whenUnsatisfiable
-        value: ScheduleAnyway
 
 # ── 0-14c 워크로드별 SA (EKS 전용 · C-83 덧셈) ─────────────────────────────────
 # 🔴 merge 패치로 `serviceAccountName` **한 필드만** 얹는다. Rollout 은 CRD 라 kustomize 가
 #    스키마를 몰라 JSON merge 로 처리하는데, 패치에 리스트(`containers`)를 적으면 통째로
 #    **교체**된다. 이 패치는 리스트를 안 담으므로 안전하다(0-9 §rollouts initContainer 함정과 같은 축).
-  - target: {group: apps, kind: Deployment, name: mp-frontend}
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata: {name: mp-frontend}
-      spec:
-        template:
-          spec:
-            serviceAccountName: mp-frontend
 # ══ 0-8d — emptyDir `sizeLimit` (2026-08-13) ═══════════════════════════════════
 # 🔴 **eks 오버레이에만 건다** — 온프렘에 걸면 잘못된 값이 곧 파드 축출이다(C-83 형상 동결).
 # 값의 근거·실측·안전 검산 = `docs/eks-emptydir-sizing.md`. 요약:
@@ -51,26 +32,55 @@ patches:
 #   노드 allocatable ephemeral 43.7 GiB 의 8% 다(sizeLimit 은 예약이 아니라 상한).
 # 🔴 `op: test` 를 앞에 두는 이유 = 인덱스 기반 JSON6902 는 base 의 volumes 순서가 바뀌면
 #    **엉뚱한 볼륨에 상한을 건다.** test 가 깨지면 렌더가 죽어서 validate.py 가 잡는다.
-  - target: {group: apps, version: v1, kind: Deployment, name: mp-frontend}
-    patch: |-
       # cache → 64Mi — nginx proxy cache · 관측 24KiB
-      - op: test
-        path: /spec/template/spec/volumes/0/name
-        value: cache
-      - op: add
-        path: /spec/template/spec/volumes/0/emptyDir/sizeLimit
-        value: 64Mi
       # run → 8Mi — pid·소켓만 · 관측 8KiB
-      - op: test
-        path: /spec/template/spec/volumes/1/name
-        value: run
-      - op: add
-        path: /spec/template/spec/volumes/1/emptyDir/sizeLimit
-        value: 8Mi
       # tmp → 64Mi — nginx 쓰기 경로 · 관측 4KiB
-      - op: test
-        path: /spec/template/spec/volumes/2/name
-        value: tmp
-      - op: add
-        path: /spec/template/spec/volumes/2/emptyDir/sizeLimit
-        value: 64Mi
+patches:
+- patch: |-
+    - op: replace
+      path: /spec/template/spec/topologySpreadConstraints/1/whenUnsatisfiable
+      value: ScheduleAnyway
+  target:
+    group: apps
+    kind: Deployment
+    name: mp-frontend
+    version: v1
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata: {name: mp-frontend}
+    spec:
+      template:
+        spec:
+          serviceAccountName: mp-frontend
+  target:
+    group: apps
+    kind: Deployment
+    name: mp-frontend
+- patch: |-
+    # cache → 64Mi — nginx proxy cache · 관측 24KiB
+    - op: test
+      path: /spec/template/spec/volumes/0/name
+      value: cache
+    - op: add
+      path: /spec/template/spec/volumes/0/emptyDir/sizeLimit
+      value: 64Mi
+    # run → 8Mi — pid·소켓만 · 관측 8KiB
+    - op: test
+      path: /spec/template/spec/volumes/1/name
+      value: run
+    - op: add
+      path: /spec/template/spec/volumes/1/emptyDir/sizeLimit
+      value: 8Mi
+    # tmp → 64Mi — nginx 쓰기 경로 · 관측 4KiB
+    - op: test
+      path: /spec/template/spec/volumes/2/name
+      value: tmp
+    - op: add
+      path: /spec/template/spec/volumes/2/emptyDir/sizeLimit
+      value: 64Mi
+  target:
+    group: apps
+    kind: Deployment
+    name: mp-frontend
+    version: v1
