@@ -2,6 +2,28 @@
 # 🔴 in-tree `spec.backup.barmanObjectStore` 는 CNPG 1.31.0 에서 제거 — 처음부터 이 방식이다.
 # 리허설 §7 이 이 경로로 백업→삭제→복원 왕복을 실증한다(= P2 게이트 ①). 필드 스키마도 그때 실검증.
 # 버킷 = mp-backup-ap2 (ap-northeast-2, 2026-07-28 생성 — 버전관리 OFF 는 권한 밖 잔여 이슈).
+#
+# ── 0-23 · 0-30 사이트 축 (2026-08-10) ────────────────────────────────────────
+# 🔴 barman 의 객체 경로는 `<destinationPath>/<serverName>/{base,wals}/…` 다.
+#    `serverName` 을 안 적으면 **Cluster 이름으로 기본값이 잡힌다** — 그리고 양 사이트
+#    Cluster 이름이 둘 다 `pg` 다(C-3: 온프렘은 이관 후에도 DR+크롤로 살아 있다).
+#    ⇒ 그대로 두면 두 사이트가 `mp-backup-ap2/pg/pg/wals/` **한 곳에** WAL 을 쓴다.
+#      WAL 파일명은 타임라인+LSN 이라 서로 겹치고, barman-cloud-wal-archive 는 같은 이름의
+#      기존 객체를 만나면 실패한다 ⇒ **아카이빙 정지 → pg_wal 적재 → 디스크 압박**.
+#      섞여 올라간 뒤에는 어느 WAL 이 어느 사이트 것인지 구분할 방법이 없다 = 양쪽 복구 불능.
+#
+# 그래서 **사이트 축은 오버레이가 박는다**(overlays/onprem · overlays/eks 둘 다 명시 패치).
+# 아래 값은 그 패치가 없을 때의 기본값이자 **현재 온프렘 라이브 값**이다 —
+# 즉 base 만 렌더해도 오늘 도는 것과 같다(전환 중 무변화 보장).
+#
+# 🔴 `serverName` 을 여기서 못 박는 것 자체가 방어다. 안 적으면 Cluster 리네임·재생성(0-20)이
+#    아카이브 경로를 **조용히** 옮긴다 — 백업은 계속 초록인데 옛 base+WAL 체인과 끊긴다.
+#
+# 🔴 이름을 역할(`pg-prod`/`pg-dr`)이 아니라 **사이트**(`pg`=온프렘 · `pg-eks`)로 가른다.
+#    C-51 은 리전 장애 시 **온프렘을 승격**한다 = 역할이 뒤바뀐다. 역할 기반 이름이면 그때
+#    ① 리네임 → 아카이브 경로 이동(하필 장애 중에 복구 앵커를 잃는다) 또는
+#    ② 그대로 유지 → `pg-dr` 이 프로덕션이 되어 모든 런북이 거짓말을 한다. 둘 다 나쁘다.
+#    사이트 이름은 페일오버해도 안 바뀐다.
 ---
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
@@ -11,7 +33,11 @@ metadata:
 spec:
   retentionPolicy: "30d"
   configuration:
+    # 🔴 0-23: 이 둘이 한 쌍이다 — 실경로 = `<destinationPath>/<serverName>/{base,wals}/`.
+    #    지금 라이브 = `mp-backup-ap2/pg/pg/…` (serverName 은 Cluster 이름 `pg` 로 암묵 기본값이었다).
+    #    `serverName: pg` 는 그 암묵값을 **글자로 고정**한 것이므로 렌더·라이브 무변화다.
     destinationPath: s3://mp-backup-ap2/pg
+    serverName: pg
     endpointURL: https://s3.ap-northeast-2.amazonaws.com
     s3Credentials:
       accessKeyId:

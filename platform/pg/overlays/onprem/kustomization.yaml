@@ -5,6 +5,7 @@ kind: Kustomization
 #    크롤 프로덕션으로 **계속 살아 있다** — 그래서 온프렘 전용 설정은 지우는 게 아니라
 #    base 에서 이쪽으로 내려야 한다:
 #    - ✅ cluster.yaml storageClass 2곳(`spec.storage`·`spec.walStorage`) — 0-8, 아래 patch
+#    - ✅ objectstore.yaml barman 경로/serverName — 0-23·0-30, 아래 patch
 #    - onsite-backup.yaml → MinIO(C-18 로 AWS 쪽은 소멸)
 resources:
   - ../../base
@@ -32,3 +33,28 @@ patches:
           storageClass: openebs-lvm
         walStorage:
           storageClass: openebs-lvm
+
+# ── 0-23 · 0-30 barman 경로 = 온프렘 사이트 (2026-08-10) ───────────────────────
+# 🟢 **이 패치는 no-op 이다** — base 와 같은 값을 쓴다. 그런데도 적는 이유가 둘이다:
+#   ① **불변식을 사이트 계층에서 강제한다.** 이 작업의 목적은 "두 사이트가 한 경로를 공유하지
+#      않는다" 인데, base 값만 믿으면 누가 base 를 고치는 순간(3번째 사이트·버킷 이사) 온프렘이
+#      **조용히 따라간다**. 여기 박아두면 온프렘은 base 변경에 면역이다.
+#   ② 읽는 사람에게 "온프렘의 사이트 키는 `pg` 다" 를 이 파일에서 보여준다.
+#
+# 🔴 온프렘만 `pg-onprem` 이 아니라 옛 이름 `pg` 인 것은 **일부러 그렇다.**
+#    지금 온프렘이 프로덕션이고, barman 은 경로를 바꾸는 순간 새 경로에 **base backup 이 0개**다.
+#    (실측: base 13개 · firstRecoverabilityPoint 2026-07-29T08:44:23Z · 30d 보존이라 아직 한 번도
+#     프룬된 적 없음.) 리네임하면 새 경로에 첫 base 가 앉기까지 **최근 데이터의 복구 지점이 없다**
+#    — 실측 base backup 소요 **39초**(2026-08-09 18:00:00→18:00:39)라 창은 짧지만 0 은 아니다.
+#    이름 대칭성은 그 대가를 치를 만한 이득이 아니다. **경로 충돌은 이미 `pg` ↔ `pg-eks` 로 해소된다.**
+#    ⇒ 대칭 리네임(`pg` → `pg-onprem`)은 **0-20**(bootstrap 이 파괴된 VM 을 가리켜 Cluster 재생성이
+#      필요한 항목)에 얹어 공짜로 하는 것이 정석이다. 절차·되돌리기 = ../../README.md
+  - target: {group: barmancloud.cnpg.io, version: v1, kind: ObjectStore, name: mp-pg-backup}
+    patch: |-
+      apiVersion: barmancloud.cnpg.io/v1
+      kind: ObjectStore
+      metadata: {name: mp-pg-backup, namespace: data}
+      spec:
+        configuration:
+          destinationPath: s3://mp-backup-ap2/pg
+          serverName: pg
