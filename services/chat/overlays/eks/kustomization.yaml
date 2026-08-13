@@ -88,3 +88,17 @@ patches:
       - op: add
         path: /spec/template/spec/volumes/0/emptyDir/sizeLimit
         value: 64Mi
+
+  # ── C-14(ElastiCache) 대비 Redis 튜너블 — EKS 전용 (이슈 #642 · 체크리스트 1-14·1-15) ──
+  # 🔴 **앱 기본값은 현행 온프렘 동작**이고(무한 대기 / 재시도 없음), 여기서만 켠다.
+  #    ElastiCache Multi-AZ 페일오버는 DNS 이름이 유지된 채 뒤의 노드가 바뀌어 기존 커넥션이
+  #    끊긴다 — 온프렘엔 ElastiCache 가 없어 이 방어가 필요 없고, 켜면 지연만 는다.
+  # ⚠️ Redis **주소**(REDISHOST·REDIS_SENTINELS)는 여기서 안 건드린다 —
+  #    그건 `common/overlays/eks` 의 미완 항목(C-14 엔드포인트)이고 인프라 담당 소관이다.
+  #    여기 있는 건 **앱 동작 튜너블**뿐이다.
+  # 🔴 `env` 는 `envFrom` 을 이긴다 — app-common 에 같은 키가 생겨도 이 값이 유효하다.
+  - target: {group: apps, version: v1, kind: Deployment, name: mp-chat}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: REDIS_SOCKET_TIMEOUT_S, value: "3.0"}
