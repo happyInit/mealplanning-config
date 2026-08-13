@@ -110,6 +110,49 @@ spec:
             service: infra
           annotations:
             summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} ES 메모리가 한도의 {{ $value | humanizePercentage }} (>90%) — ES 는 상주 ~87% 라 이 알람은 진짜 OOM 임박. 한도 상향 검토"
+
+        # CPU는 순간 피크가 흔하므로 15분 평균으로 limit의 80%를 넘을 때만 P3로 알린다.
+        # limit이 없는 컨테이너는 분모가 없어 자동 제외된다. 이것은 장애 판정이 아니라
+        # HPA·리소스 요청·무한 루프를 조사하는 선행 신호다.
+        - alert: MpContainerCpuNearLimit
+          expr: |
+            rate(container_cpu_usage_seconds_total{container!="", container!="POD", image!=""}[15m])
+              / on(namespace, pod, container)
+                kube_pod_container_resource_limits{resource="cpu"} > 0.80
+          for: 15m
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} CPU가 limit의 {{ $value | humanizePercentage }}를 15분간 사용"
+            description: "CPU 포화 선행 신호다. API 지연·5xx가 동반될 때만 서비스 장애로 승격한다."
+
+        # Kubernetes 노드 자원은 어느 한 워크로드의 장애가 아니라 스케줄링 여유가 줄어드는 신호다.
+        # VM·하이퍼바이저는 별도 physical 규칙이 있으며, page cache 때문에 같은 85%를 적용하면
+        # 상시 오탐이 난다. 여기서는 kube-prometheus-stack node-exporter 대상만 본다.
+        # 85%를 15분 유지한 경우만 P3로 보내고, DiskPressure·MemoryPressure 같은 실제
+        # 노드 condition은 kube-prometheus-stack 기본 경고가 계속 담당한다.
+        - alert: MpNodeCpuHigh
+          expr: |
+            1 - avg by(instance) (rate(node_cpu_seconds_total{mode="idle", job="prometheus-node-exporter"}[15m])) > 0.85
+          for: 15m
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "{{ $labels.instance }} node CPU 사용률이 85% 초과 상태로 15분 지속"
+            description: "노드 포화 선행 신호다. Pod Pending·API 지연·노드 condition을 함께 확인한다."
+
+        - alert: MpNodeMemoryHigh
+          expr: |
+            1 - (node_memory_MemAvailable_bytes{job="prometheus-node-exporter"} / node_memory_MemTotal_bytes{job="prometheus-node-exporter"}) > 0.85
+          for: 15m
+          labels:
+            severity: warning
+            service: infra
+          annotations:
+            summary: "{{ $labels.instance }} node 메모리 사용률이 85% 초과 상태로 15분 지속"
+            description: "노드 메모리 여유가 부족하다. MemoryPressure·eviction·컨테이너 메모리 추이를 함께 확인한다."
 ---
 # ══ 워크로드 몰림 감시 (2026-07-31, replicas>=2 + PDB 작업과 한 세트) ═══════════════════
 #
@@ -335,17 +378,40 @@ spec:
             histogram_quantile(
               0.95,
               sum by(service, le) (
-                rate(http_request_duration_highr_seconds_bucket{namespace="app"}[5m])
+                rate(http_request_duration_highr_seconds_bucket{namespace="app"}[15m])
               )
             ) > 1
-          for: 2m
+            and on(service)
+            (sum by(service) (increase(http_requests_total{namespace="app"}[15m])) >= 20)
+          for: 15m
           labels:
             severity: warning
             owner: app-platform
             environment: production
           annotations:
-            summary: "{{ $labels.service }} p95 응답 시간이 1초 초과 상태로 2분 지속"
-            description: "5분 윈도우 p95 지연이 1초를 넘었습니다. 관련 오류율, Slow Trace, 최근 배포를 확인하세요."
+            summary: "{{ $labels.service }} p95 응답 시간이 1초 초과 상태로 15분 지속"
+            description: "15분간 최소 20건 이상 요청에서 p95가 1초를 넘었다. 저트래픽 단건 지연은 제외한다."
+
+        # 일반 동기 API만 P2 지연 대상으로 둔다. chat·ocr·video처럼 외부 AI 작업을 포함한
+        # 장기 경로는 동일 임계를 적용하면 정상 요청도 알람이 되므로 별도 SLO가 확정되기 전 제외한다.
+        - alert: MpCoreApiSevereLatency
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by(service, le) (
+                rate(http_request_duration_highr_seconds_bucket{namespace="app", service=~"account|mealplan|pantry|price|recipe|recipebook|notify"}[15m])
+              )
+            ) > 3
+            and on(service)
+            (sum by(service) (increase(http_requests_total{namespace="app", service=~"account|mealplan|pantry|price|recipe|recipebook|notify"}[15m])) >= 20)
+          for: 10m
+          labels:
+            severity: critical
+            owner: app-platform
+            environment: production
+          annotations:
+            summary: "{{ $labels.service }} 핵심 API p95가 3초 초과 상태로 10분 지속"
+            description: "일반 동기 API의 명확한 사용자 체감 지연이다. 오류율·Slow Trace·최근 배포를 함께 확인한다."
 
         # 5xx 비율. ⚠️ **status 라벨은 코드가 아니라 버킷**이다 — 실측값이 `2xx`·`4xx` 형태다
         #   (prometheus-fastapi-instrumentator 기본 동작). `5..` 정규식이 `5xx` 에 매치되므로
@@ -353,23 +419,25 @@ spec:
         #   5xx 가 한 건도 없으면 분자 시계열이 아예 없어 결과가 안 나온다 = 발화 없음(정상 동작).
         - alert: MpAppHighErrorRate
           expr: |
-            100 * (
+            (
               sum by(service) (
-                rate(http_requests_total{namespace="app", status=~"5.."}[5m])
+                increase(http_requests_total{namespace="app", status=~"5.."}[15m])
               )
               /
               sum by(service) (
-                rate(http_requests_total{namespace="app"}[5m])
+                increase(http_requests_total{namespace="app"}[15m])
               )
-            ) > 5
-          for: 2m
+            ) > 0.05
+            and on(service)
+            (sum by(service) (increase(http_requests_total{namespace="app"}[15m])) >= 20)
+          for: 15m
           labels:
             severity: critical
             owner: app-platform
             environment: production
           annotations:
-            summary: "{{ $labels.service }} 5xx 오류율이 5% 초과 상태로 2분 지속"
-            description: "요청량, p95 지연, 오류 로그 패턴과 의존 서비스 상태를 함께 확인하세요."
+            summary: "{{ $labels.service }} 5xx 오류율이 5% 초과 상태로 15분 지속"
+            description: "15분간 최소 20건 이상 요청에서 5xx 비율이 5%를 넘었다. 저트래픽 단건 실패는 제외한다."
 
         # OOMKilled. 재시작이 최근에 있었고(increase>0) 그 종료 사유가 OOMKilled 인 경우로 한정한다.
         #   `and on(namespace,pod,container)` 라 두 지표의 나머지 라벨 차이는 무시된다.

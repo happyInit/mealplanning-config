@@ -1,0 +1,16 @@
+# Alertmanager(observability)는 Istio sidecar가 없는 관측 워크로드다. app 네임스페이스의
+# 기본 STRICT mTLS 아래에서는 Operations webhook에 보낸 평문 HTTP가 Envoy에서 reset된다.
+# 이 예외는 Alertmanager → operations :8011 수신 경로만 열며, 다른 Operations 포트와
+# 나머지 app 워크로드 간 mTLS STRICT는 그대로 유지한다.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: mp-operations-alertmanager-webhook
+  namespace: app
+spec:
+  selector:
+    matchLabels:
+      app: operations
+  portLevelMtls:
+    "8011":
+      mode: PERMISSIVE

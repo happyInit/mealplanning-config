@@ -5,6 +5,7 @@ namespace: app
 # README.md 는 kustomize 가 무시(리소스 아님).
 resources:
   - peerauthentication.yaml
+  - peerauthentication-operations-alertmanager.yaml # Alertmanager → Operations webhook :8011만 평문 허용
   # 보안 ③ NetworkPolicy default-deny — frontend→backend→data→pipeline 순(계획). 티어별로 파일 추가·sync·Hubble 검증.
   - netpol-frontend.yaml            # 티어 1: frontend (default-deny, ingress=GW+probe / egress=DNS+istiod)
   - netpol-backend.yaml             # 티어 2: backend 공통 (GW+intra-app+probe / data+DNS+istiod+intra-app)
