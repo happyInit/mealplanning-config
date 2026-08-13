@@ -20,6 +20,7 @@ kind: Kustomization
 resources:
   - ../../base
   - pg-roles.yaml # 0-13 — 서비스 롤 12종의 비밀번호 배선(EKS 전용)
+  - serviceaccount.yaml # 0-14c 잔여분 — mp-pg-onsite-dump 신원(EKS 전용)
 
 # ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
 # 실측(C-29): 클러스터 CPU 요청 10.780 코어 ↔ 실사용 1.145(9.4배). PG 는 500m × 2 인스턴스 = 1.0 코어로
@@ -156,6 +157,71 @@ patches:
           metadata:
             annotations:
               eks.amazonaws.com/role-arn: arn:aws:iam::PLACEHOLDER:role/mp-pg-barman
+
+  # ── 0-32 bootstrap — **빈 클러스터로 짓는다** (C-78, 2026-08-13) ────────────
+  # 🔴 **이 패치가 없으면 AWS 클러스터가 기동 자체를 못 한다.** base 의 bootstrap 은
+  #    `pg_basebackup ← externalClusters: vm-pg → 192.168.0.8` 인데 그 VM 은
+  #    **P4(2026-07-31)에서 파괴**됐다. eks 렌더가 그걸 그대로 들고 있었다.
+  #
+  # 🔴 **왜 `bootstrap.recovery`(barman)가 아닌가 — C-78 사용자 확정.**
+  #    *"barman `bootstrap.recovery` 를 쓰지 않는다 — 생성 시점 1회만 유효라 틀리면 Cluster
+  #     재생성인데, 빈 클러스터 + `pg_restore` 는 그 경로를 안 밟는다"*
+  #    ⇒ A1 에서 **빈 클러스터**로 띄우고, A3 컷오버 창에서 온프렘 `pg_dump -Fc -Z6`(318MiB 실측)을
+  #      `pg_restore` 로 붓는다. 다운타임 5~10분. 0-32 의 종전 스케치(recovery)는 C-78 이 뒤집었다.
+  #    🔴 그래서 **0-23(barman 경로 분리)은 0-32 의 선행이 아니다** — 읽는 경로가 아예 안 쓰인다.
+  #      0-23 이 막는 것은 여전히 유효하지만(양 사이트 WAL 이 섞이는 것) 별개 축이다.
+  #
+  # 🔴 `bootstrap` 은 **생성 시점 1회만 유효**하다. 틀리면 Cluster 삭제·재생성이고 리허설이 없다(1-9).
+  #    지금이 고칠 수 있는 마지막 싼 시점이다.
+  #
+  # 🟢 `initdb` 라서 딸려오는 것 2가지:
+  #    ① CNPG 가 `pg-app` 시크릿(username=fbapp)을 **자동 생성**한다. 온프렘은 pg_basebackup
+  #       부트스트랩이라 이게 안 만들어졌었다(base cluster.yaml 주석의 실측) — `mp-pg-onsite-dump`
+  #       CronJob 이 그 시크릿을 읽으므로 EKS 에선 오히려 배선이 자연스러워진다.
+  #    ② `postInitApplicationSQL(Refs)` 가 **동작한다**(recovery 였다면 안 돈다).
+  #       🔴 그래도 **안 쓴다** — GRANT 정본은 앱 레포 `docs/prd/schema-roles.sql` 하나여야 한다.
+  #          여기 SQL 을 복사하면 정본이 둘이 되고, 갈리는 순간 권한이 조용히 어긋난다.
+  #          A1 의 "스키마 DDL" 은 사람이 psql 로 돌린다(C-78).
+  #
+  # ⚠️ `externalClusters`·`replica` 도 같이 걷는다 — 둘 다 `vm-pg` 를 가리키고, `replica.source` 가
+  #    존재하지 않는 externalCluster 를 참조하면 CNPG 검증에 걸릴 수 있다.
+  #    (`mp-pg-replica-source` ExternalSecret 은 남겨 뒀다 — 값은 SSM 번들에 있어 sync 는 되고,
+  #     C-40/C-55 의 역방향 복제 설계가 그 자리를 쓸지 아직 안 정해졌다.)
+  - target: {group: postgresql.cnpg.io, kind: Cluster, name: pg}
+    patch: |-
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata: {name: pg, namespace: data}
+      spec:
+        bootstrap:
+          pg_basebackup: null      # JSON merge patch 의 null = 키 삭제
+          initdb:
+            database: foodbudget   # 🔴 온프렘 덤프와 같은 이름이어야 pg_restore 가 그대로 붙는다
+            owner: fbapp           # 🔴 객체 소유자. schema-roles.sql 은 소유권을 fbapp 에 남기는 설계다
+        replica: null
+        externalClusters: null
+
+  # ── 0-14c 잔여분 — `mp-pg-onsite-dump` 의 신원 (2026-08-13) ──────────────────
+  # 0-14c 는 app·pipeline ns 만 했다. data ns 에서 `default` SA 로 남아 있던 이 CronJob 을 여기서 닫는다.
+  # 🔴 **이게 없으면 이상한 상태가 된다** — `platform/policies-data/overlays/eks/netpol-pg-onsite-s3.yaml`
+  #    이 이미 STS 를 열어 **IRSA 를 전제**하는데 붙일 신원이 없었다(네트워크는 열렸는데 주체가 없음).
+  # ⚠️ **나머지 반쪽(업로드 컨테이너 MinIO → S3 재작성)은 여기서 안 한다** — C-78 의 **A4** 이고
+  #    체크리스트 `2-8`·`1-20` 소관이다. 게다가 보존 기간이 정본에서 갈린다:
+  #      · 보존표(§lifecycle) = **7일**(현행 `mc rm --older-than 7d` 승계)
+  #      · **C-79** = Std → IA 30-90d → Glacier IR 90-180d → **만료 190일**
+  #    7일이면 CronJob 이 지우고 190일이면 라이프사이클이 지운다 — **누가 지우는지가 달라진다.**
+  #    사람이 정해야 하는 것이라 여기서 고르지 않았다.
+  - target: {group: batch, kind: CronJob, name: mp-pg-onsite-dump}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-pg-onsite-dump, namespace: data}
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: mp-pg-onsite-dump
 
   # ── 0-13 서비스별 PG 롤 — **AWS PG 는 처음부터 갈라서 짓는다** (2026-08-13) ──
   # 설계 정본 = 앱 레포 `docs/prd/schema-roles.md`(+ 멱등 DDL `schema-roles.sql`, #566).

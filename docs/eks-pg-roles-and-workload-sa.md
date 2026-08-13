@@ -21,6 +21,16 @@
 | **1-2** CNPG egress STS | ✅ **이미 라이브 아님·이미 머지됨** | main 에 있다(`sts.ap-northeast-2` + `sts.amazonaws.com`). 렌더로 확인만 |
 | **0-23 · 0-30** barman 경로 | ✅ **이미 AWS-only 형태다** | config #148 이 이미 `overlays/eks` 에만 `pg-eks` 를 넣었다. 온프렘 경로는 안 움직인다 |
 
+**2차(같은 날) 추가 4건 — 상세는 §6.** 전부 *"미결처럼 보였지만 이미 확정된 결정이 있던"* 것들이다.
+
+| 항목 | 판정 | 한 것 |
+|---|---|---|
+| **0-32** bootstrap | 🟢 **C-78 로 확정돼 있었다** | 죽은 VM(`pg_basebackup ← 192.168.0.8`) → **`initdb` 빈 클러스터**. 🔴 1차 보고의 `bootstrap.recovery` 제안은 **틀렸다** |
+| **0-14c** 잔여 | 🟢 완료 | `mp-pg-onsite-dump` 전용 SA + IRSA(`mp-pg-dump`) |
+| **0-13** 부수 | 🟢 완료 | `app-common` 의 `PGUSER: fbapp` 을 eks 에서 제거(사문화 + 조용한 권한 상승 경로) |
+| 🆕 **0-1 누락** | 🟢 완료 | `ocr`·`ranking-serving` 의 **Pooler 우회가 eks 에 없었다** — 온프렘과 같은 내용으로 복구 |
+| A-41 chat Bedrock | ⏸ **안 한다** | eks 도 `GENERATOR_BACKEND: template`(실측). 안 쓰는 권한을 미리 주면 0-14c 역행 |
+
 ---
 
 ## 1. 0-13 — AWS PG 는 **처음부터** 롤이 갈린 상태로 짓는다
@@ -81,10 +91,11 @@ PgBouncer 는 **(유저, DB) 쌍마다 별도 풀**을 만든다.
    **CNPG 가 롤을 못 만든다.** 32자 랜덤 12개(온프렘 `fbapp` 은 8바이트 — 자연스러운 회전 기회).
    🔴 `app-secrets` 번들에 넣지 말 것 — 0-11(SSM standard 4,096 B) 여유가 711 B 뿐이고 12롤이 579 B 다.
 2. **`schema-roles.sql` 실행** — GRANT 는 CNPG 가 관리하지 않는다.
-   `postInitApplicationSQL` 은 **initdb 부트스트랩 1회만** 유효한데 AWS 는 `bootstrap.recovery` 로 뜰 예정이라(0-32)
-   그 훅이 안 돈다 ⇒ **어느 경로로 짓든 psql 1회는 사람 몫**이다.
-3. **`ALTER ROLE fbapp NOLOGIN`(5단계)** — recovery 부트스트랩이면 `fbapp` 과 그 권한이
-   물리 복제로 **따라온다.** 위 배선은 롤을 *더할* 뿐이라, 적재 검증 후 사람이 닫는다.
+   ⟳ **§6① 로 정정** — AWS 는 `initdb` 로 뜨므로 `postInitApplicationSQL` 이 *기술적으로는* 돈다.
+   그래도 **안 쓴다**: GRANT 정본이 앱 레포 SQL 하나여야 하고 복사하면 갈린다.
+   ⇒ **psql 1회는 사람 몫**이다(C-78 의 A1 "스키마 DDL").
+3. **`ALTER ROLE fbapp NOLOGIN`(5단계)** — `initdb` 가 `fbapp` 을 **객체 소유자로 의도적으로 만든다**
+   (schema-roles.sql 이 전제하는 그대로). 위 배선은 롤을 *더할* 뿐이라, 적재·검증 후 사람이 닫는다.
 
 ---
 
@@ -122,12 +133,11 @@ kubelet 이 pull 마다 경고를 남긴다.
   SA 레벨 false 면 파드가 명시로 뒤집지 않는 한 안 붙는다.
 - IRSA 와 충돌하지 않는다 — IRSA 토큰은 EKS 웹훅이 **별도 projected 볼륨(`aws-iam-token`)** 으로 넣는다.
 
-### 손대지 않은 것
+### `data/mp-pg-onsite-dump` — ✅ §6② 에서 닫았다
 
-`data/mp-pg-onsite-dump` 는 여전히 `default` SA 다. C-18 미결(MinIO → `mp-pg-dump-ap2` 로 살릴지)이
-사람 결정으로 남아 있어 이 브랜치가 정하지 않았다. 🔴 다만 지금은
-`platform/policies-data/overlays/eks/netpol-pg-onsite-s3.yaml` 이 **STS 를 열어 IRSA 를 전제하는데
-신원이 없는** 상태다 — 살리기로 하면 SA + 롤이 같이 와야 한다.
+명세 §A 의 집계는 app·pipeline 만이라 1차에서 빠져 있었다. 2차에서 전용 SA + IRSA 를 붙였다.
+🔴 **업로드 컨테이너의 MinIO → S3 재작성은 여전히 안 했다** — A4(C-78) · `2-8`·`1-20` 소관이고,
+그 전에 보존 기간 정본이 갈린다(7일 vs C-79 의 190일). §6② 참조.
 
 ---
 
@@ -139,6 +149,7 @@ kubelet 이 pull 마다 경고를 남긴다.
 |---|---|---|---|
 | `mp-pipeline-bedrock` | `system:serviceaccount:pipeline:mp-score-review-sentiment`<br>`system:serviceaccount:pipeline:mp-summarize-reviews` | `bedrock:InvokeModel` — **모델 ARN 2개 한정** | 0-16 · C-30 |
 | `mp-pg-barman` | `system:serviceaccount:data:pg` (CNPG `serviceAccountTemplate`) | `s3:PutObject`·`GetObject`·`ListBucket`·`DeleteObject` on `mp-backup-ap2/pg-eks/*`<br>+ **`mp-backup-ap2/pg/*` 는 읽기만**(C-51 페일백 원본) | 0-16 · 0-23 |
+| `mp-pg-dump` | `system:serviceaccount:data:mp-pg-onsite-dump` | `s3:PutObject`·`ListBucket`(+ 보존을 CronJob 이 맡으면 `DeleteObject`) on **`mp-pg-dump-ap2/aws/*`**<br>🔴 `mp-backup-ap2` 는 **주지 않는다** — 두 트랙의 장애 도메인 분리가 존재 이유다(C-18) | 0-14c · C-68 · C-69 |
 
 - 🔴 신뢰정책은 **`StringEquals` 에 sub 두 개를 리스트로** 준다. `StringLike` + `mp-*` 로 뭉뚱그리면
   pipeline ns 의 SA 22개가 전부 Bedrock 롤을 맡을 수 있게 되어 0-14c 를 되돌리는 셈이 된다.
@@ -151,7 +162,7 @@ kubelet 이 pull 마다 경고를 남긴다.
 - `services/chat` — `GENERATOR_BACKEND=bedrock` 경로가 코드에 있다(기본값 `template`). 켜는 순간
   `mp-chat` SA 에 Bedrock 롤이 필요하다.
 - `services/operations` — `rca_contract.py` 에 `provider: "bedrock"` 선택지가 있다(기본 `mock`).
-- `data/mp-pg-onsite-dump` — 위 §2 참조(C-18 미결).
+- 둘 다 **지금 붙이지 않는다** — 안 쓰는 권한이라 0-14c 역행이고, 체크리스트가 **A-41** 로 추적 중이다.
 
 ---
 
@@ -193,10 +204,86 @@ config #148 이 **`overlays/eks` 에만** `destinationPath: s3://mp-backup-ap2/p
 체크리스트가 적은 `pg-prod`/`pg-dr` 이름은 **채택하지 않았다**(#148 판단 유지) — C-51 은 리전 장애 시
 온프렘을 승격시켜 역할을 뒤바꾸므로 역할 기반 이름은 그때 거짓말이 된다. 사이트 이름은 페일오버해도 안 바뀐다.
 
-🔴 **남은 진짜 선행은 0-23 이 아니라 `bootstrap` 이다.** base `cluster.yaml` 의
-`bootstrap.pg_basebackup` → `externalClusters: vm-pg → 192.168.0.8` 은 **P4(2026-07-31)에서 파괴된 VM** 이다.
-eks 렌더가 이걸 그대로 들고 있어 AWS 클러스터가 **부트스트랩 자체를 못 한다.** → 0-32 소관.
-그때 `bootstrap.recovery` 가 읽을 곳은 **온프렘 값(`serverName: pg`)** 이다. `pg-eks` 로 적으면 빈 경로를 읽는다.
+🔴 **남은 진짜 선행은 0-23 이 아니라 `bootstrap` 이었다 — 아래 §6 에서 고쳤다.**
+
+---
+
+## 6. 🔴 추가로 고친 것 4건 (2026-08-13 2차)
+
+1차 보고에서 "다른 레인" 으로 넘겼던 발견들인데, **전부 이미 확정된 결정이 있어서** 여기서 닫았다.
+(찾아보지 않고 넘기면 "미결처럼 보이는 기결" 이 그대로 남는다.)
+
+### ① 0-32 bootstrap — 죽은 VM → **빈 클러스터**(C-78)
+
+base `cluster.yaml` 의 `bootstrap.pg_basebackup` 이 `externalClusters: vm-pg → 192.168.0.8` 을 가리키는데
+그 VM 은 **P4(2026-07-31)에서 파괴**됐다. eks 렌더가 그대로 들고 있어 **AWS 클러스터가 기동을 못 한다.**
+
+🔴 **1차 보고에서 내가 `bootstrap.recovery`(barman) 를 제안한 것은 틀렸다.** 그건 0-32 의 스케치
+(C-72, 2026-08-12)였고 **C-78(2026-08-13, 사용자 확정)이 그것을 뒤집었다**:
+
+> barman `bootstrap.recovery` 를 쓰지 않는다 — *생성 시점 1회만 유효*라 틀리면 Cluster 재생성인데,
+> **빈 클러스터 + `pg_restore` 는 그 경로를 안 밟는다**
+
+⇒ `bootstrap.initdb`(`database: foodbudget` · `owner: fbapp`) + `replica`·`externalClusters` 제거.
+A1 에서 빈 클러스터로 띄우고 A3 컷오버 창에 온프렘 `pg_dump -Fc -Z6`(318MiB) → `pg_restore`.
+
+**따라오는 정정 2건**
+- 🔴 **0-23 은 0-32 의 선행이 아니다.** 읽는 경로(recovery)가 아예 안 쓰인다.
+  0-23 이 막는 것(양 사이트 WAL 이 같은 프리픽스에서 섞이는 것)은 여전히 유효하지만 **별개 축**이다.
+- 🟢 `initdb` 라서 `postInitApplicationSQL(Refs)` 가 **동작한다**(recovery 였다면 안 돈다).
+  **그래도 안 쓴다** — GRANT 정본은 앱 레포 `schema-roles.sql` 하나여야 하고, 여기 복사하면
+  정본이 둘이 되어 갈리는 순간 권한이 조용히 어긋난다.
+- 🟢 `initdb` 는 `pg-app` 시크릿(username=fbapp)을 **자동 생성**한다. 온프렘은 pg_basebackup 이라
+  안 만들어졌던 것이고, `mp-pg-onsite-dump` 가 그 시크릿을 읽으므로 EKS 에선 배선이 자연스러워진다.
+- ⇒ §1 의 *"recovery 면 fbapp 이 물리 복제로 따라온다"* 는 이제 해당 없음.
+  `fbapp` 은 initdb 가 **소유자로 의도적으로** 만든다(schema-roles.sql 이 전제하는 그대로).
+
+### ② `mp-pg-onsite-dump` 의 신원 (0-14c 잔여분)
+
+전용 SA + IRSA 어노테이션(`mp-pg-dump` → `mp-pg-dump-ap2`, C-68·C-69)을 붙였다.
+**없으면 이상한 상태**였다 — `netpol-pg-onsite-s3.yaml` 이 이미 STS 를 열어 IRSA 를 전제하는데
+붙일 신원이 없었다(네트워크는 뚫렸는데 주체가 없음).
+
+🔴 **나머지 반쪽(업로드 컨테이너 `mc`+MinIO → S3 재작성)은 안 했다.** C-78 의 **A4** 이고 `2-8`·`1-20` 소관인데,
+그 전에 **정본이 갈린다**:
+
+| | 누가 지우나 | 보존 |
+|---|---|---|
+| 보존표(§lifecycle) | CronJob (`mc rm --older-than 7d` 승계) | **7일** |
+| **C-79** (2026-08-13) | S3 라이프사이클 | Std → IA 30-90d → Glacier IR 90-180d → **만료 190일** |
+
+**사람이 정할 것.** 정하기 전에 재작성하면 둘 다 지우거나 아무도 안 지우게 된다.
+
+### ③ `app-common` 의 `PGUSER: fbapp` — EKS 에서 제거
+
+0-13 으로 app ns 11종이 전부 자기 `env: PGUSER` 를 갖게 돼 이 값은 사문화된다. 남겨 두면 해롭다:
+새 서비스가 PGUSER 를 안 적으면 **조용히 `fbapp`(앱 스키마 8개의 소유자)로 붙어** 롤 분리가 그 서비스에서만 사라진다.
+지우면 기동 시점에 인증 실패로 드러난다 — **조용한 권한 상승보다 시끄러운 실패가 낫다.**
+
+지워도 되는 근거(eks 렌더 실측): app-common 을 읽는 13개 중 PGUSER 가 필요한 11개는 전부 자기 env 보유 ·
+`mp-operations` 는 자기 값(외부 교육용 DB) 보유 · `mp-frontend` 는 envFrom 자체가 없다 ·
+`mp-ocr-config-canary` 는 app-common 을 읽지만 **PG 를 안 쓴다**(`config_canary.py` 에 psycopg·PGHOST·PGUSER **0건**).
+🔴 온프렘은 그대로 — 거기는 11종이 실제로 `fbapp` 으로 붙어 있다(C-83).
+
+### ④ 🆕 ocr · ranking-serving 의 **Pooler 우회가 eks 에 없었다** (0-1 누락분)
+
+③을 확인하다 발견했다. `pg-direct.yaml`(PGHOST → `pg-rw`)이 **`overlays/onprem` 에만** 있어서
+eks 렌더는 app-common 의 `pg-pooler` 를 그대로 물고 있었다 — **AWS 에서만 Pooler 를 탄다.**
+
+| 서비스 | Pooler 를 타면 | 증상 |
+|---|---|---|
+| `ocr` | `SET statement_timeout`·`conn.read_only=True` 가 **세션 스코프**라 다음 문이 다른 백엔드로 간다 | 에러가 아니라 **쓰기 차단 가드가 조용히 무효화** |
+| `ranking-serving` | `psycopg.connect()` 직접 호출이라 `prepare_threshold` 기본값(5) | `prepared statement "..." does not exist` |
+
+해제 조건(ocr = `SET LOCAL` 전환 / ranking-serving = `prepare_threshold=None`)이 **아직 하나도 충족되지 않았다**
+⇒ 사이트에 따라 갈릴 이유가 없다. 온프렘 파일과 같은 내용을 eks 에도 뒀다.
+
+### ⑤ 안 한 것 — chat · operations 의 잠자는 Bedrock 경로
+
+`services/chat` 은 eks 렌더도 `GENERATOR_BACKEND: template` 이고(실측), `services/operations` 의
+`provider: bedrock` 도 기본 `mock` 이다. 지금 IRSA 롤을 붙이면 **안 쓰는 권한을 주는 것**이라
+0-14c 의 취지에 역행한다. 체크리스트가 이미 **A-41**(chat Bedrock netpol · *"이관 항목이 아니라 새 기능"*)로
+추적 중이므로 **그대로 둔다.**
 
 ---
 

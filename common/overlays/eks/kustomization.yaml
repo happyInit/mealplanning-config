@@ -58,3 +58,36 @@ patches:
       kind: ExternalSecret
       metadata:
         name: mp-harbor-pull
+
+# ── 0-13 부수 — `PGUSER: fbapp` 을 EKS 에서 걷는다 (2026-08-13) ────────────────
+# 0-13 으로 app ns 11종이 전부 `env: PGUSER=svc_<서비스>` 를 직접 갖게 됐다(env 가 envFrom 을 이긴다).
+# 그러면 여기 남은 `fbapp` 은 **아무도 안 쓰는 값**이 되는데, 남겨 두면 해롭다:
+#
+#   새 서비스를 추가하면서 PGUSER 를 안 적는다
+#     → 조용히 `fbapp` 으로 붙는다
+#     → `fbapp` 은 앱 스키마 8개 전부의 **소유자**다 (schema-roles.md §1.1)
+#     → 롤을 가른 의미가 그 서비스에서만 통째로 사라지고, **에러가 없어서 아무도 모른다**
+#
+# 지우면 반대로 기동 시점에 드러난다(접속 유저 미지정 → 라이브러리가 OS 유저로 폴백 → 인증 실패).
+# **조용한 권한 상승보다 시끄러운 실패가 낫다.**
+#
+# 🔴 온프렘에는 손대지 않는다 — 거기는 11종이 실제로 `fbapp` 으로 붙어 있다(C-83 형상 동결).
+#    이 패치가 `overlays/eks` 에만 있는 이유가 그것이다.
+#
+# 실측으로 확인한 "지워도 되는 근거" (2026-08-13, eks 렌더 기준):
+#   · app ns 워크로드 14개 중 app-common 을 읽는 것 13개
+#   · 그중 PGUSER 가 필요한 11개 = 전부 자기 env 보유  ✅
+#   · `mp-operations`  = 자기 `PGUSER`(외부 교육용 DB) 보유 — 여기 값을 애초에 안 씀  ✅
+#   · `mp-frontend`    = envFrom 자체가 없다(nginx)  ✅
+#   · `mp-ocr-config-canary` = app-common 을 읽지만 **PG 를 안 쓴다**
+#        (`services/ocr/app/config_canary.py` 에 psycopg·PGHOST·PGUSER 참조 **0건** — Vertex 호출만)  ✅
+#
+# ⚠️ `op: test` 로 base 값이 바뀌면 렌더가 죽게 했다. base 가 `fbapp` 이 아니게 되는 날은
+#    이 판단의 전제가 바뀌는 날이므로 조용히 통과하면 안 된다.
+  - target: {version: v1, kind: ConfigMap, name: app-common}
+    patch: |-
+      - op: test
+        path: /data/PGUSER
+        value: fbapp
+      - op: remove
+        path: /data/PGUSER

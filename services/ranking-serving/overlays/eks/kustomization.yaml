@@ -76,3 +76,7 @@ patches:
       - op: replace
         path: /spec/data/0/remoteRef
         value: {key: pg-roles, property: svc_ranking}
+
+# ── Pooler 우회 (0-1 사이트 분기 누락분 · 2026-08-13) ─────────────────────────
+#    온프렘 overlays/onprem/pg-direct.yaml 과 같은 내용. 근거·해제조건은 그 파일에.
+  - path: pg-direct.yaml
