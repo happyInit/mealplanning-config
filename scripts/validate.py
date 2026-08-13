@@ -488,6 +488,119 @@ def check_registry_split(res: Result, docs: dict[str, list[dict]],
                  "base 에 사이트 전용 주소가 박혔을 수 있다\n  " + "\n  ".join(sorted(onprem_wrong)))
 
 
+# StorageClass 를 가리키는 키 이름들. 스키마마다 다르다(0-8 머리말):
+#   PVC·STS vct·Prometheus/Alertmanager CR·ECK = storageClassName / CNPG = storage.storageClass /
+#   Loki = persistence.storageClass / Tempo = persistence.storageClassName / kubecost = defaultStorageClass
+# 🔴 **Strimzi 만 `class` 다** — `storageclass` 정규식에 안 걸려서 0-8 집계에서 한 번 빠졌던 키다.
+#   여기서는 `storage` 매핑 바로 아래의 `class` 만 본다(다른 `class` 와 섞이지 않게).
+SC_KEYS = ("storageClass", "storageClassName", "defaultStorageClass")
+
+# eks 렌더에서 **반드시 Retain SC 여야 하는** 워크로드 (0-8b 판정, 2026-08-13).
+# 판정 근거는 각 오버레이 머리말에 있다. 요약 = "잃으면 재파생 원본이 없거나, 원본이 PG 라
+# PG 가 성한 국면에서만 재파생이 성립하는 것".
+#   · CNPG Cluster `pg`      — 정본. 재파생 경로 없음
+#   · Elasticsearch `es`     — 재색인 원본이 PG (사고는 둘을 같이 데려간다)
+#   · KafkaNodePool          — 온프렘 IaC 주석의 "PG·ES·Kafka" 셋 중 하나
+#   · Prometheus 시계열 이력  — 실사용 7.7 GiB · 재파생 원본 없음 · 백업 대상도 아님(C-68)
+# 🔴 반대로 **일부러 Delete 인 것**: Alertmanager(silence 0.53 MiB) · Loki/Tempo 로컬(정본 = S3).
+#    그것들은 orphan PV 가 쌓이는 쪽이 손해라 여기 없다.
+def _sc_must_retain(doc: dict, path: str) -> bool:
+    kind = doc.get("kind")
+    name = (doc.get("metadata") or {}).get("name")
+    api = doc.get("apiVersion", "")
+    if kind == "Cluster" and api.startswith("postgresql.cnpg.io"):
+        return True
+    if kind in ("Elasticsearch", "KafkaNodePool"):
+        return True
+    if kind == "Application" and name == "kube-prometheus-stack":
+        low = path.lower()
+        return "prometheus" in low and "alertmanager" not in low
+    return False
+
+
+def iter_storage_classes(doc, path: str = ""):
+    """문서 안의 StorageClass 참조를 (경로, 값) 로 전부 뽑는다.
+
+    재귀로 도는 이유 = 값이 `spec` 아래에만 있지 않다. Helm 소스 Application 은
+    `spec.source.helm.valuesObject` **안**에 차트 values 를 통째로 인라인하고 있어서,
+    kind 별 고정 경로로는 loki·tempo·kubecost·kube-prometheus-stack 을 통째로 놓친다.
+    """
+    if isinstance(doc, dict):
+        for k, v in doc.items():
+            sub = f"{path}.{k}" if path else k
+            if k in SC_KEYS and (v is None or isinstance(v, str)):
+                yield sub, v
+                continue
+            # 🔴 Strimzi 의 `class`. **`"class" in v` 로 봐야 한다** — `v.get("class")` 는 키가
+            #    아예 없을 때도 None 을 돌려줘서, `storage` 매핑을 가진 문서가 전부
+            #    "SC 미명시" 오탐이 된다(CNPG `spec.storage` · Loki `loki.storage` · Alertmanager).
+            if k == "storage" and isinstance(v, dict) and "class" in v:
+                yield f"{sub}.class", v.get("class")
+            # 🔴 그러고도 **계속 내려간다.** CNPG 는 같은 `spec.storage` 매핑 안에 `storageClass` 를
+            #    들고 있어서, 여기서 멈추면 정작 봐야 할 값을 통째로 놓친다.
+            yield from iter_storage_classes(v, sub)
+    elif isinstance(doc, list):
+        for i, v in enumerate(doc):
+            yield from iter_storage_classes(v, f"{path}[{i}]")
+
+
+def check_storage_class_split(res: Result, docs: dict[str, list[dict]],
+                              eks_docs: dict[str, list[dict]]) -> None:
+    """StorageClass 가 사이트별로 갈렸고, 잃으면 안 되는 것이 Retain 에 붙었나 (0-8 · 0-8b · 0-8e).
+
+    왜 있는가 — **온프렘이 정확히 여기서 뚫렸다.** `openebs-lvm-retain`(Retain)을 만들어 놓고
+    아무도 안 써서 라이브 PVC 21/21 이 default 인 Delete 쪽에 붙었다(0-8b). 원인은 사람이
+    게을러서가 아니라 **명시를 잊으면 조용히 default 가 붙는 구조**였다는 것이다. 그 구조를
+    EKS 에서 되풀이하지 않으려고 두 겹을 건다:
+      · 구조 — default SC 를 안전한 쪽(`gp3-retain`)에 건다
+        (`platform/cluster-baseline/overlays/eks/storageclasses.yaml`)
+      · 기계 — 이 검사. 명시를 잊었거나 위험한 쪽에 붙였으면 **머지 전에** 빨개진다
+
+    보는 것 셋:
+      ① 값이 비어 있으면 실패 — 사이트 불문. "명시하지 않았다"가 곧 0-8b 의 실패 원인이다
+      ② eks 렌더에서 Retain 대상(_sc_must_retain)이 Delete SC 를 가리키면 실패
+      ③ eks 렌더가 cluster-baseline 에 없는 SC 이름을 가리키면 **경고**
+         (= EKS 에 존재하지 않는 SC → PVC 영구 Pending. 실패가 아닌 이유는 loki·tempo·kubecost 의
+          `openebs-lvm` 이 0-8 잔여로 아직 남아 있고, 그 트랙 소관이라 이 레인이 못 고쳐서다.)
+    """
+    # SC 정의는 cluster-baseline eks 오버레이가 정본이다 — 여기서 읽으면 SC 를 추가/개명해도
+    # 검사기를 같이 고칠 필요가 없다.
+    defined: dict[str, str] = {}
+    for ds in eks_docs.values():
+        for d in ds:
+            if d.get("kind") == "StorageClass":
+                defined[(d.get("metadata") or {}).get("name")] = d.get("reclaimPolicy", "Delete")
+    retain = {n for n, p in defined.items() if p == "Retain"}
+
+    unset, not_retained, unknown = [], [], []
+    for site, table in (("onprem", docs), ("eks", eks_docs)):
+        for src, ds in table.items():
+            for d in ds:
+                for path, val in iter_storage_classes(d):
+                    where = f"{src} :: {d.get('kind')}/{(d.get('metadata') or {}).get('name')} {path}"
+                    if not val:
+                        unset.append(where)
+                        continue
+                    if site != "eks":
+                        continue
+                    if _sc_must_retain(d, path) and val not in retain:
+                        not_retained.append(f"{where} = {val}")
+                    elif defined and val not in defined:
+                        unknown.append(f"{where} = {val}")
+
+    if unset:
+        res.fail("[storage] storageClass 를 명시하지 않았다 — default SC 가 조용히 붙는다(0-8b 의 실패 원인)\n  "
+                 + "\n  ".join(sorted(unset)))
+    if not_retained:
+        res.fail("[storage] 재파생 불가 데이터가 Retain SC 에 안 붙어 있다 (0-8b) — "
+                 f"허용 = {sorted(retain) or '(cluster-baseline 에 Retain SC 가 없다)'}\n  "
+                 + "\n  ".join(sorted(not_retained)))
+    if unknown:
+        res.warn("[storage] eks 렌더가 cluster-baseline 에 없는 SC 를 가리킨다 — EKS 에 그 SC 는 "
+                 "존재하지 않으므로 PVC 가 영구 Pending 이다 (0-8 잔여)\n  "
+                 + "\n  ".join(sorted(unknown)))
+
+
 # 온프렘 ESO 스토어의 이름. eks 렌더에 이게 남아 있으면 그 ExternalSecret 은 AWS 에서 NotReady 다.
 ONPREM_SECRET_STORE = "fb-kubernetes"
 
@@ -1181,6 +1294,7 @@ def main() -> int:
     eks_docs = check_site_overlays(res)
     check_eks_secret_store(res)
     check_registry_split(res, docs, eks_docs)
+    check_storage_class_split(res, docs, eks_docs)
     check_fqdn(res)
     check_image_tags(res, docs)
     check_tsc_duplicate_key(res, docs)
