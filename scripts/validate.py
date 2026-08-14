@@ -1312,6 +1312,60 @@ def check_patch_literal_comments(res: Result) -> None:
                      + "\n  ".join(bad))
 
 
+EKS_APP_SITE = "argocd/overlays/eks"
+
+
+def check_eks_app_site(res: Result) -> None:
+    """EKS 앱 사이트(`mealplanning-root`)의 child 가 온프렘 오버레이를 가리키나.
+
+    왜 있는가 — **이 실수는 조용한 게 아니라 반대로 시끄럽게 틀린다.** 이 뿌리는 원래
+    `resources: [../../base]` 한 줄이었고, base 의 child 23개는 전부 `…/overlays/onprem` 을
+    가리킨다. 그대로 EKS 에 적용하면 **온프렘 형상이 EKS 로 배포된다** — 가장 아픈 것이
+    `ingress` 로, MetalLB IP `.14` 애너테이션이 EKS 로 새어 들어간다.
+
+    그리고 이 상태는 **저절로 재발한다**: base 에 child 를 새로 추가하면 여기 자동으로
+    딸려 오는데 path 패치는 안 딸려 오므로, 아무도 손대지 않아도 온프렘 경로가 하나 는다.
+    ⇒ 사람이 기억하는 대신 이 검사가 잡는다.
+
+    두 가지를 본다:
+      ① 모든 child 의 `spec.source.path` 가 `overlays/eks` 로 끝나는가
+      ② 그 경로가 **레포에 실재하는가** — 없는 경로를 가리키면 ArgoCD 는 배포 실패가 아니라
+         `ComparisonError` 로 앉는데, 그건 앱 목록에서 초록/빨강이 아니라 **회색**이라 눈에 덜 띈다.
+         (`mp-cloudflared` 가 정확히 이 경우였다 — C-5 로 eks 오버레이를 만들지 않는 트랙이다)
+    """
+    site = REPO / EKS_APP_SITE
+    if not (site / "kustomization.yaml").exists():
+        return
+
+    proc = subprocess.run(renderer() + [str(site)], capture_output=True, text=True)
+    if proc.returncode != 0:
+        res.fail(f"[eks-site] {EKS_APP_SITE} 렌더 실패\n{proc.stderr.strip()[:600]}")
+        return
+
+    onprem, missing = [], []
+    for doc in yaml.safe_load_all(proc.stdout):
+        if not doc or doc.get("kind") != "Application":
+            continue
+        name = doc["metadata"]["name"]
+        path = (doc.get("spec", {}).get("source", {}) or {}).get("path", "")
+        if not path.endswith("/overlays/eks"):
+            onprem.append(f"{name} → {path}")
+        elif not (REPO / path / "kustomization.yaml").exists():
+            missing.append(f"{name} → {path}")
+
+    if onprem:
+        res.fail(f"[eks-site] EKS 뿌리의 child 가 **온프렘 오버레이**를 가리킨다 — "
+                 "그대로 sync 하면 온프렘 형상이 EKS 로 배포된다"
+                 "(예: ingress 는 MetalLB IP 애너테이션을 끌고 온다).\n  "
+                 f"고치는 곳 = {EKS_APP_SITE}/kustomization.yaml — "
+                 "path 패치를 더하거나, EKS 에 안 올릴 트랙이면 `$patch: delete` 로 뺀다\n  "
+                 + "\n  ".join(sorted(onprem)))
+    if missing:
+        res.fail(f"[eks-site] child 가 **없는 경로**를 가리킨다 — ArgoCD 는 배포 실패가 아니라 "
+                 "`ComparisonError`(회색)로 앉아서 눈에 덜 띈다\n  "
+                 + "\n  ".join(sorted(missing)))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true",
@@ -1334,6 +1388,7 @@ def main() -> int:
     check_image_tags(res, docs)
     check_tsc_duplicate_key(res, docs)
     check_patch_literal_comments(res)
+    check_eks_app_site(res)
     check_cnpg_failsafe_netpol(res, docs)
     check_pgsync_stable_alias(res, docs)
     check_security_context(res, docs, list_only=False)

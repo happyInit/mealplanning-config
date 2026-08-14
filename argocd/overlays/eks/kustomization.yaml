@@ -1,18 +1,181 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트: mealplanning-root 의 감시 대상 ──────────────────────────────────
-# 🔴 지금은 base 통과다 = child 23개의 source.path 가 아직 **온프렘 오버레이를 가리킨다**.
-#    이 오버레이의 일이 그걸 `<트랙>/overlays/eks` 로 돌리는 것이다. 아직 안 했다 —
-#    이관 실작업(Wave B)에서 아래 체크리스트대로 채운다. **초록 = 이관 준비 완료가 아니다.**
+# ── EKS 사이트: mealplanning-root 의 감시 대상 (C-78 A2 · Wave 1) ──────────────
 #
-# 여기서 갈라야 하는 것:
-#   · 전 child 23개 `spec.source.path` — `…/overlays/onprem` → `…/overlays/eks`
-#   · `spec.destination.server` — 사이트 클러스터가 갈리면(지금은 둘 다 in-cluster 가정)
-#   · **C-5 온프렘 존치 트랙 제외** — `cloudflared` 는 온프렘 DR 전용이라 eks 목록에서 뺀다.
-#     (빼는 방법 = 여기서 base 를 통과시키지 말고 resources 를 직접 나열하거나, `$patch: delete`)
-#   · 온프렘에만 있는 정책 트랙(`policies-ingress` 등)이 EKS 에서 이름·대상이 달라지는지 — 0-17/0-18 확인 후
+# 🔴 **종전 상태는 `../../base` 한 줄뿐이었다** = 자식 23개가 전부 딸려 오는데 그들의
+#    `spec.source.path` 는 **온프렘 오버레이**를 가리킨다. 즉 이 뿌리를 EKS 에 적용하면
+#    **온프렘 형상이 EKS 로 배포된다.** 가장 아픈 예:
+#      `ingress/overlays/onprem` → **MetalLB IP `.14` 애너테이션이 EKS 로 샌다**
+#      (`ingress/overlays/eks` 머리말이 *"지금 이 오버레이를 붙이면 …샌다"* 로 경고하는 그것)
 #
-# 🔴 이 디렉터리는 **부트스트랩(bootstrap/argocd/overlays/eks)이 이미 참조하도록 적혀 있다.**
-#    거기 EKS root 의 path 가 `argocd/overlays/eks` 다 — 즉 이 파일이 EKS 사이트의 앱 목록 정본이 된다.
+# 이 파일이 하는 일 = ① 켤 13개의 path 를 `overlays/eks` 로 돌리고 ② 나머지 10개를 **지운다**.
+#
+# 🔴 **base 통과는 유지한다**(개별 파일 나열이 아니라). 이유가 둘:
+#    ⓐ kustomize 는 루트 밖의 **개별 파일**을 resources 로 못 읽는다(디렉터리만 된다)
+#    ⓑ 그리고 그게 더 낫다 — base 에 child 가 새로 생기면 여기 자동으로 들어오고,
+#       path 패치가 없으니 **온프렘 경로인 채로** 남는다. 그 상태를
+#       `scripts/validate.py::check_eks_app_site` 가 **실패로** 잡는다.
+#       명시 나열이었다면 새 child 가 **조용히 빠져서** 아무도 몰랐을 것이다.
+#
+# 🔴 **A1(데이터 티어)이 끝나야 머지할 수 있다.** `app-common` 의 백엔드 주소(PG·ES·Redis)가
+#    아직 비어 있고(C-14 ElastiCache 엔드포인트), 그게 없으면 앱이 `envFrom` 을 못 받아
+#    `CreateContainerConfigError` 로 선다. **이 파일은 A1 완료 시점에 켜는 스위치다.**
+#
+# ══ Wave 1 = app-common + 앱 12종 (C-78 A2) ═══════════════════════════════════
 resources:
   - ../../base
+
+patches:
+  # ── ① 제외 10개 ─────────────────────────────────────────────────────────────
+  #
+  # 🔴 `mp-cloudflared` — C-5. 온프렘 DR 전용(평시 replicas 0)이라 EKS 에 둘 물건이 아니다.
+  #    애초에 `services/cloudflared/overlays/eks` 가 **존재하지 않는다** — 남겨두면 뿌리가
+  #    없는 path 를 가리켜 `ComparisonError` 로 앉는다.
+  - target: {group: argoproj.io, kind: Application, name: mp-cloudflared}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: mp-cloudflared, namespace: argocd}
+
+  # 🔴 `mp-operations` — C-89. 대시보드 EC2 의 docker compose 로 나간다(C-84).
+  #    A2 앱이 13종 → **12종**이 된 이유가 이것이다.
+  #    🔵 `services/operations/overlays/eks` 는 **지우지 않는다** — 되돌릴 여지를 없앨 이유가 없고,
+  #       Application 이 없으면 그 디렉터리는 아무 일도 하지 않는다.
+  - target: {group: argoproj.io, kind: Application, name: mp-operations}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: mp-operations, namespace: argocd}
+
+  # 🔴 진입점 3종(`gateway` · `gateway-internal` · `mp-ingress`) — **셋 다 "골격"** 이다
+  #    (각 eks 오버레이 머리말이 그렇게 적고 있다). 진입은 C-60 으로 **ALB** 인데 그 배선이
+  #    아직 없다 — 실측(2026-08-14): ALB 0개 · AWS Load Balancer Controller 미설치 ·
+  #    Terraform 에 `aws_lb` 선언 0건. ⇒ **A2-후반**에서 켠다.
+  #    🟢 그전까지 앱 검증은 `kubectl port-forward` 로 한다 — C-85 가 내부 도구에 대해 확정한
+  #       방식 그대로이고, 외부 유입이 없어도 스모크는 된다.
+  - target: {group: argoproj.io, kind: Application, name: gateway}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: gateway, namespace: argocd}
+  - target: {group: argoproj.io, kind: Application, name: gateway-internal}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: gateway-internal, namespace: argocd}
+  - target: {group: argoproj.io, kind: Application, name: mp-ingress}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: mp-ingress, namespace: argocd}
+
+  # 🔴 `monitoring` — 골격. EKS 관측은 platform-root 의 kube-prometheus-stack 이 별도로 든다.
+  - target: {group: argoproj.io, kind: Application, name: monitoring}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: monitoring, namespace: argocd}
+
+  # 🔴 정책 4종 — 골격이고 `0-17`·`0-18` 이 선행이다. 온프렘 netpol 은 LAN `192.168.0.0/24` 를
+  #    ipBlock 으로 박고 있는데 `0-18` 이 **"VPC CIDR 로 기계적 치환 금지"** 를 명시한다.
+  #    🟢 정책이 없는 동안 앱은 정상 통신한다(default-deny 가 없으므로). 보안 수위는 낮지만
+  #       검증 단계의 의도된 상태이고, `0-18` 이 끝나면 여기 4블록을 지우면 켜진다.
+  - target: {group: argoproj.io, kind: Application, name: mp-policies}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: mp-policies, namespace: argocd}
+  - target: {group: argoproj.io, kind: Application, name: mp-policies-data}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: mp-policies-data, namespace: argocd}
+  - target: {group: argoproj.io, kind: Application, name: mp-policies-ingress}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: mp-policies-ingress, namespace: argocd}
+  - target: {group: argoproj.io, kind: Application, name: mp-policies-pipeline}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: mp-policies-pipeline, namespace: argocd}
+
+  # ── ② 남은 13개의 source.path 를 eks 오버레이로 ─────────────────────────────
+  # 🔴 `op: replace` 를 쓴다 — 대상 필드가 없으면 **렌더가 죽어서** 오타가 즉시 드러난다.
+  #    `add` 는 조용히 통과할 수 있다.
+  - target: {group: argoproj.io, kind: Application, name: app-common}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: common/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-account}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/account/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-chat}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/chat/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-frontend}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/frontend/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-mealplan}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/mealplan/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-notify}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/notify/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-ocr}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/ocr/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-pantry}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/pantry/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-price}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/price/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-ranking-serving}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/ranking-serving/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-recipe}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/recipe/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-recipebook}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/recipebook/overlays/eks
+  - target: {group: argoproj.io, kind: Application, name: mp-video}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: services/video/overlays/eks

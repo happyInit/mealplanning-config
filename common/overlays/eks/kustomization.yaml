@@ -9,14 +9,18 @@ kind: Kustomization
 # 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
 #    - ✅ 0-2 `secretStoreRef.name` fb-kubernetes → `mp-aws-secrets` (2026-08-10, 아래 patches)
 #    - 0-9 Harbor pull secret 자체가 불요해질 수 있다 — ECR 은 노드 롤/Pod Identity 로 당긴다
-#    - app-common ConfigMap 의 백엔드 주소(PG/ES/Redis) — 🔴 Redis 는 C-14 로 ElastiCache 엔드포인트
+#    - ✅ app-common ConfigMap 의 Redis 좌표 — C-14 ElastiCache (2026-08-14, 아래 patches ①~④)
 resources:
   - ../../base
 
-#    - 🔴 app-common ConfigMap 의 백엔드 주소(PG/ES/Redis) — Redis 는 C-14 로 ElastiCache 엔드포인트.
-#      **여기가 이 트랙의 본론이고 아직 안 했다.**
-#      ⚠️ `envFrom.configMapRef` 는 파드 기동 시점 주입이라 바꿔도 도는 파드는 옛 값을 쓴다 —
-#      체크섬 어노테이션이 없어 rollout restart 가 별도로 필요하다.
+# 🟢 PG·ES 좌표는 **가를 것이 없다** — `pg-pooler.data.svc` · `es-es-http.data.svc` 가 EKS 에도
+#    같은 이름으로 실재한다(A1 완료, 실측 2026-08-14). 갈린 건 Redis 하나뿐이다.
+#
+# 🔴 **남은 온프렘 좌표 1건 = `KAFKA_BOOTSTRAP`.** EKS 에 Kafka 는 만들지 않는다(C-44).
+#    유일한 소비자가 `mp-mealplan` 이고(실측), C-88 이 그 해법으로 `EVENT_SINK=pg` 선택자를 뒀다.
+#    ⚠️ 아직 못 켠다 — `svc_mealplan` 에 `activity.user_event` INSERT 권한이 없다
+#    (`schema-roles.sql:137-138` 은 `activity.recipe_impression` 만 준다). 앱 레포 선행이 필요하다.
+#    그때까지 mealplan 의 클릭스트림 발행은 실패하지만 **best-effort 라 담기를 막지 않는다.**
 
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
@@ -91,3 +95,64 @@ patches:
         value: fbapp
       - op: remove
         path: /data/PGUSER
+
+# ══ C-14 — Redis = ElastiCache for Valkey (A2, 2026-08-14) ═════════════════════
+# 🔴 **이 오버레이의 본론이었다.** base 는 온프렘 Sentinel 3파드를 가리키는데 EKS 엔 그 파드가
+#    없다 — 고치지 않으면 앱 12종이 뜬 채로 Redis 만 조용히 죽는다.
+#
+# 라이브 실측(2026-08-14): `mp-cache` available · engine=valkey · Multi-AZ(t4g.micro ×2)
+#   · TransitEncryption=false · AuthToken=false  ⇒ 평문 6379 그대로, TLS/비번 env 불요.
+#
+# 🔴 **온프렘은 한 글자도 안 바뀐다**(C-83 형상 동결) — 그래서 base 가 아니라 여기다.
+# ⚠️ `envFrom.configMapRef` 는 **파드 기동 시점 주입**이다. 이 값을 바꾸고 sync 해도 도는 파드는
+#    옛 값을 쓴다. 체크섬 어노테이션이 없어 ArgoCD 가 안 굴려준다 → `rollout restart` 가 별도로 필요.
+  - target: {version: v1, kind: ConfigMap, name: app-common}
+    patch: |-
+      # ── ① Sentinel 끄기 ────────────────────────────────────────────────────
+      # ElastiCache 는 페일오버를 **엔드포인트 DNS 뒤에서** 처리한다 — Sentinel 이 할 일이 없고,
+      # 애초에 EKS 에 sentinel 파드가 없어 이 주소는 전부 NXDOMAIN 이다.
+      # 🔴 빈 문자열이 정확한 값이다(키 삭제 아님) — `redis_sentinels: str = ""` 가 소스의
+      #    폴백 분기 조건이고, 값이 있으면 db.py 가 Service 대신 Sentinel 로 master 를 찾는다.
+      #    (chat·price 두 서비스만 이 분기를 읽는다 — 실측 2026-08-14)
+      #    🔵 `REDIS_MASTER_GROUP` 은 남긴다 — Sentinel 이 꺼지면 아무도 안 읽고, 지우는 쪽이
+      #       오히려 소스 기본값(`"mymaster"`)과 어긋날 여지를 만든다.
+      - op: test
+        path: /data/REDIS_SENTINELS
+        value: "mp-redis-s-0.mp-redis-s-hl.data.svc:26379,mp-redis-s-1.mp-redis-s-hl.data.svc:26379,mp-redis-s-2.mp-redis-s-hl.data.svc:26379"
+      - op: replace
+        path: /data/REDIS_SENTINELS
+        value: ""
+
+      # ── ② 엔드포인트 = ElastiCache primary ─────────────────────────────────
+      # base 주석이 REDISHOST 를 "폴백 전용(Sentinel 모드에선 미사용)"이라 적는데, ①로 Sentinel 을
+      # 껐으므로 **EKS 에서는 이게 유일한 접속 경로**다. 폴백이 아니라 정본이 된다.
+      # 🔵 reader 엔드포인트(`mp-cache-ro…`)는 쓰지 않는다 — 앱이 쓰는 건 캐시·잡 큐라 쓰기가 섞인다.
+      - op: test
+        path: /data/REDISHOST
+        value: mp-redis-master.data.svc
+      - op: replace
+        path: /data/REDISHOST
+        value: mp-cache.gnqpbg.ng.0001.apn2.cache.amazonaws.com
+
+      # ── ③ 1-15 소켓 타임아웃 ───────────────────────────────────────────────
+      # 🔴 chat 은 기본값이 `None` = **무한 대기**다(`redis_socket_timeout_s: float | None = None`).
+      #    사이트 간 지연이 생기는 구성에서 상한이 없으면 그때 드러난다 — 소스 주석이 그렇게 적고
+      #    "`overlays/eks` 에서 3.0 을 준다"고 지정한다. price 는 5.0 → 3.0.
+      #    나머지 10종은 이 필드를 선언하지 않는다 ⇒ `extra="ignore"` 라 **무해하게 무시**된다
+      #    (전 서비스 `SettingsConfigDict(extra="ignore")` 확인 — 실측 2026-08-14).
+      - op: add
+        path: /data/REDIS_SOCKET_TIMEOUT_S
+        value: "3.0"
+
+      # ── ④ 1-14 페일오버 재연결 (video) ─────────────────────────────────────
+      # 🔴 **둘은 한 쌍이다.** Multi-AZ 전환은 DNS 이름이 유지된 채 뒤의 노드가 바뀌므로 기존
+      #    커넥션이 끊기고 재연결이 필요하다 — `health_check` 가 죽은 커넥션을 걷어내고
+      #    `job_retries` 가 그 창을 재시도로 덮는다. 하나만 켜면 방어의 절반이다.
+      # ⚠️ `REDIS_JOB_RETRIES` 는 **1 이 "재시도 없음"**이다(0 아님 — `ge=1`, 0 을 주면 명령을
+      #    아예 실행하지 않고 TypeError 를 낸다). 값 3 = 소스 주석이 지정한 EKS 값.
+      - op: add
+        path: /data/REDIS_HEALTH_CHECK_S
+        value: "30"
+      - op: add
+        path: /data/REDIS_JOB_RETRIES
+        value: "3"
