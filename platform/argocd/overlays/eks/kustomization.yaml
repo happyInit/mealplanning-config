@@ -253,6 +253,41 @@ patches:
                 persistentVolume:
                   storageClass: gp3
 
+  # ── kubecost `nodeSelector` 4곳 제거 (2026-08-14) ────────────────────────────
+  # 🔴 base 가 파드 4종을 **온프렘 노드 이름**에 못박아 뒀다:
+  #      nodeSelector: {kubernetes.io/hostname: k8s-worker-a2}
+  #    EKS 에 그런 노드는 없다 ⇒ 4파드 전부 영구 Pending. 실측(2026-08-14):
+  #      0/2 nodes are available: 2 node(s) didn't match Pod's node affinity/selector
+  #    🔴 바로 위 patch 가 `storageClass` 4곳만 gp3 로 고치고 이 4곳은 놓쳤다 —
+  #       **같은 블록에서 절반만 갈린 것**이라 "eks 오버레이가 kubecost 를 다룬다"로 읽혀
+  #       원인을 찾기 어려웠다.
+  # 🟢 EKS 에서는 핀 자체가 불필요하다 — 온프렘의 핀은 특정 워커에 로컬 PV 를 묶어 두기 위한
+  #    것이었고(openebs LVM = 노드 로컬), EBS gp3 는 AZ 안에서 어느 노드에든 붙는다.
+  # 🔴 온프렘은 그대로 둔다(C-83) — base 를 고치지 않고 여기서만 걷는 이유가 그것이다.
+  # ⚠️ `op: test` 를 앞에 둬서 base 가 바뀌면 조용히 어긋나는 대신 렌더가 죽게 한다.
+  - target: {group: argoproj.io, kind: Application, name: kubecost}
+    patch: |-
+      - op: test
+        path: /spec/source/helm/valuesObject/localStore/nodeSelector
+        value: {kubernetes.io/hostname: k8s-worker-a2}
+      - op: remove
+        path: /spec/source/helm/valuesObject/localStore/nodeSelector
+      - op: test
+        path: /spec/source/helm/valuesObject/aggregator/nodeSelector
+        value: {kubernetes.io/hostname: k8s-worker-a2}
+      - op: remove
+        path: /spec/source/helm/valuesObject/aggregator/nodeSelector
+      - op: test
+        path: /spec/source/helm/valuesObject/finopsagent/nodeSelector
+        value: {kubernetes.io/hostname: k8s-worker-a2}
+      - op: remove
+        path: /spec/source/helm/valuesObject/finopsagent/nodeSelector
+      - op: test
+        path: /spec/source/helm/valuesObject/frontend/nodeSelector
+        value: {kubernetes.io/hostname: k8s-worker-a2}
+      - op: remove
+        path: /spec/source/helm/valuesObject/frontend/nodeSelector
+
 # ══════════════════════════════════════════════════════════════════════════════
 # A1 — 데이터 티어를 EKS 오버레이로 돌린다 (2026-08-14 · C-78 A1)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -297,6 +332,33 @@ patches:
       - op: replace
         path: /spec/source/path
         value: platform/pgsync/overlays/eks
+
+# ══════════════════════════════════════════════════════════════════════════════
+# A2 — `observability-secrets` 를 EKS 오버레이로 돌린다 (2026-08-14)
+# ══════════════════════════════════════════════════════════════════════════════
+# 위 A1 블록이 예고한 "각자의 차례" 중 하나다. **이번 차례인 이유**는 grafana 가 이것 없이는
+# 못 뜨기 때문이다 — 실측(2026-08-14):
+#     Error: secret "mp-grafana-admin" not found   (x1132 over 4h)
+#   observability ns 에 **ExternalSecret 이 0개**였다. 공급 트랙이 온프렘을 가리키고 있어서다.
+#
+# 🟢 대상 오버레이는 이미 준비돼 있다 — `platform/observability/overlays/eks` 가
+#    ① `externalsecret-grafana-admin.yaml` 을 더하고(스토어 = `mp-aws-secrets`)
+#    ② `mp-lgtm-object-store`(온프렘 MinIO 자격증명)를 `$patch: delete` 로 걷는다.
+# 🔵 `remoteRef.key` 는 온프렘과 동일한 `observability-secrets` 다(스토어 prefix `mp/prod/` 가
+#    앞에 붙어 파라미터 이름이 된다) — 그래서 Secrets Manager 에 **`mp/prod/observability-secrets`**
+#    적재가 선행이다. 값 없이 돌리면 `SecretSyncedError` 로 바뀔 뿐 grafana 는 여전히 못 뜬다.
+#
+# 🔴 `pipelines`·`policies-observability` 는 **이번에 안 돌린다.** 전자는 C-3(크롤은 온프렘 상주)
+#    때문에 EKS 에 둘지 자체가 미결이고, 후자는 `0-17`·`0-18`(netpol 의 LAN ipBlock)이 선행이다.
+#    A1 주석의 원칙 그대로 — **한 번에 다 돌리면 실패 시 원인이 안 갈린다.**
+  - target: {group: argoproj.io, kind: Application, name: observability-secrets}
+    patch: |-
+      - op: test
+        path: /spec/source/path
+        value: platform/observability/overlays/onprem
+      - op: replace
+        path: /spec/source/path
+        value: platform/observability/overlays/eks
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 🔴 EKS 에서 **통째로 빼는** 트랙 2개 (2026-08-14 · 사용자 확정)
