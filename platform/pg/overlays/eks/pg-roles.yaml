@@ -266,3 +266,28 @@ spec:
   data:
     - secretKey: password
       remoteRef: {key: pg-roles, property: svc_pipeline}
+---
+# 🔴 **위 12종과 원격 키가 다르다** — `pg-roles` 가 아니라 `data-secrets/PGSYNC_PG_PASSWORD` 다.
+#    PGSync 워크로드가 `mp-pgsync-secrets/PG_PASSWORD` 로 **같은 값**을 받기 때문이다
+#    (`platform/pgsync`). 롤의 비밀번호와 접속 비밀번호가 갈리면 CDC 가 조용히 멈춘다.
+#    ⇒ 편의로 `pg-roles` 로 옮기지 말 것. 옮기려면 pgsync 워크로드 쪽도 같이 옮겨야 한다.
+# 🟢 `username` 은 리터럴 — 비밀이 아니고 Secrets Manager 왕복을 하나 줄인다(위와 같은 이유).
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-pg-role-pgsync
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: mp-aws-secrets}
+  target:
+    name: mp-pg-role-pgsync
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: pgsync
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef: {key: data-secrets, property: PGSYNC_PG_PASSWORD}
