@@ -147,9 +147,16 @@ patches:
       spec:
         configuration:
           destinationPath: s3://mp-backup-ap2/pg-eks
-          serverName: pg-eks
-  # 🟢 계정 ID 는 채워졌다(2026-08-14 · `689192361171`). services/* 오버레이와 같은 규약이다 —
-  #    계정 ID 가 아직 없다(C-8 계정 3개 미생성). 채우지 않고 배포하면 barman 이 인증에 실패한다.
+  # 🔴 `serverName` 은 **여기가 아니라 Cluster 의 플러그인 파라미터**다 (2026-08-14 실측).
+  #    플러그인 v0.13.0 웹훅이 ObjectStore 쪽을 금지한다 — base 주석에 원문과 근거를 적어 뒀다.
+  #    ⚠️ 목적(사이트별 경로 분리)은 그대로다. **적는 자리만 옮겼다.**
+  - target: {group: postgresql.cnpg.io, kind: Cluster, name: pg}
+    patch: |-
+      - op: add
+        path: /spec/plugins/0/parameters/serverName
+        value: pg-eks
+  # 🟢 계정 ID 는 채워졌다(2026-08-14 · `689192361171`). services/* 오버레이와 같은 규약이다.
+  #    (종전 *"계정 ID 가 아직 없다"* 는 #167 로 해소됐다.)
   #    CNPG 가 이 애너테이션을 클러스터 SA(`pg`)에 얹고, barman-cloud 사이드카가 그 SA 로 STS 를 탄다.
   - target: {group: postgresql.cnpg.io, kind: Cluster, name: pg}
     patch: |-
@@ -170,7 +177,7 @@ patches:
   # 🔴 **왜 `bootstrap.recovery`(barman)가 아닌가 — C-78 사용자 확정.**
   #    *"barman `bootstrap.recovery` 를 쓰지 않는다 — 생성 시점 1회만 유효라 틀리면 Cluster
   #     재생성인데, 빈 클러스터 + `pg_restore` 는 그 경로를 안 밟는다"*
-  #    ⇒ A1 에서 **빈 클러스터**로 띄우고, A3 컷오버 창에서 온프렘 `pg_dump -Fc -Z6`(318MiB 실측)을
+  #    ⇒ A1 에서 **빈 클러스터**로 띄우고, A3 컷오버 창에서 온프렘 `pg_dump -Fc -Z6`(⟳ **31.2MiB · 4초** — 2026-08-14 재실측. 종전 318MiB 는 압축 전 값으로 보인다)을
   #      `pg_restore` 로 붓는다. 다운타임 5~10분. 0-32 의 종전 스케치(recovery)는 C-78 이 뒤집었다.
   #    🔴 그래서 **0-23(barman 경로 분리)은 0-32 의 선행이 아니다** — 읽는 경로가 아예 안 쓰인다.
   #      0-23 이 막는 것은 여전히 유효하지만(양 사이트 WAL 이 섞이는 것) 별개 축이다.
