@@ -7,9 +7,14 @@
 # 🔴 **버킷이 barman 과 달라야 한다** — C-18 의 명시 조건이다. 온사이트 덤프의 존재 이유가
 #    "barman 체인이 통째로 오염·삭제됐을 때의 독립 사본" 이라서, 같은 버킷·같은 계정에 두면
 #    방어 대상과 장애 도메인을 공유하게 된다(체크리스트의 원칙 그대로).
-#    ⚠️ **그 버킷 이름은 아직 안 정해졌다.** 아래는 `s3.<리전>` 엔드포인트만 열어 둔 상태이고,
-#       virtual-hosted 스타일(`<버킷>.s3.<리전>.amazonaws.com`)로 붙는 SDK 라면 버킷 이름이
-#       확정되는 즉시 `matchName` 을 한 줄 추가해야 한다. 미결 = 산출 §결정필요.
+#    ✅ **버킷 확정 = `mp-pg-dump-ap2`**(C-69) · A4 에서 Terraform 이 실제로 만들었다.
+#       위 ⚠️ 가 예고한 대로 **가상호스트 이름을 아래에 채웠다**(2026-08-14).
+#       🔴 이게 없으면 업로드가 조용히 막힌다 — aws-cli v2 는 addressing style 기본이 `auto` 이고
+#          `mp-pg-dump-ap2` 는 DNS 적합 이름이라 **가상호스트 방식**을 고른다. 즉 실제 접속지는
+#          `s3.ap-northeast-2.amazonaws.com` 이 아니라 `mp-pg-dump-ap2.s3.…` 이고,
+#          `matchName` 은 정확 일치라 기존 두 줄로는 **한 건도 안 맞는다.**
+#       ⚠️ 그래도 `s3.ap-northeast-2.amazonaws.com` 을 남긴다 — path-style 로 붙는 도구
+#          (일부 SDK·`--endpoint-url` 사용)와 리전 조회가 그 이름을 쓴다.
 #
 # 🔴 STS 가 같이 열려 있어야 한다 — C-30(IRSA). 파드는 투영된 SA 토큰으로
 #    `AssumeRoleWithWebIdentity` 를 STS 에 먼저 치고, 그 결과로 받은 임시 키로 S3 에 간다.
@@ -39,6 +44,10 @@ spec:
             dns:
               - matchPattern: "*"
     - toFQDNs:
+        # 🔴 실제 업로드가 가는 곳(가상호스트 방식). 위 주석 참조 — 이 한 줄이 없으면 막힌다.
+        #    🔵 와일드카드(`*.s3.…`)를 쓰지 않는다 — 버킷이 하나로 정해져 있어 정확 일치가
+        #      더 좁고, 넓히면 이 파드가 계정의 아무 버킷에나 나갈 수 있게 된다.
+        - matchName: "mp-pg-dump-ap2.s3.ap-northeast-2.amazonaws.com"
         - matchName: "s3.ap-northeast-2.amazonaws.com"
         - matchName: "sts.ap-northeast-2.amazonaws.com"
         - matchName: "sts.amazonaws.com"
