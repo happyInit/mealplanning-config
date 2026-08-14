@@ -8,7 +8,7 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-recipe-service
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-recipe-service
-  newTag: d20d3fdb3a4fe05d852bde354cca7991e11c6d59
+  newTag: "4a7fc5bc62ffc826c6adde462bee561292ee8da8"
 
 # ── 0-6 hard TSC 완화 + 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────
 # 근거 전문 = services/account/overlays/eks/kustomization.yaml (같은 판단, 같은 이유).

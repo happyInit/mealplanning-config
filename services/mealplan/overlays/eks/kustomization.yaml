@@ -8,7 +8,7 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-mealplan-service
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-mealplan-service
-  newTag: 5f9977ad99c7705c9bb6f60808c3664165b2c89a
+  newTag: "4a7fc5bc62ffc826c6adde462bee561292ee8da8"
 
 # ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
 # 150m → 100m (= 다른 백엔드 8종과 같은 값). mealplan 은 HPA 대상이 아니고

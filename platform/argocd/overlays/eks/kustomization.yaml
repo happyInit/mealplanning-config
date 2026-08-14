@@ -58,8 +58,19 @@ resources:
 #
 # 🔴 `op: test` 를 앞에 둔 이유 — 인덱스·경로 기반 replace 는 base 의 values 구조가 바뀌면
 #    **엉뚱한 값을 조용히 덮어쓴다.** test 가 깨지면 렌더가 죽어서 `validate.py` 가 잡는다.
-# ⚠️ 태그는 온프렘과 **같은 커밋 SHA** 를 유지한다. ECR 로 옮길 때 같은 다이제스트를 밀어 넣는
-#    전제이고, 태그가 갈리면 "같은 플러그인"이라는 보장이 사라진다.
+# ⟳ 🔴 **정정(2026-08-14) — 종전 서술 "태그는 온프렘과 같은 커밋 SHA 를 유지한다(같은 다이제스트를
+#    밀어 넣는 전제)" 는 C-89 로 성립하지 않는다.** 그 전제는 *한 이미지를 두 레지스트리에 미러링*
+#    한다는 것이었는데, C-89(사이트별 단일 아키)가 **양쪽을 각자 빌드**하는 형상을 확정했다 —
+#    Harbor=amd64(Jenkins) · ECR=arm64(GitLab). **아키텍처가 다르면 다이제스트가 같을 수 없다.**
+#    ⇒ 태그가 갈리는 것은 사고가 아니라 **구조의 결과**다.
+# 🔴 그래서 **핀의 판정 기준이 "온프렘과 같은가" 가 아니라 "그 레지스트리에 실재하는가" 로 바뀐다.**
+#    실측(2026-08-14) — ECR 전 리포의 태그는 `4a7fc5bc`(A0.5 파이프라인 19, `SERVICES=all`) **단 하나**이고
+#    종전 핀 `314b898f` 는 **ECR 에 없다** ⇒ `Init:ImagePullBackOff` 로 rollouts 컨트롤러가 서 있었다.
+#    같은 이유로 `services/*/overlays/eks` 13종의 핀도 전부 갱신했다(전수 대조 15/15 불일치였다).
+# 🟢 플러그인 **내용**의 동일성은 다이제스트가 아니라 소스로 보증된다 — Dockerfile 이 `314b898`↔현행 main
+#    바이트 동일임이 이미 확인돼 있다(base 파일 머리말). 즉 같은 소스를 두 아키로 구운 것이다.
+# 🔴 재발 방지는 이 파일이 아니라 **CI 소관**이다 — A-43(Jenkins CD 가 onprem 만 핀) 의 GitLab 쪽 짝이
+#    `config-pin` 잡이고, 그것이 eks 핀을 자동 갱신해야 이 수동 대조가 없어진다.
 # 🟢 계정 ID 확정(2026-08-14 · `689192361171`) — `scripts/sites.yaml` eks.registry 와 **같은 값이어야 한다**.
 #    계정이 정해지면 sites.yaml 을 고치고 `validate.py` 가 열거하는 목록대로 맞춘다.
 patches:
@@ -70,7 +81,7 @@ patches:
         value: 192.168.0.10/mealplanning/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
       - op: replace
         path: /spec/source/helm/valuesObject/controller/initContainers/0/image
-        value: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-rollouts-gatewayapi-plugin:314b898fe831b2cbe38c2f17fa43a00441bcce08
+        value: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-rollouts-gatewayapi-plugin:4a7fc5bc62ffc826c6adde462bee561292ee8da8
 
   # ── C-18 MinIO 삭제 → S3 · 1-19 region/TLS — Loki (2026-08-10) ───────────────
   # 🔴 **EKS 에는 MinIO 가 없다**(C-18). base 의 `http://minio.observability.svc:9000` 을 그대로
@@ -182,6 +193,65 @@ patches:
         value: host-b
       - op: remove
         path: /spec/source/helm/valuesObject/nodeSelector
+
+# ── 0-8 StorageClass 이탈 — loki · tempo · kubecost (2026-08-14) ──────────────
+# 🔴 이 파일이 스스로 예고해 둔 항목이다 — 머리말 실측표의 *"[0-8] storageClass `openebs-lvm`
+#    6건 … → gp3"* 이고, Loki 패치 옆 주석이 *"0-8 이 안 오면 PVC 가 바인딩되지 않아 Loki 가
+#    Pending 이다 — 둘 다 필요하다"* 라고 적어 뒀다. **그 예고가 라이브에서 그대로 실현됐다**:
+#    실측(2026-08-14) `observability/loki-0` **Pending 15시간** ·
+#    `storage-loki-0` PVC = `openebs-lvm` 으로 **바인딩 불가**(EKS 에 그 SC 가 없다).
+#    `validate.py` 의 [storage] 경고 6건도 정확히 이 목록이다.
+#
+# 🔴 **`gp3`(Delete) 를 고르는 근거** — 0-8e 의 기준은 *재파생 불가 → `gp3-retain` / 재생성 가능 →
+#    `gp3`* 다. 이 셋은 전부 후자다:
+#      · Loki·Tempo — 청크·블록의 **정본이 S3**(C-18 · `mp-observability-*`)이고 PVC 는 WAL·캐시다
+#      · kubecost   — 비용 지표를 **Prometheus 에서 파생**한다
+#    ⚠️ 기본 SC 가 `gp3-retain` 이라(0-8e · 온프렘과 반대) **명시하지 않으면 Retain 으로 떨어진다** —
+#       재생성 가능한 볼륨이 지워지지 않고 남아 비용이 된다. 그래서 셋 다 명시한다.
+#
+# 🔵 온프렘 무영향 — base 의 `openebs-lvm` 은 그대로 두고 eks 쪽에서만 덮는다(C-83 덧셈).
+  - target: {group: argoproj.io, kind: Application, name: loki}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: loki, namespace: argocd}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              singleBinary:
+                persistence:
+                  storageClass: gp3
+  - target: {group: argoproj.io, kind: Application, name: tempo}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: tempo, namespace: argocd}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              persistence:
+                storageClassName: gp3
+  - target: {group: argoproj.io, kind: Application, name: kubecost}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: kubecost, namespace: argocd}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              global:
+                defaultStorageClass: gp3
+              aggregator:
+                aggregatorDbStorage:
+                  storageClass: gp3
+                persistentConfigsStorage:
+                  storageClass: gp3
+              localStore:
+                persistentVolume:
+                  storageClass: gp3
 
 # ══════════════════════════════════════════════════════════════════════════════
 # A1 — 데이터 티어를 EKS 오버레이로 돌린다 (2026-08-14 · C-78 A1)
