@@ -1,52 +1,96 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 1-31 로 Harbor pull secret 만 걷었다(2026-08-10) — 나머지는 base 통과다.
+# ── EKS 사이트 오버레이 — 🔴 **A2 후반(2026-08-14)에 실제 배포 형상이 됐다.** ──────
+# 신설 = 0-1(2026-08-09) 골격 → 0-2·0-6·1-31 로 일부 채움 → **여기서 진입 형상을 완성한다.**
 #
-# 🔴 validate.py 는 `overlays/eks` 를 정책 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
-#    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+# 🔴 validate.py 는 `overlays/eks` 를 정책 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE).
+#    여기가 틀려도 검증은 초록이다 — 렌더를 직접 봐야 한다.
 #
-# 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - C-26 유입 = Cloudflare → **NLB(TCP:443 패스스루)** → Istio Gateway. MetalLB 애너테이션 제거,
-#      Service 타입/애너테이션이 AWS LB Controller 문법으로 바뀐다(target-type `instance`)
-#    - ✅ 0-6 hard TSC — 2026-08-10 적용(아래). 🔴 **위 서술을 정정한다**: `zone` 축은 soft 가 아니라
-#         **DoNotSchedule 유지**다. soft 로 내리면 replica 2 가 같은 AZ 에 뜰 수 있어(D-rep) 이
-#         게이트웨이의 존재 이유(= 입구 SPOF 제거)가 무너진다. 완화하는 것은 `hostname` 축뿐이다.
-#      🔴 **아직 안 했다.** 지금 이 오버레이를 붙이면 MetalLB IP `.14` 가 EKS 로 샌다
-#    - 0-6 hard TSC → `hostname` 축은 ScheduleAnyway 로, `zone` 축은 soft 로 유지
-#    - 0-2 secretStoreRef (externalsecret-cloudflare.yaml)
-#    - 0-6 hard TSC → `hostname` 축은 ScheduleAnyway 로, `zone` 축은 soft 로 유지
-#    - ✅ 0-2 secretStoreRef → `mp-aws-secrets` (2026-08-10, 아래 patches — cloudflare·pullsecret 둘 다)
-#    - TLS 종단은 Istio Gateway 유지(C-26) — cert-manager Let's Encrypt DNS-01 그대로
+# ── 온프렘과 갈리는 것 = **TLS 를 누가 끊는가** ────────────────────────────────
+#
+#   온프렘   Cloudflare(주황) → cloudflared → **Istio GW 가 TLS 종단**(cert-manager·LE)
+#   EKS      Cloudflare(회색) → **ALB 가 TLS 종단**(ACM) → GW 는 평문 HTTP
+#
+# 이것이 C-60 이고, 그 대가 ③ 이 *"형상 분기 → C-3 약화"* 로 정본에 적혀 있다.
+# 🔴 **여기서 갈리는 것을 최소로 유지하는 것이 그 대가를 줄이는 유일한 방법**이라
+#    리스너 **이름은 `https` 로 유지**한다 — 그래야 HTTPRoute 12개의 `sectionName: https`
+#    를 한 줄도 안 고친다(`1-50` 이 실측으로 확인한 것). **프로토콜만 내린다.**
 resources:
   - ../../base
 
-
-# ── 0-6 hard TSC 완화 (2026-08-10) ────────────────────────────────────────────
-#
-# 🔴 이 트랙만 패치 모양이 다르다. `mp-gw-public-params` 의 `data.deployment` 는 **YAML 이 아니라
-#    문자열**이다(istiod 가 파싱해서 자기가 렌더한 Deployment 위에 얹는 오버레이 조각). kustomize 는
-#    문자열 안을 필드 단위로 못 고치므로 **값 전체를 교체**할 수밖에 없다.
-#    ⇒ 대가 = base 와 여기 두 곳에 같은 내용이 산다. **base 를 고치면 여기도 고쳐야 한다.**
-#       (base 의 4차에 걸친 실측 주석은 base 에만 둔다 — 여기는 결과값만.)
-#       교체 전 원본과의 동일성 확인법:
-#         kubectl kustomize ingress/overlays/onprem | \
-#           python3 -c "import sys,yaml;[print(yaml.dump(yaml.safe_load(d['data']['deployment']),sort_keys=False)) \
-#             for d in yaml.safe_load_all(sys.stdin) if d and d.get('kind')=='ConfigMap' and d['metadata']['name']=='mp-gw-public-params']"
-#
-# 바뀌는 것은 **한 필드뿐이다** — hostname 축 `whenUnsatisfiable: DoNotSchedule` → `ScheduleAnyway`.
-# replicas 2 · priorityClassName · zone 축 hard · nodeTaintsPolicy · matchLabelKeys · labelSelector 는 그대로.
-#
-# 근거: C-29 = `m7g.xlarge` × 3 · **AZ 당 1대** ⇒ zone 도메인과 hostname 도메인이 1:1 이라
-#   hostname 축이 EKS 에서 추가로 막아 주는 것이 없다. base 3차 주석이 hard 로 올린 이유("soft 는
-#   보장이 아니라 결과")는 **zone 축이 hard 로 남아 있으므로 그대로 지켜진다** — 서로 다른 AZ 를
-#   강제하는 것이 곧 서로 다른 노드를 강제하는 것이기 때문이다.
-#   반대로 hard 로 남기면 Karpenter 가 한 AZ 에 노드를 더 띄운 국면·C-27 BG 국면에서
-#   "자리는 있는데 그 노드가 아니라서" Pending 이 날 여지만 남는다. 입구가 Pending 이면 전면 장애다.
-#   ⚠️ 온프렘 base 는 hard 유지 — zone 2 · 워커 4대라 1:1 이 아니고, 1차 실측(두 파드가 a1·a2 =
-#      노드는 갈렸는데 물리호스트는 같음)이 정확히 그 비대칭에서 났다.
 patches:
-# ── 0-6 hard TSC 완화 (2026-08-10) ────────────────────────────────────────────
+# ══ ① Gateway — MetalLB 제거 + 리스너 HTTP 화 (`1-50`) ════════════════════════
+#
+# 🔴 `op: test` 를 앞에 두는 것은 관례가 아니라 **방어**다. base 가 바뀌어 인덱스나 값이
+#    달라지면 여기서 죽는다 — 조용히 엉뚱한 필드를 고치는 것보다 낫다.
+  - target:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: mp-gw-public
+    patch: |-
+      # ── MetalLB 애너테이션 — EKS 에는 MetalLB 가 없다 ───────────────────────
+      # 🔴 남기면 `192.168.0.14` 라는 **온프렘 LAN 주소가 EKS 로 샌다**. 무해해 보이지만
+      #    나중에 누가 그 값을 보고 "여기도 .14 를 쓰는구나" 로 읽는 것이 실제 위험이다.
+      - op: test
+        path: /spec/infrastructure/annotations/metallb.universe.tf~1loadBalancerIPs
+        value: "192.168.0.14"
+      - op: remove
+        path: /spec/infrastructure/annotations
+
+      # ── 리스너 `https`(인덱스 1) — HTTPS → HTTP ────────────────────────────
+      # 🔴 **이름은 그대로 `https` 다.** 프로토콜만 내린다 — 이름을 바꾸면 HTTPRoute 12개의
+      #    `sectionName: https` 가 전부 안 붙어 **전 경로 404** 가 된다(`1-50` 실측).
+      #    포트도 443 그대로다(ALB → 파드 443. `alb.tf` 의 노드 SG 규칙이 그 번호를 쓴다).
+      - op: test
+        path: /spec/listeners/1/name
+        value: https
+      - op: replace
+        path: /spec/listeners/1/protocol
+        value: HTTP
+      # TLS 종단이 ALB 로 갔으므로 `certificateRefs` 가 가리킬 Secret 자체가 없다.
+      # (Gateway API 는 HTTP 리스너에 `tls` 가 있으면 리스너를 거부한다.)
+      - op: remove
+        path: /spec/listeners/1/tls
+      # ── 🔴 hostname 을 뗀다 — 그리고 그 판정은 ALB 가 한다 ──────────────────
+      # A2 는 `aws.mealbong.cloud` 로 검증하고(C-78) A3 는 `app.mealbong.cloud` 로 컷오버한다
+      # (`1-54`). Gateway 리스너의 `hostname` 은 값이 하나뿐이라 둘을 못 받는다.
+      # 🔴 **여기서 이름을 하나 고르면 A3 컷오버 창(5~10분) 안에 config PR·sync 가 낀다.**
+      #    그 창은 DNS 레코드 하나만 바꾸는 것이어야 한다.
+      # 🟢 대신 **호스트 검사를 ALB 리스너 규칙으로 올렸다**(`alb.tf` `host_forward`):
+      #    기본 동작 403 · `{app., aws.}.mealbong.cloud` 만 포워딩.
+      #    ⇒ 검사가 사라진 게 아니라 **엣지 한 곳으로 모였다**(C-60 의 정신).
+      - op: test
+        path: /spec/listeners/1/hostname
+        value: app.mealbong.cloud
+      - op: remove
+        path: /spec/listeners/1/hostname
+
+# ══ ② Service 를 ClusterIP 로 — 🔴 LoadBalancer 를 만들지 않는다 ══════════════
+#
+# istiod 는 Gateway 를 보고 Service 를 **`type: LoadBalancer` 로** 만드는 것이 기본이다.
+# 온프렘은 그걸 MetalLB 가 받아 `.14` 를 붙였다. EKS 에서 그대로 두면 두 가지로 나쁘다:
+#   ① 받아 줄 컨트롤러가 없어 영원히 `EXTERNAL-IP <pending>` (관측에 상시 노란 줄)
+#   ② 나중에 뭔가가 그걸 처리하게 되면 **의도치 않은 LB 가 생긴다** — C-85 는
+#      *"내부 접근 = 로드밸런서 0개"* 이고 감사 #58 이 scheme 오설정의 노출을 경고했다
+# 🟢 우리 형상에서 Service 는 **ALB 타깃그룹의 셀렉터 역할만** 한다
+#    (`TargetGroupBinding` 이 이 Service 를 보고 파드 IP 를 등록한다 — Ansible `eks_lb_controller`).
+#    ⇒ ClusterIP 로 충분하고, 그게 가장 적은 권한이다.
+#
+# 🔴 **`data.deployment` 와 같은 함정** — 이 값도 **문자열**이라 필드 단위 수정이 안 되고,
+#    `add` 로 키를 통째로 넣는다. base 에 `service` 키가 생기면 여기가 덮어쓰게 되므로
+#    그때 두 곳을 맞춰야 한다(아래 ③ 주석의 같은 경고).
+  - target:
+      version: v1
+      kind: ConfigMap
+      name: mp-gw-public-params
+    patch: |-
+      - op: add
+        path: /data/service
+        value: |
+          spec:
+            type: ClusterIP
+
+# ══ ③ 0-6 hard TSC 완화 (2026-08-10) ═════════════════════════════════════════
 #
 # 🔴 이 트랙만 패치 모양이 다르다. `mp-gw-public-params` 의 `data.deployment` 는 **YAML 이 아니라
 #    문자열**이다(istiod 가 파싱해서 자기가 렌더한 Deployment 위에 얹는 오버레이 조각). kustomize 는
@@ -102,21 +146,52 @@ patches:
                       matchLabels:
                         gateway.networking.k8s.io/gateway-name: mp-gw-public
 
-# ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
-# onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
-# 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
-#    스토어의 `prefix: mp/prod/` 가 key 앞에 붙어 파라미터 이름이 되기 때문(예: app-secrets → mp/prod/app-secrets).
-#    스토어 본문 · 값 적재 형식 · IAM 최소권한 = `bootstrap/eso/README.md`
-  - target: {group: external-secrets.io, kind: ExternalSecret}
-    patch: |-
+# ══ ④ cert-manager 배선 3종 제거 — 🔴 **발급 주체가 ACM 으로 갔다** ═════════════
+#
+# `issuer.yaml`(LE ACME) · `certificate.yaml`(app.mealbong.cloud → Secret) ·
+# `externalsecret-cloudflare.yaml`(DNS-01 용 CF API 토큰) 은 **한 덩어리**다.
+# ALB 가 TLS 를 끊으므로(C-60) 이 셋이 만들던 Secret `mp-gw-public-tls` 를 **아무도 안 쓴다**.
+#
+# 🔴 남겨 두면 무해하지 않다:
+#   · Certificate 가 **90일마다 LE 를 실제로 호출**한다 — 안 쓰는 인증서를 계속 발급받고
+#     실패하면 알림이 뜬다(원인 찾기에 시간을 쓰게 되는 종류의 실패다)
+#   · CF API 토큰을 EKS 에 두게 된다. **C-23 = 비밀은 양 사이트 독립**이고, AWS 쪽은
+#     이 토큰이 **필요 없다**(ACM 검증은 사람이 CNAME 을 한 번 넣고 끝 — `1-56` 이 닫히면 그것도 IaC).
+#     안 쓰는 자격증명을 옮기는 것은 그 자체가 노출면이다.
+# 🟢 온프렘은 그대로 LE 를 쓴다 — 이 삭제는 **오버레이 안에서만** 일어난다(C-83).
+# 🔴 이름은 **실물에서 읽었다** — Certificate 는 `mp-gw-public-cert` 이고
+#    `mp-gw-public-tls` 는 그것이 **만드는 Secret** 의 이름이다(헷갈리기 쉬운 짝이다).
+#    Issuer 는 staging·prod **두 개**다 — 하나만 지우면 남은 하나가 CF 토큰을 계속 요구한다.
+  - target: {group: cert-manager.io, kind: Certificate, name: mp-gw-public-cert}
+    patch: |
+      $patch: delete
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: mp-gw-public-cert
+  - target: {group: cert-manager.io, kind: Issuer, name: mp-letsencrypt-staging}
+    patch: |
+      $patch: delete
+      apiVersion: cert-manager.io/v1
+      kind: Issuer
+      metadata:
+        name: mp-letsencrypt-staging
+  - target: {group: cert-manager.io, kind: Issuer, name: mp-letsencrypt-prod}
+    patch: |
+      $patch: delete
+      apiVersion: cert-manager.io/v1
+      kind: Issuer
+      metadata:
+        name: mp-letsencrypt-prod
+  - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-cloudflare-api-token}
+    patch: |
+      $patch: delete
       apiVersion: external-secrets.io/v1
       kind: ExternalSecret
-      metadata: {name: selected-by-target}   # target 이 고르므로 이 이름은 매칭에 안 쓰인다
-      spec:
-        secretStoreRef:
-          kind: ClusterSecretStore
-          name: mp-aws-secrets
-# ── 1-31 Harbor pull secret 제거 ────────────────────────────────────────────
+      metadata:
+        name: mp-cloudflare-api-token
+
+# ══ ⑤ 1-31 Harbor pull secret 제거 ════════════════════════════════════════════
 # 🔴 이 트랙의 pull secret 은 **cloudflared 이미지 전용**이다(GW 는 공개 이미지). 그런데
 #    C-5 로 cloudflared 는 **온프렘 DR 전용 존치**라 EKS 에는 그 워크로드 자체가 없다
 #    (`services/cloudflared` 에 eks 오버레이가 없는 것이 그 판정의 실물이다).
@@ -133,3 +208,15 @@ patches:
       kind: ExternalSecret
       metadata:
         name: mp-harbor-pull
+
+# ── 🔴 0-2(ESO 백엔드 사이트 분기) 패치가 **사라진 것은 의도다** ────────────────
+# 종전에는 `target: {group: external-secrets.io, kind: ExternalSecret}` 로 이 트랙의 모든
+# ExternalSecret 의 `secretStoreRef` 를 `mp-aws-secrets` 로 바꿨다. 그런데 ④·⑤ 로
+# **이 트랙의 ExternalSecret 이 0개가 됐다** ⇒ 그 패치를 남기면 kustomize 가
+# `no matches for target` 로 빌드를 죽인다.
+# 🟢 0-2 자체는 다른 트랙에서 그대로 살아 있다 — 여기만 대상이 없어진 것이다.
+#
+# 🔵 **남는 것** = Gateway · params CM · PDB · EnvoyFilter(`request-body-limit`) 넷.
+#    🔴 그 EnvoyFilter 는 **지금 더 중요해졌다** — AWS WAF 의 `SizeRestrictions_BODY` 를
+#       차단이 아니라 `count` 로 켰기 때문에(`waf.tf`: 켜면 ocr 영수증 업로드가 전건 실패한다)
+#       본문 크기 제한의 실질 집행자는 이 필터 하나다.

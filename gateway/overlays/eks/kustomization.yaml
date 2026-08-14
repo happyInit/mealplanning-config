@@ -1,14 +1,52 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ── EKS 사이트 오버레이 — 🔴 **골격만이다. 아직 배포 대상이 아니다.** ────────────
-# 신설 = 0-1(2026-08-09). 0-1 이 만드는 것은 "가를 자리"이고, **내용은 Wave B 에서 채운다.**
-# 지금은 base 통과라 렌더는 성공하지만 값은 온프렘 그대로다 — 이대로 붙이면 틀린다.
+# ── EKS 사이트 오버레이 ───────────────────────────────────────────────────────
+# 신설 = 0-1(2026-08-09) 골격 → **A2 후반(2026-08-14)에 딱 한 가지가 갈렸다.**
 #
-# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE). 여기가 비어 있어도
-#    검증은 초록이다. "초록 = 이관 준비 완료"로 읽지 말 것.
+# 🔴 validate.py 는 `overlays/eks` 를 검사에서 건너뛴다(SKIP_KUSTOMIZE_RE).
+#    여기가 틀려도 검증은 초록이다 — 렌더를 직접 봐야 한다.
 #
-# 이 트랙에서 갈라야 하는 것(체크리스트 항목 번호):
-#    - hostname(app.mealbong.cloud) 은 C-4(Cloudflare 유지)라 동일. parentRef 는 ingress 트랙을 따라간다
-#    - 🔴 이 트랙은 거의 그대로 이식된다 — 갈릴 것이 있다면 ingress/ 쪽이다
+# 이 트랙은 **app ns 의 HTTPRoute 묶음**이고 거의 그대로 이식된다:
+#    - hostname(app.mealbong.cloud) 은 C-4(Cloudflare 유지)라 동일
+#    - parentRef 는 ingress 트랙을 따라간다. 🟢 `sectionName: https` 는 **한 줄도 안 고친다** —
+#      EKS 에서 리스너 프로토콜만 HTTP 로 내리고 **이름은 `https` 로 유지**했기 때문(`1-50`)
 resources:
   - ../../base
+
+patches:
+# ══ 🔴 `mp-https-redirect` 제거 — `1-38` · `1-51` ═════════════════════════════
+#
+# **이 라우트를 남기면 무한 리다이렉트가 된다.**
+#
+#   ALB 가 TLS 를 끊고 **HTTP 로** GW 에 넘긴다(C-60)
+#     → 이 라우트가 "scheme=https 로 301" 을 돌려준다
+#       → 클라이언트가 https 로 다시 온다
+#         → ALB 가 또 TLS 를 끊고 HTTP 로 넘긴다  → 처음으로  ♾
+#
+# 🔴 **종전 근거와 다르다는 점을 지우지 말 것.** `1-38` 원문은 *"NLB TCP:443 패스스루라
+#    `:80` 경로 자체를 안 쓴다 → 루프가 발생할 여지가 없다"* 였고, C-60(NLB→ALB)이 그것을
+#    **정반대로** 뒤집었다. 조치는 같지만(미부착) 이유가 *"안 써서"* 가 아니라
+#    ***"붙이면 루프라서"*** 다. 나중에 누가 "안 쓰니까 다시 붙여도 되겠네" 로 읽으면 장애가 난다.
+#
+# 🟢 **기능이 사라지는 것이 아니다** — `:80 → :443` 승격은 **ALB 리스너**가 한다
+#    (`infra/terraform/aws-platform/alb.tf` 의 `aws_lb_listener.http_redirect`, 301).
+#    앱 코드·매니페스트 변경 0.
+#
+# ⚠️ 온프렘은 그대로 둔다 — 거기선 Istio GW 가 TLS 를 끊으므로 루프가 없고 이 라우트가
+#    실제로 승격을 한다. **오버레이로 갈리는 지점**이다(C-83).
+#
+# 🔵 부수 — 이 라우트가 빠지면 Gateway 의 `http`(80) 리스너는 라우트 0개가 된다.
+#    그래도 리스너를 지우지 않는 것은 ⓐ 노드 SG 가 ALB→80 을 허용하지 않아 **도달 자체가
+#    불가능**하고 ⓑ 리스너 배열에서 원소를 인덱스로 지우는 패치는 base 가 바뀔 때 조용히
+#    엉뚱한 것을 지우기 때문이다. 얻는 것 없이 깨질 여지만 있는 정리는 하지 않는다.
+  - target:
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: mp-https-redirect
+    patch: |
+      $patch: delete
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      metadata:
+        name: mp-https-redirect
+        namespace: app
