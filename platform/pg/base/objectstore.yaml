@@ -37,7 +37,18 @@ spec:
     #    지금 라이브 = `mp-backup-ap2/pg/pg/…` (serverName 은 Cluster 이름 `pg` 로 암묵 기본값이었다).
     #    `serverName: pg` 는 그 암묵값을 **글자로 고정**한 것이므로 렌더·라이브 무변화다.
     destinationPath: s3://mp-backup-ap2/pg
-    serverName: pg
+    # 🔴 `serverName` 을 **여기 두지 않는다** (2026-08-14 · 라이브 실측으로 확정).
+    #    barman-cloud 플러그인 v0.13.0 의 검증 웹훅이 **금지**한다:
+    #      ObjectStore "mp-pg-backup" is invalid: spec.configuration.serverName:
+    #        Forbidden: use the 'serverName' plugin parameter in the Cluster resource
+    #    ⇒ 자리가 `Cluster.spec.plugins[].parameters.serverName` 로 옮겨졌다.
+    #
+    # 🟢 **온프렘 라이브는 이미 이 필드가 비어 있다** — 이 줄을 지워도 클러스터는 안 바뀐다.
+    #    (실측 `kubectl -n data get objectstore mp-pg-backup -o jsonpath={.spec.configuration.serverName}`
+    #     = 빈 값 · generation=1 · 2026-07-29 생성. 필드가 CRD 에 들어오기 전에 만들어졌다.)
+    # 🔴 **오히려 지우는 것이 온프렘을 고친다** — 이 줄 때문에 온프렘 `pg` 앱이 계속
+    #    `OutOfSync`(ObjectStore 단독)였고, 지금 sync 를 누르면 위 웹훅에 막혀 **실패한다.**
+    #    수동 sync 티어라 잠들어 있었을 뿐 잠재 지뢰였다.
     endpointURL: https://s3.ap-northeast-2.amazonaws.com
     s3Credentials:
       accessKeyId:
