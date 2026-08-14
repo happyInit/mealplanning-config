@@ -29,7 +29,8 @@ onprem:
     - 192.168.0.0/24
 
 eks:
-  # 🔴 PLACEHOLDER = AWS 계정 ID 미정(C-57 로 계정은 1개지만 ID 가 아직 안 박혔다).
+  # 🟢 계정 ID 확정(2026-08-14) = `689192361171` (C-57 로 계정 1개). 🔴 config 레포는 **비공개**라 적어도 되지만,
+  #    app 레포는 **공개**다 — 거기 `.gitlab-ci.yml` 은 계속 롤 ARN 에서 유도한다. 옮겨 적지 말 것.
   # 🔴 2026-08-13 정정 — 종전 주석 *"ECR 리포지터리는 평평하다 — `mealplanning/` 같은 프로젝트
   #    경로가 없다"* 는 **사실이 아니다.** ECR 리포 이름은 `/` 로 네임스페이스를 가질 수 있다
   #    (이름 패턴이 `(namespace/)*repo` 를 허용한다). 그래서 **Harbor 와 1:1 로 맞춘다.**
@@ -38,7 +39,7 @@ eks:
   #    🔴 ECR 리포는 자동 생성이 안 된다 — Terraform 이 **정확히 이 이름**으로 만들어야 하고,
   #      이름이 두 갈래면 컷오버 때 ImagePullBackOff 로 가장 늦게·가장 아프게 드러난다.
   #      `.gitlab-ci.yml` 의 `IMAGE_PREFIX=${ECR_REGISTRY}/mealplanning` 이 이미 이 형태다.
-  registry: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning
+  registry: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning
   # 🔴 비어 있음 = VPC CIDR 미정(사람 결정). 정해지면 여기에 노드 서브넷을 적는다.
   #    ⚠️ 온프렘 값을 그대로 복사하지 말 것 — 0-18 이 "LAN 전 포트 개방을 VPC CIDR 로
   #    기계적 치환 금지" 라고 못박은 그 부채가 여기로 새는 경로다.

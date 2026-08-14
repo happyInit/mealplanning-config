@@ -44,7 +44,7 @@ images:
 #    C-? "ECR 이관 + CI 유지" — 매니지드 OpenSearch 로 가는 게 아니라 계속 우리가 굽는다.
 #    arm64(m7g) 노드라 **멀티아키 빌드가 전제**다 — 지금 이미지는 amd64 단일일 가능성이 높다(앱 레포 소관).
   - name: 192.168.0.10/mealplanning/mp-pgsync
-    newName: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-pgsync
+    newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-pgsync
     newTag: "5b4e66c723bbee21bf41066d4736b72fa53aa994"
 
 # ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
@@ -171,4 +171,4 @@ patches:
     patch: |
       - op: replace
         path: /spec/image
-        value: PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-elasticsearch-nori:f078bbe9ecad4b09e11683aa5cbf1094a40d0ccd
+        value: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-elasticsearch-nori:f078bbe9ecad4b09e11683aa5cbf1094a40d0ccd
