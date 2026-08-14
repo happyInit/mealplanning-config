@@ -23,11 +23,35 @@
 #    securityContext 를 먼저 손봐야 하고, 그건 이관과 무관한 별건이다.
 #
 # 🔴 여기 **없는 네임스페이스**(= 이 파일이 책임지지 않는 것):
-#    · 차트/오퍼레이터가 자기 ns 를 만드는 것 — `cnpg-system` `elastic-system` `strimzi-system`
-#      `keda` `argo-rollouts` `cost` `external-secrets` `cert-manager` `istio-system` `argocd`.
-#      🔴 **이들의 PSA 라벨은 EKS 에서 아무도 안 붙인다** — 온프렘은 Ansible 이 붙였다.
-#      ArgoCD Application 의 `CreateNamespace=true` 는 ns 를 만들지만 **PSA 라벨은 안 붙인다.**
-#      ⇒ 미결(사람 결정): ⑴ 여기에 추가 / ⑵ Terraform EKS 모듈이 붙임 / ⑶ AWS 에서는 포기.
+#    · Ansible `eks_operators` 가 `create_namespace: true` 로 만드는 것 —
+#      `cert-manager` `external-secrets` `istio-system` `argocd`. 🔴 **그것들의 PSA 라벨은
+#      아직 아무도 안 붙인다**(별건 — 이 5개와 같은 방식으로 여기 추가하면 된다).
+#
+# ── ✅ 해소(2026-08-14 · 사용자 확정 ⑴) — 오퍼레이터 ns 5종을 여기서 만든다 ────
+# 🔴 **이게 A1 을 막고 있었다.** ArgoCD 로 깔리는 오퍼레이터들이 자기 ns 를 못 만들어
+#    `namespaces "cnpg-system" not found` 로 5회 재시도 후 실패했고, **오퍼레이터 파드가 0개**였다.
+#    ⚠️ `Healthy` 로 보여서 더 늦게 발견됐다 — CRD 는 **클러스터 스코프**라 ns 없이도 적용되기
+#      때문이다. 즉 *"CRD 는 있는데 컨트롤러가 없는"* 상태였다.
+#
+# 🔴 **왜 자동으로 안 생겼나** = `helm install --create-namespace` 는 만들지만
+#    **ArgoCD 는 그걸 안 한다**(차트를 렌더해서 apply 할 뿐). 그리고 cnpg 차트 자체에
+#    Namespace 오브젝트가 없다(실측: 렌더 21개 중 Namespace 0). 온프렘은 전부 Ansible 이라
+#    이 경계가 없었다 — **"Ansible 이 까는 층"과 "ArgoCD 가 까는 층"의 이음매에서 빠진 것.**
+#
+# 🟢 **⑵(Terraform)·⑶(포기) 를 안 고른 이유**
+#    ⑵ 는 클러스터 오브젝트의 소유자가 둘(Terraform·ArgoCD)이 된다.
+#    ⑶ 은 하드닝(#505)이 AWS 에서 **조용히** 사라진다 — 파드는 전부 잘 뜨므로 아무도 모른다.
+#    ⚠️ ArgoCD 의 `managedNamespaceMetadata`(= ns 를 만들며 라벨까지 붙임)도 실재하고 우리
+#      ArgoCD 3.4.5 가 지원한다. 그쪽이 응집도는 높지만, **PSA 전경을 한 파일에서 보는 것**이
+#      이 파일의 존재 이유라 여기로 모았다. 오퍼레이터를 자주 넣고 빼게 되면 재고할 것.
+#
+# 🔴 라벨 값은 **온프렘 라이브 실측 그대로**(2026-08-14 · 6/6 전부 동일):
+#      cnpg-system · elastic-system · strimzi-system · keda · argo-rollouts · cost
+#      · redis-operator-system  →  enforce=baseline / audit=restricted / warn=restricted
+#    ⚠️ 그중 **`strimzi-system`·`redis-operator-system` 은 여기 없다** — 그 오퍼레이터를
+#      EKS 에서 통째로 뺐기 때문이다(C-39 Kafka 제거 · C-14 ElastiCache). 실측으로 EKS 경로에
+#      Kafka·Redis CR 이 0건이고, `pgsync` 전용 Redis 는 오퍼레이터 CR 이 아니라 평범한
+#      Deployment 다. **CR 이 없으면 오퍼레이터는 죽은 무게다.**
 #    · 온프렘 물리에만 있는 것 — `metallb-system` `openebs` `cilium-secrets` `fb-secrets`
 #      (C-16 으로 OpenEBS 없음 · MetalLB 는 NLB 로 대체(C-26) · ESO 백엔드는 Secrets Manager(C-36)).
 #    · `mp-users` — 사람 RBAC 용(앱 레포 `k8s_team_rbac` 롤). RBAC 이관 자체가 미결이라 제외.
@@ -100,3 +124,48 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
   annotations:
     argocd.argoproj.io/sync-options: Prune=false
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-system # CloudNativePG 오퍼레이터 (C-15 — RDS/Aurora 미채택, 자체운영 유지)
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: elastic-system # ECK 오퍼레이터 (C-15 — OpenSearch 미채택)
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keda # KEDA (C-44 — SQS 기반 크롤 리파이너 스케일링)
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argo-rollouts # Argo Rollouts (C-27 — 전 서비스 Blue-Green)
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cost # kubecost — 클러스터 비용 배분
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
