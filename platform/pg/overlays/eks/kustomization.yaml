@@ -289,6 +289,38 @@ patches:
           echo "[state] 현재 보관분:"
           mc ls "m/mp-pg-onsite/foodbudget/"
 
+  # ══ A-49 ③ — `mp-pg-onsite-minio` ExternalSecret 을 EKS 에서 걷는다 (2026-08-14) ══
+  # 🔴 **발단 = 라이브 실측.** ArgoCD 에서 `pg` 앱이 Degraded 였고 원인이 이 하나였다:
+  #      mp-pg-onsite-minio  SecretSyncedError  "could not get secret data from provider"
+  #    이 ES 는 `data-secrets/PG_ONSITE_MINIO_ACCESS_KEY`(+ SECRET_KEY)를 당기는데
+  #    Secrets Manager 의 `mp/prod/data-secrets` 에는 그 두 키가 **없다**(있는 키 5개는 전부 PG·ES 암호).
+  #
+  # 🔴 **없는 게 맞다 — 넣어서 고칠 것이 아니다.** 목적지 자체가 없다:
+  #    C-18 로 **EKS 에 MinIO 가 없고**, A4 의 재작성 목적지는 `mp-pg-dump-ap2`(C-69) **S3** 다.
+  #    그리고 그 S3 접근은 **IRSA**(`mp-pg-dump` 롤 + 위 0-14c 잔여분이 붙인 SA)로 하므로
+  #    **정적 자격증명이 애초에 필요 없다.** ⇒ 이 ES 는 EKS 에서 되살아날 일이 없다.
+  #
+  # 🔴 남기면 해로운 이유는 `common/overlays/eks` 의 **1-31** 과 정확히 같다 —
+  #    영구 SecretSyncedError 라 **ns 의 ESO 상태가 상시 빨강이고, 그러면 진짜 실패가 묻힌다.**
+  #    (그 상태로 `pg` 앱도 영구 Degraded 라 ArgoCD 대시보드가 신호를 잃는다.)
+  #
+  # ⚠️ **A-49 ①(CronJob 은 재운다)과 어긋나지 않는다.** 오브젝트를 남기는 근거는
+  #    *"걷어내면 A4 에 통째로 다시 만들어야 한다"* 였는데, 이 ES 는 A4 에서 **다시 만들 물건이 아니다.**
+  # 🔴 그래서 A4 에서 suspend 를 풀 때 할 일이 하나 늘어난다 —
+  #    업로드 컨테이너의 `MINIO_*` env(이 시크릿 참조)도 **같이 걷어야 한다.** 지금은 CronJob 이
+  #    suspend 라 파드가 안 떠서 무해하지만, 순서를 바꾸면 CreateContainerConfigError 로 드러난다.
+  # 🔵 온프렘은 그대로다(C-83) — 이 패치는 eks 오버레이에만 있다.
+  - target:
+      group: external-secrets.io
+      kind: ExternalSecret
+      name: mp-pg-onsite-minio
+    patch: |
+      $patch: delete
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: mp-pg-onsite-minio
+
   # ── 0-13 서비스별 PG 롤 — **AWS PG 는 처음부터 갈라서 짓는다** (2026-08-13) ──
   # 설계 정본 = 앱 레포 `docs/prd/schema-roles.md`(+ 멱등 DDL `schema-roles.sql`, #566).
   #
@@ -417,6 +449,9 @@ patches:
 #    🟢 신원 문제도 닫혔다 — 전용 SA + IRSA 는 위 0-14c 잔여분 패치가 붙였다.
 #      (`platform/policies-data/overlays/eks/netpol-pg-onsite-s3.yaml` 이 STS 를 열어 둔 것과 짝이 맞는다.)
 #    🔴 **남은 것은 A4 의 "suspend 해제"** — 체크리스트 `2-8`·`1-20` 에 명시돼 있어야 한다.
+#    ⟳ **2026-08-14 보강(A-49 ③)** — 자격증명 쪽 `mp-pg-onsite-minio` ES 는 **eks 에서 걷었다.**
+#      A4 목적지가 S3 + IRSA 라 정적 키가 필요 없어 *다시 만들 물건이 아니기* 때문이다(CronJob 과 다르다).
+#      🔴 그래서 A4 의 "suspend 해제" 는 **두 줄짜리 일이 됐다** — 업로드 컨테이너의 `MINIO_*` env 제거가 짝이다.
 #  · 🔴 **`bootstrap.pg_basebackup` 이 죽은 VM 을 가리킨다** — base cluster.yaml 의
 #    `externalClusters: vm-pg → 192.168.0.8` 은 P4(2026-07-31)에서 파괴된 호스트다.
 #    eks 렌더가 이걸 그대로 들고 있어 **AWS 클러스터가 부트스트랩 자체를 못 한다.**
