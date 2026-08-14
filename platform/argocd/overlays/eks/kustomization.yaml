@@ -50,6 +50,8 @@ resources:
   # 0-3 — 클러스터/ns 베이스라인(PriorityClass 3 · Namespace 5 PSA · RQ 2 · LR 3).
   # 🔴 sync-wave -10. AppProject 선행 2건이 있다 — 그 파일 머리말 참조.
   - cluster-baseline.yaml
+  # Operations AI 대시보드 EC2용 Loki·Tempo 조회 NodePort (신설, 2026-08-14 · C-84·C-85).
+  - mp-observability-nodeport.yaml
 
 # ── 0-9 레지스트리 분기 — rollouts 플러그인 이미지 (2026-08-10) ────────────────
 # 🔴 **`images:` 트랜스포머로는 못 잡는다.** 이 이미지는 컨테이너 spec 이 아니라 Application 의

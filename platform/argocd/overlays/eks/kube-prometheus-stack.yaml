@@ -91,6 +91,12 @@ spec:
 
         # ── Prometheus ────────────────────────────────────────────────────────
         prometheus:
+          # 🔴 조회(query)용 NodePort — Operations AI 대시보드 EC2 전용(C-84·C-85, 2026-08-14).
+          #    이 차트는 nodePort 고정 지정을 지원한다(prometheus/service.yaml 템플릿 확인,
+          #    Loki/Tempo와 달리 랜덤 배정 문제가 없다). kubecost(30090)와 안 겹치는 다음 번호.
+          service:
+            type: NodePort
+            nodePort: 30091
           prometheusSpec:
             # 🔴 0-3b — **AWS 쪽에만 붙인다.** 온프렘 Prometheus 에는 붙이지 않는다:
             #    ① `external_labels` 는 로컬 TSDB 에 저장되지 않아 **소급이 애초에 불가능**하다.

@@ -1,0 +1,41 @@
+# mp-observability-nodeport — EKS 사이트 전용 child Application (신설, 2026-08-14).
+#
+# 담는 것 = Loki·Tempo 조회(query)용 NodePort Service 2개(mp-loki-nodeport·mp-tempo-nodeport).
+# 대시보드 EC2(Operations AI, C-84)가 이 NodePort로 로그·트레이스를 조회한다(C-85 =
+# 로드밸런서 0개 원칙과 같은 방식 — kubecost·kube-prometheus-stack이 이미 이 패턴).
+#
+# 🔴 왜 별도 Application인가 — `loki`·`tempo` Application은 Helm 차트 소스라(repoURL이
+# grafana.github.io/helm-charts) 차트가 렌더링하는 것 외의 임의 리소스를 못 담는다.
+# 그리고 grafana/loki·tempo 차트는 애초에 nodePort 고정 지정 필드가 없다(각 Service 파일
+# 머리말 참고). 그래서 같은 파드를 가리키는 별도 Service를 Kustomize 소스로 얹는다.
+#
+# 트랙 본문 = `platform/observability-nodeport/overlays/eks/`.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mp-observability-nodeport
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: git@github.com:happyInit/mealplanning-config.git
+    targetRevision: main
+    path: platform/observability-nodeport/overlays/eks
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

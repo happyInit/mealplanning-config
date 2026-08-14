@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ── EKS 전용 — 온프렘에는 이 대역이 없다(대시보드 EC2 자체가 AWS 전용, C-84) ──────
+# base가 없는 이유는 kube-prometheus-stack.yaml·metrics-server.yaml과 같다: 온프렘에
+# 대응물이 없는 "EKS에만 있는 child"라 C-83(온프렘 형상 동결·AWS는 덧셈만)에 따라
+# 처음부터 eks 오버레이에만 둔다.
+resources:
+  - service-loki-nodeport.yaml
+  - service-tempo-nodeport.yaml

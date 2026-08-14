@@ -1,0 +1,28 @@
+# Loki 조회(query)용 NodePort — Operations AI 대시보드 EC2 전용.
+#
+# 🔴 왜 Helm 차트가 만드는 `loki` Service(ClusterIP)를 NodePort로 안 바꾸나:
+#    grafana/loki 차트(production/helm/loki/templates/single-binary/service.yaml)는
+#    `type`만 받고 `nodePort` 고정 지정 필드가 없다. NodePort로 바꾸면 포트가 랜덤 배정되고,
+#    그 값을 다시 알아내 손으로 넣어야 하는데 이건 GitOps 원칙과 안 맞는다
+#    (selfHeal: true 라서 kubectl patch로 임의로 고쳐도 다음 sync에 되돌아간다).
+# 🔴 그래서 기존 Service는 그대로 두고, **같은 파드를 가리키는 Service를 하나 더** 만든다.
+#    K8s는 같은 셀렉터를 여러 Service가 가리키는 걸 허용한다 — 표준적인 우회 방법이다.
+# 🔴 selector는 라이브 `loki` Service에서 실측(2026-08-14, kubectl get svc loki -o jsonpath)
+#    그대로 가져왔다 — 차트 헬퍼 템플릿을 추측하지 않았다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mp-loki-nodeport
+  namespace: observability
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/component: single-binary
+    app.kubernetes.io/instance: loki
+    app.kubernetes.io/name: loki
+  ports:
+    - name: http-metrics
+      port: 3100
+      targetPort: http-metrics
+      protocol: TCP
+      nodePort: 30092 # kubecost(30090)·prometheus(30091)와 안 겹치는 다음 번호
