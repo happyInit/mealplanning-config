@@ -433,3 +433,48 @@ patches:
       - op: replace
         path: /spec/source/path
         value: platform/rollouts/overlays/eks
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CPU request 정직화 — kubecost (2026-08-14 실측)
+  # ══════════════════════════════════════════════════════════════════════════
+  # 🔴 **실측**: 노드 2대 allocatable 7,840m 중 **request 로 7,380m(94%)** 를 잡고 있는데
+  #    **실사용은 506m(6.5%)** 이었다. 14.6배다. 파드를 더 못 올리는데 CPU 는 논다.
+  #
+  # 🔴 **request 는 상한이 아니다** — 상한은 `limits` 다. 여기서 줄이는 것은
+  #    ① 스케줄러 장부의 자리 ② 경합 시 몫, 둘뿐이고 **쓸 수 있는 양은 안 줄어든다.**
+  #    finopsagent 는 차트 기본 `limits.cpu: 2` 가 그대로 살아 있다.
+  #
+  # 🔴 **온프렘은 건드리지 않는다(C-83)** — base 를 고치지 않고 여기서만 바꾸는 이유다.
+  #    온프렘은 관측 창이 길고 값의 내력이 있다. EKS 는 어제 만들어졌다.
+  #
+  # ⚠️ **app·data 는 손대지 않았다.** 같은 실측에서 app 이 2,550m 예약 / 80m 사용(32배)으로
+  #    가장 커 보이지만 **ALB 24시간 요청 수가 251건**이다(실측). 그 80m 은 "적정"이 아니라
+  #    **무부하**다. 여기서 줄이면 A3 컷오버에 트래픽이 들어오는 순간 전부 모자라고,
+  #    HPA(`Utilization` = 사용량 ÷ request)까지 함께 어긋난다.
+  #    ⇒ app·data 재산정은 **A3 이후**, 트래픽이 있는 상태에서 한다.
+  - target: {group: argoproj.io, kind: Application, name: kubecost}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: kubecost, namespace: argocd}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              finopsagent:
+                resources:
+                  requests:
+                    cpu: 100m
+
+  # 🔴 **반대 방향 — aggregator 는 올린다.** request 100m 인데 **실측 최대 147m** 로
+  #    자기 예약을 넘겼다(관측 5시간). 경합이 생기면 가장 먼저 throttle 되는 파드가 된다.
+  #    "전부 줄인다"가 아니라 **실측에 맞춘다**가 이 변경의 규칙이다.
+  # ⚠️ `op: test` 로 base 값을 고정한다 — base 가 바뀌면 조용히 어긋나는 대신 렌더가 죽는다.
+  - target: {group: argoproj.io, kind: Application, name: kubecost}
+    patch: |-
+      - op: test
+        path: /spec/source/helm/valuesObject/aggregator/resources/requests/cpu
+        value: 100m
+      - op: replace
+        path: /spec/source/helm/valuesObject/aggregator/resources/requests/cpu
+        value: 200m
