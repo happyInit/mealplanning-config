@@ -49,18 +49,18 @@ patches:
       kind: Application
       metadata: {name: mp-operations, namespace: argocd}
 
-  # 🔴 진입점 3종(`gateway` · `gateway-internal` · `mp-ingress`) — **셋 다 "골격"** 이다
-  #    (각 eks 오버레이 머리말이 그렇게 적고 있다). 진입은 C-60 으로 **ALB** 인데 그 배선이
+  # 🔴 진입점 2종(`gateway-internal` · `mp-ingress`) — 진입은 C-60 으로 **ALB** 인데 그 배선이
   #    아직 없다 — 실측(2026-08-14): ALB 0개 · AWS Load Balancer Controller 미설치 ·
   #    Terraform 에 `aws_lb` 선언 0건. ⇒ **A2-후반**에서 켠다.
   #    🟢 그전까지 앱 검증은 `kubectl port-forward` 로 한다 — C-85 가 내부 도구에 대해 확정한
   #       방식 그대로이고, 외부 유입이 없어도 스모크는 된다.
-  - target: {group: argoproj.io, kind: Application, name: gateway}
-    patch: |-
-      $patch: delete
-      apiVersion: argoproj.io/v1alpha1
-      kind: Application
-      metadata: {name: gateway, namespace: argocd}
+  #
+  # ⚠️ **정정(2026-08-14)** — 이 블록은 원래 `gateway` 까지 "진입점 3종"으로 묶어 지웠다. **틀렸다.**
+  #    실측: `gateway/base/kustomization.yaml` 의 resources 는 **`httproutes.yaml` 하나뿐**이고
+  #    그 파일에 metallb·loadBalancer·`192.168.*`·annotation 이 **0건**이다. 즉 이 트랙은
+  #    **app ns 의 HTTPRoute 묶음일 뿐**이고, "MetalLB `.14` 애너테이션이 샌다"는 경고는
+  #    `mp-ingress`(Gateway 실물이 있는 곳)에 해당하지 `gateway` 에 해당하지 않는다.
+  #    ⇒ 아래 ②에서 `gateway` 를 **되살린다**. 근거는 다음 항.
   - target: {group: argoproj.io, kind: Application, name: gateway-internal}
     patch: |-
       $patch: delete
@@ -111,9 +111,28 @@ patches:
       kind: Application
       metadata: {name: mp-policies-pipeline, namespace: argocd}
 
-  # ── ② 남은 13개의 source.path 를 eks 오버레이로 ─────────────────────────────
+  # ── ② 남은 14개의 source.path 를 eks 오버레이로 ─────────────────────────────
   # 🔴 `op: replace` 를 쓴다 — 대상 필드가 없으면 **렌더가 죽어서** 오타가 즉시 드러난다.
   #    `add` 는 조용히 통과할 수 있다.
+  #
+  # 🔴 **`gateway` 가 왜 여기 있나 (2026-08-14 — A2 를 막던 것)**
+  #    `mp-account`·`mp-recipe` 는 Rollout(카나리, ADR-0001)이고 `trafficRouting.plugins`
+  #    `argoproj-labs/gatewayAPI` 가 **HTTPRoute 를 이름으로 요구**한다(`mp-account-route`).
+  #    그게 없으면 Rollout reconcile 이 **RS 를 키우기 전에 중단**된다 — 실측 컨트롤러 로그:
+  #      roCtx.reconcile err failed to remove managed routes via plugin:
+  #        httproutes.gateway.networking.k8s.io "mp-account-route" not found
+  #      rollout syncHandler queue retries: 55
+  #    증상은 "Rollout Progressing · replicas 0 · 이벤트 없음" 이라 원인을 짚기 어렵다.
+  #    🔵 `parentRefs: mp-gw-public` 은 `mp-ingress` 소관이라 C-60 전까지 **부착되지 않는다.**
+  #       그래도 무해하다 — 플러그인이 필요한 것은 **HTTPRoute 객체의 존재**이고, 라우팅은
+  #       애초에 이 단계에서 안 쓴다(검증은 port-forward). C-60 이 오면 이미 맞는 상태다.
+  #    🔵 첫 배포는 카나리 단계를 타지 않는다(초기 Rollout 은 곧장 stable). 즉 라우팅이 안 붙은
+  #       상태로 "카나리가 성공한 척" 하는 일은 A2 에서 발생하지 않는다.
+  - target: {group: argoproj.io, kind: Application, name: gateway}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: gateway/overlays/eks
   - target: {group: argoproj.io, kind: Application, name: app-common}
     patch: |-
       - op: replace
