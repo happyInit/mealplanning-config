@@ -262,3 +262,42 @@ patches:
       kind: Application
       metadata: {name: kafka, namespace: argocd}
       $patch: delete
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 오퍼레이터 2종도 함께 뺀다 — **CR 이 없으면 오퍼레이터는 죽은 무게다** (2026-08-14)
+# ══════════════════════════════════════════════════════════════════════════════
+# 위에서 `redis`·`kafka` CR 앱을 뺐으니 그것들을 조종할 컨트롤러도 필요 없다.
+# 🔴 실측으로 확인하고 뺀다 — EKS 경로(`pipelines`·`pgsync`·`es` 포함) 어디에도
+#    `kafka.strimzi.io` · `redis.redis.opstreelabs.in` CR 이 **0건**이다.
+# 🟢 `pgsync` 전용 Redis 는 **오퍼레이터 CR 이 아니라 평범한 Deployment** 다
+#    (`platform/pgsync/base/redis-pgsync.yaml` = `apps/v1 Deployment` + Service). 그건 그대로 산다.
+# ⚠️ 남기면 비용이 아니라 **혼선**이 문제다 — 컨트롤러가 돌고 있으면 "Kafka 를 쓰나?" 로 읽힌다.
+#    (그리고 `strimzi-system`·`redis-operator-system` 네임스페이스를 만들 이유도 생긴다.)
+  - target: {group: argoproj.io, kind: Application, name: strimzi-operator}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: strimzi-operator, namespace: argocd}
+      $patch: delete
+
+  - target: {group: argoproj.io, kind: Application, name: redis-operator}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: redis-operator, namespace: argocd}
+      $patch: delete
+
+# ── rollouts-pullsecret → eks 오버레이 ────────────────────────────────────────
+# 🔴 **이 PR 이 유발하는 것이라 같이 고친다.** `argo-rollouts` ns 를 만드는 순간 이 앱이
+#    되살아나는데, 온프렘 경로면 `mp-harbor-pull` ExternalSecret 을 EKS 에 만들고
+#    Secrets Manager 에서 `fb-secrets/harbor-pull` 을 찾다가 영원히 NotReady 가 된다.
+# 🟢 `platform/rollouts/overlays/eks` 가 이미 그 ExternalSecret 을 제거하도록 준비돼 있다
+#    (EKS 는 ECR + 노드 롤이라 dockerconfigjson 이 불요하다).
+  - target: {group: argoproj.io, kind: Application, name: rollouts-pullsecret}
+    patch: |-
+      - op: test
+        path: /spec/source/path
+        value: platform/rollouts/overlays/onprem
+      - op: replace
+        path: /spec/source/path
+        value: platform/rollouts/overlays/eks
