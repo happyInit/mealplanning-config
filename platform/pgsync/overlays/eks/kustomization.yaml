@@ -25,7 +25,7 @@ images:
 # 🔴 mp-pgsync 는 **CI 로 우리가 빌드하는 커스텀 이미지**다(3rd-party 아님) — ECR 리포지터리가 필요하다.
   - name: 192.168.0.10/mealplanning/mp-pgsync
     newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-pgsync
-    newTag: "5b4e66c723bbee21bf41066d4736b72fa53aa994"
+    newTag: "4a7fc5bc62ffc826c6adde462bee561292ee8da8"
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
