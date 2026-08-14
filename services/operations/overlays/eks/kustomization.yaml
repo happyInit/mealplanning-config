@@ -8,7 +8,7 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-operations-service
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-operations-service
-  newTag: bc7efa8b9ac9ebf7b4e2e674b4d7f833dbfcc8da
+  newTag: 6f769ed9ef237df7d14b80760095c7426088f0d0
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
