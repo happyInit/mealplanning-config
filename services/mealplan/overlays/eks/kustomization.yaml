@@ -59,6 +59,33 @@ images:
 #    주석을 밖으로 한 벌 더 복제하면서 원본은 남겨서, CD 빌드마다 1줄씩 무한히 늘어난다
 #    (v5.4.3 실측 1→2→3→4). `patches:` 위 최상위 주석만 반복 edit 에 불변이다.
 #   tmp → 64Mi — readOnlyRootFilesystem 스크래치 · 관측 4KiB
+
+# ── 클릭스트림 목적지 = pg — EKS 전용 (C-88 · C-44) ──────────────────────────
+# 🔴 **지금 EKS 는 담기(ADD_CART) 이벤트를 조용히 버리고 있다.**
+#    `EVENT_SINK` 미설정 = 코드 기본값 `kafka`(services/mealplan/app/events.py:113)인데
+#    **EKS 에는 Kafka 가 없다**(C-44 · 실측 2026-08-14: data ns 에 Kafka CR·파드 0). 그래서
+#    `emit_add_cart` 의 produce 가 예외로 떨어지고 `_count("failure")` 뒤 그냥 리턴한다 —
+#    담기 자체는 무손상이라 **증상이 앱 어디에도 안 나타난다.**
+# 🔴 그리고 이건 위 IMPRESSION_LOG_ENABLED 와 **한 짝**이다. 노출(recipe_impression)만
+#    쌓이고 담기(user_event)가 없으면 조인할 상대가 없어 랭킹 학습 라벨이 서지 않는다.
+#    반쪽만 켠 상태가 제일 나쁘다 — 데이터는 쌓이는데 쓸 수가 없다.
+#
+# `pg` 로 두면 앱이 `activity.user_event` 에 직접 INSERT 한다(savepoint + event_id UNIQUE
+# ON CONFLICT DO NOTHING 이라 재시도·중복이 무해하고, 실패해도 장바구니 트랜잭션은 보존된다).
+#
+# 선행 조건은 **이미 충족됐다** — svc_mealplan 의 `activity.user_event` INSERT 와
+# `user_event_id_seq` USAGE. 앱 레포 #685 로 고쳐 2026-08-14 라이브 적용까지 끝냈다
+# (bigserial 은 테이블 GRANT 를 안 따라가서, 없으면 INSERT 가 조용히 0건이 된다).
+#
+# 🔴 **base 가 아니라 여기** 인 이유 = 온프렘은 Kafka 경로가 정상 가동 중이다(토픽
+#    events.user.activity + 컨슈머 mp-user-event-sink 가 KEDA scale-to-zero 로 대기).
+#    base 를 건드리면 온프렘 목적지가 바뀐다 — C-72·C-83 위반이고, 선택자가 하나뿐이라
+#    (events.py 주석: dual-write 가 구조적으로 불가능) **Kafka 경로가 즉시 끊긴다.**
+# 🔴 `op: add` 다(`replace` 아님) — base 에 `EVENT_SINK` 키가 **없다.** replace 는 없는
+#    경로에서 렌더가 죽는다. 반대로 base 가 나중에 이 키를 갖게 되면 add 가 조용히 덮는데,
+#    그때는 위 IMPRESSION_LOG_ENABLED 의 `replace` 가 같은 패치에서 먼저 깨져 드러난다.
+# ⚠️ envFrom/ConfigMap 은 **파드 기동 시점 주입**이라 sync 만으로는 안 먹는다 —
+#    `kubectl rollout restart deploy/mp-mealplan -n app` 가 반드시 따라와야 한다.
 patches:
 - patch: |-
     - op: replace
@@ -135,6 +162,9 @@ patches:
     - op: replace
       path: /data/IMPRESSION_LOG_ENABLED
       value: "true"
+    - op: add
+      path: /data/EVENT_SINK
+      value: "pg"
   target:
     kind: ConfigMap
     name: mealplan-config
