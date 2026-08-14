@@ -75,3 +75,30 @@ patches:
       - op: add
         path: /spec/template/spec/volumes/3/emptyDir/sizeLimit
         value: 32Mi
+
+# ══ 1-31 Harbor pull secret 제거 (2026-08-14) ══════════════════════════════════
+# 🔴 **발단 = 라이브 실측.** ArgoCD 에서 `pgsync` 앱이 Degraded 였고, pgsync 워크로드가 정상으로
+#    돌아온 뒤에도 남은 사유가 이것 하나였다:
+#      data/mp-harbor-pull  SecretSyncedError  "error processing spec.data[0] (key: harbor-pull),
+#                                               err: Secret does not exist"
+#
+# 근거는 `common/overlays/eks` 의 같은 이름 패치와 **동일하다** — 새 판단이 아니라 누락분 정렬이다:
+#   ECR 은 **kubelet 이 노드 인스턴스 롤로** 당긴다(IRSA 는 파드 전용이라 이미지 풀에 관여하지 않는다).
+#   ⇒ dockerconfigjson 이 불요하고, 이 ES 가 당기는 온프렘 `harbor-pull`(robot 계정) 키는
+#     EKS 스토어(Secrets Manager, C-36)에 **없다** ⇒ 영구 SecretSyncedError.
+# 🔴 남기면 해로운 이유 = ns 의 ESO 상태가 상시 빨강이라 **진짜 실패가 묻힌다.**
+#
+# 🟢 실측으로 확인한 것 — 이 시크릿이 없는 지금도 `mp-pgsync`·`mp-redis-pgsync` 는 ECR 이미지를
+#    정상으로 당겨 돌고 있다(`Pulled ... already present on machine`). 렌더된 두 Deployment 에
+#    `imagePullSecrets` 자체가 없어 **끊어질 참조도 없다.**
+# 🔵 온프렘은 그대로다(C-83) — 이 패치는 eks 오버레이에만 있다.
+  - target:
+      group: external-secrets.io
+      kind: ExternalSecret
+      name: mp-harbor-pull
+    patch: |
+      $patch: delete
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: mp-harbor-pull
