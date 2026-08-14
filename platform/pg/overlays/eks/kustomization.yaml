@@ -232,26 +232,17 @@ patches:
               spec:
                 serviceAccountName: mp-pg-onsite-dump
 
-  # ══ A-49 ① — 온사이트 덤프 CronJob 을 EKS 에서 `suspend` (미결 ㉖ 집행) ═══════
-  # 2026-08-13 사용자 확정. **걷어내지 않고 재우는** 이유는 양쪽 실패를 다 피하기 때문이다:
-  #   · 걷어내면 → C-69 가 2트랙 유지를 확정했으므로 **A4 에 통째로 다시 만들어야** 한다.
-  #   · 그대로 두면 → 목적지가 `minio.observability.svc` 인데 C-18 로 **EKS 에 MinIO 가 없다**.
-  #                   매일 04:00 KST 에 실패하고 **매일 알림이 울린다.**
-  # `suspend: true` 는 오브젝트를 남긴 채 스케줄만 멈춘다 ⇒ A4 에서 **이 한 줄만 지우면** 켜진다.
-  #
-  # 🔴 **A4 체크리스트(`2-8`·`1-20`)에 "suspend 해제" 가 반드시 적혀 있어야 한다.**
-  #    안 적으면 이건 *조용히 안 도는 백업*이 된다 — 오브젝트가 존재하고 ArgoCD 도 Synced 라
-  #    대시보드 어디에서도 이상이 안 보인다. 가장 나쁜 실패 형태다.
-  # 🔵 온프렘은 그대로 돈다(C-83) — 이 패치는 eks 오버레이에만 있다.
-  - target: {group: batch, kind: CronJob, name: mp-pg-onsite-dump}
-    patch: |-
-      apiVersion: batch/v1
-      kind: CronJob
-      metadata: {name: mp-pg-onsite-dump, namespace: data}
-      spec:
-        suspend: true
+  # ══ ✅ A-49 ① 해제 — A4 안정화 (2026-08-14) ═══════════════════════════════════
+  # 종전(2026-08-13)에는 `suspend: true` 패치가 여기 있었다. 목적지가
+  # `minio.observability.svc` 인데 C-18 로 **EKS 에 MinIO 가 없어** 매일 04:00 KST 에
+  # 실패하고 매일 알림이 울리기 때문이었다. 그 주석은 *"A4 에서 이 한 줄만 지우면 켜진다"* 고
+  # 적었고, **여기가 그 A4 다.** 지운 근거는 아래 ② 가 목적지를 S3 로 바꾼 것이다 —
+  # 🔴 **순서가 중요하다.** ②(목적지 재작성) 없이 이 줄만 지우면 MinIO 를 향해 매일 실패한다.
+  #    반대로 ② 만 하고 이 줄을 남기면 *조용히 안 도는 백업*이 된다(오브젝트는 있고 ArgoCD 도
+  #    Synced 라 대시보드 어디에도 이상이 안 보인다 — 가장 나쁜 실패 형태다). **한 커밋으로 묶는다.**
+  # 🔵 온프렘은 애초에 이 패치의 대상이 아니었다(eks 오버레이 전용) — 계속 MinIO 로 돈다(C-83).
 
-  # ══ A-49 ② — 업로드 컨테이너에서 `mc rm --older-than 7d` 를 걷는다 (미결 ㉕ 집행) ══
+  # ══ A-49 ② → A4 재작성 — 업로드 목적지 MinIO → S3 (2026-08-14) ═══════════════
   # 2026-08-13 사용자 확정 = 논리 덤프 보존은 **C-79 의 190일 · 라이프사이클이 지운다.**
   #
   # 🔴 **이게 결정의 나머지 절반이다.** 세 조합 중 둘이 틀린다:
@@ -262,32 +253,69 @@ patches:
   #    ⇒ 그래서 한 PR 로 묶었다. 라이프사이클 쪽(`mp-pg-dump-ap2` · Std → IA 30-90d →
   #      Glacier IR 90-180d → 만료 190일)은 **A4 에서 버킷과 함께 생긴다** — 지금은 버킷 자체가 없다.
   #
-  # ⚠️ 지금은 ① 때문에 이 컨테이너가 아예 안 돈다. 그래도 **지금 걷는다** — A4 에서 suspend 를
-  #    풀 때 이 줄이 살아 있으면, 그 순간부터 7일에 지워지는데 **아무도 그걸 다시 보지 않는다.**
+  # ⚠️ 종전(2026-08-13)에는 `mc rm` 만 걷고 목적지는 MinIO 그대로였다 — ① 로 재워 뒀으니
+  #    안 돌아서 무해했다. **이제 ① 을 풀었으므로 목적지도 같이 바꾼다.**
   # 🔴 그래서 파생되는 것 하나 — **A-47 의 `mp-pg-dump` IAM 롤에서 `s3:DeleteObject` 가 불요**다
-  #    (보존을 S3 라이프사이클이 맡으므로). 최소권한에서 빼야 한다.
-  # 🔵 온프렘은 7일 유지(C-83) ⇒ **두 사이트 보존 기간이 의도적으로 다르다.**
+  #    (보존을 S3 라이프사이클이 맡으므로). 이미 그렇게 돼 있다(앱 레포 `iam_irsa.tf` 실측).
+  # 🔵 온프렘은 7일 유지 · MinIO 유지(C-83) ⇒ **두 사이트가 보존도 저장소도 의도적으로 다르다.**
+  #
+  # ── 바꾸는 것 3가지와 각각의 근거 ──────────────────────────────────────────────
+  # ⓐ **이미지 `minio/mc` → `aws-cli`** — `mc` 는 S3 를 정적 액세스키로만 붙는다. 우리는
+  #    IRSA(웹 아이덴티티)라 **줄 키가 없다.** 키를 만들어 주면 A-49 ③ 이 ES 를 걷은 이유
+  #    (*"IRSA 라 정적 자격증명이 애초에 필요 없다"*)를 정면으로 뒤집는 셈이 된다.
+  #    🔵 다이제스트 핀 = `2.36.23`. **멀티아치 인덱스**라 Graviton 노드에서 arm64 가 뽑힌다
+  #      (실측: manifests 에 amd64·arm64 둘 다. C-29 로 노드가 `m7g` 라 이게 전제다).
+  # ⓑ **env 통째 교체** — `MINIO_ACCESS_KEY`·`MINIO_SECRET_KEY` 가 A-49 ③ 에서 **걷어낸**
+  #    시크릿 `mp-pg-onsite-minio` 를 참조한다. ① 을 푸는 순간 그 참조가 살아나
+  #    **CreateContainerConfigError** 로 파드가 아예 안 뜬다. `MC_CONFIG_DIR` 도 함께 소멸.
+  #    🔴 `HOME=/work` 를 주는 이유 = base 가 `readOnlyRootFilesystem: true` 라 aws-cli 가
+  #      설정·캐시를 쓰려 할 때 갈 곳이 필요하다. `/work` 는 emptyDir 이라 쓰기 가능하다.
+  #    🟢 자격증명 env 는 **안 적는다** — EKS Pod Identity 웹훅이 SA 의 `role-arn` 어노테이션을
+  #      보고 `AWS_ROLE_ARN`·`AWS_WEB_IDENTITY_TOKEN_FILE` 을 admission 때 주입한다.
+  # ⓒ **목적지 = `s3://mp-pg-dump-ap2/aws/...`** (C-69 · 버킷은 A4 Terraform 이 만든다).
+  #    🔴 프리픽스 `aws/` 는 취향이 아니라 **IAM 제약**이다 — A-47 정책이 PutObject 를
+  #      `arn:aws:s3:::mp-pg-dump-ap2/aws/*` 로 한정한다. 다른 경로에 쓰면 403 이다.
+  #    🔴 검증에 `head-object` 를 쓰지 않는다 — 그 정책에 **`s3:GetObject` 가 없다**(넣을 이유도
+  #      없다. 이 잡은 쓰기 전용이다). 대신 `list-objects-v2` 로 확인한다 — `s3:ListBucket` 은
+  #      `s3:prefix` 가 `aws/*` 일 때 허용돼 있어 통과한다.
   #
   # 🔴 `op: test` 로 컨테이너 신원을 먼저 확인한다 — 인덱스 기반 JSON6902 는 base 의 컨테이너
-  #    순서가 바뀌면 **엉뚱한 컨테이너의 args 를 통째로 갈아치운다.** test 가 깨지면 렌더가 죽는다.
+  #    순서가 바뀌면 **엉뚱한 컨테이너를 통째로 갈아치운다.** test 가 깨지면 렌더가 죽는다.
   - target: {group: batch, kind: CronJob, name: mp-pg-onsite-dump}
     patch: |-
       - op: test
         path: /spec/jobTemplate/spec/template/spec/containers/0/name
         value: upload
       - op: replace
+        path: /spec/jobTemplate/spec/template/spec/containers/0/image
+        value: public.ecr.aws/aws-cli/aws-cli@sha256:c7b16ed4f08f8a61634d9c219dd2388cf61c5425f3c096b5a5b235521d7ea5cc
+      - op: replace
+        path: /spec/jobTemplate/spec/template/spec/containers/0/env
+        value:
+          - name: TZ
+            value: Asia/Seoul
+          - name: HOME
+            value: /work
+          - name: AWS_REGION
+            value: ap-northeast-2
+          - name: DUMP_BUCKET
+            value: mp-pg-dump-ap2
+      - op: replace
         path: /spec/jobTemplate/spec/template/spec/containers/0/args/0
         value: |
           set -eu
           OUT=$(cat /work/latest-path)
-          mc alias set m "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
-          mc cp "$OUT" "m/mp-pg-onsite/foodbudget/"
-          echo "[upload] 완료 — 원격 확인:"
-          mc stat "m/mp-pg-onsite/foodbudget/$(basename "$OUT")"
+          KEY="aws/foodbudget/$(basename "$OUT")"
+          echo "[upload] s3://${DUMP_BUCKET}/${KEY}"
+          aws s3 cp "$OUT" "s3://${DUMP_BUCKET}/${KEY}" --only-show-errors
+          echo "[verify] 원격 크기(byte):"
+          aws s3api list-objects-v2 --bucket "$DUMP_BUCKET" --prefix "$KEY" \
+            --query 'Contents[0].Size' --output text
           # 🔴 보존 정리 없음 — AWS 쪽 보존은 S3 라이프사이클(C-79 · 190일)이 맡는다.
-          #    여기서 지우면 계층 전환이 발동 전에 객체가 사라진다(A-49 ②).
-          echo "[state] 현재 보관분:"
-          mc ls "m/mp-pg-onsite/foodbudget/"
+          #    여기서 지우면 계층 전환이 발동 전에 객체가 사라진다. IAM 에도 Delete 권한이 없다.
+          echo "[state] 최근 보관분:"
+          aws s3api list-objects-v2 --bucket "$DUMP_BUCKET" --prefix "aws/foodbudget/" \
+            --query 'reverse(sort_by(Contents,&LastModified))[0:5].[Key,Size]' --output text
 
   # ══ A-49 ③ — `mp-pg-onsite-minio` ExternalSecret 을 EKS 에서 걷는다 (2026-08-14) ══
   # 🔴 **발단 = 라이브 실측.** ArgoCD 에서 `pg` 앱이 Degraded 였고 원인이 이 하나였다:
