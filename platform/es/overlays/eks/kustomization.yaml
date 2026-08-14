@@ -176,3 +176,26 @@ patches:
       - op: replace
         path: /spec/image
         value: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-elasticsearch-nori:4a7fc5bc62ffc826c6adde462bee561292ee8da8
+
+# 🔴 **빈 클러스터에서만 터지는 훅 교착** — 2026-08-14 A1 실측.
+#    `mp-elasticsearch-exporter-bootstrap` Job 이 `sync-wave: -1`(= ES CR 보다 **먼저**)인데
+#    `es-es-elastic-user` 시크릿을 env 로 요구한다. 그 시크릿은 **ECK 가 ES CR 을 받은 뒤에야**
+#    만든다 ⇒ Job 이 `CreateContainerConfigError` 로 영원히 못 뜨고, Sync 훅이 안 끝나서
+#    **wave 0 의 ES CR 자체가 적용되지 않는다.** 즉 "ES 가 없어서 실패하는 Job 이 ES 생성을 막는다".
+#    🔴 **온프렘에서 안 드러난 이유 = ES 가 이미 있었다**(웹훅·시크릿이 선재). 같은 결함이 온프렘에도
+#      잠복해 있고 **DR 재구축(C-3) 때 처음 터진다** — 다만 C-83 동결이라 여기서는 안 건드린다.
+#    ⇒ wave 를 **2** 로 내린다. `mp-es-users-bootstrap`(wave 1)이 ES 응답을 **bounded retry** 로
+#      기다리므로, 그 뒤에 두면 "ES 준비 완료" 보장을 그대로 승계한다.
+#      🔴 이 Job 자신에겐 재시도 루프가 없다 — wave 1 과 **같은 wave 에 두면 병렬로 떠서** 진다.
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+      name: mp-elasticsearch-exporter-bootstrap
+    patch: |
+      - op: test
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-1"
+      - op: replace
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "2"
