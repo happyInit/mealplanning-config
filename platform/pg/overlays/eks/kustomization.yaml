@@ -217,11 +217,9 @@ patches:
   # 🔴 **이게 없으면 이상한 상태가 된다** — `platform/policies-data/overlays/eks/netpol-pg-onsite-s3.yaml`
   #    이 이미 STS 를 열어 **IRSA 를 전제**하는데 붙일 신원이 없었다(네트워크는 열렸는데 주체가 없음).
   # ⚠️ **나머지 반쪽(업로드 컨테이너 MinIO → S3 재작성)은 여기서 안 한다** — C-78 의 **A4** 이고
-  #    체크리스트 `2-8`·`1-20` 소관이다. 게다가 보존 기간이 정본에서 갈린다:
-  #      · 보존표(§lifecycle) = **7일**(현행 `mc rm --older-than 7d` 승계)
-  #      · **C-79** = Std → IA 30-90d → Glacier IR 90-180d → **만료 190일**
-  #    7일이면 CronJob 이 지우고 190일이면 라이프사이클이 지운다 — **누가 지우는지가 달라진다.**
-  #    사람이 정해야 하는 것이라 여기서 고르지 않았다.
+  #    체크리스트 `2-8`·`1-20` 소관이다.
+  #    ⟳ **보존 주체는 정해졌다**(2026-08-13 사용자 확정 · 미결 ㉕ 해소) = **C-79 의 190일 ·
+  #      라이프사이클이 지운다.** 그 집행분이 아래 **A-49** 두 패치다.
   - target: {group: batch, kind: CronJob, name: mp-pg-onsite-dump}
     patch: |-
       apiVersion: batch/v1
@@ -233,6 +231,63 @@ patches:
             template:
               spec:
                 serviceAccountName: mp-pg-onsite-dump
+
+  # ══ A-49 ① — 온사이트 덤프 CronJob 을 EKS 에서 `suspend` (미결 ㉖ 집행) ═══════
+  # 2026-08-13 사용자 확정. **걷어내지 않고 재우는** 이유는 양쪽 실패를 다 피하기 때문이다:
+  #   · 걷어내면 → C-69 가 2트랙 유지를 확정했으므로 **A4 에 통째로 다시 만들어야** 한다.
+  #   · 그대로 두면 → 목적지가 `minio.observability.svc` 인데 C-18 로 **EKS 에 MinIO 가 없다**.
+  #                   매일 04:00 KST 에 실패하고 **매일 알림이 울린다.**
+  # `suspend: true` 는 오브젝트를 남긴 채 스케줄만 멈춘다 ⇒ A4 에서 **이 한 줄만 지우면** 켜진다.
+  #
+  # 🔴 **A4 체크리스트(`2-8`·`1-20`)에 "suspend 해제" 가 반드시 적혀 있어야 한다.**
+  #    안 적으면 이건 *조용히 안 도는 백업*이 된다 — 오브젝트가 존재하고 ArgoCD 도 Synced 라
+  #    대시보드 어디에서도 이상이 안 보인다. 가장 나쁜 실패 형태다.
+  # 🔵 온프렘은 그대로 돈다(C-83) — 이 패치는 eks 오버레이에만 있다.
+  - target: {group: batch, kind: CronJob, name: mp-pg-onsite-dump}
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-pg-onsite-dump, namespace: data}
+      spec:
+        suspend: true
+
+  # ══ A-49 ② — 업로드 컨테이너에서 `mc rm --older-than 7d` 를 걷는다 (미결 ㉕ 집행) ══
+  # 2026-08-13 사용자 확정 = 논리 덤프 보존은 **C-79 의 190일 · 라이프사이클이 지운다.**
+  #
+  # 🔴 **이게 결정의 나머지 절반이다.** 세 조합 중 둘이 틀린다:
+  #      · `mc rm` 남기고 라이프사이클만 걺 → **둘 다 지운다.** 게다가 컨테이너가 7일에 먼저
+  #        지워버려서 **Standard-IA 최소 30일에 도달조차 못 하고**, 계층 전환이 영원히 발동 안 한다.
+  #        ⇒ C-79 의 산출물(*"라이프사이클을 설계했다는 증명"*)이 그 자리에서 무의미해진다.
+  #      · `mc rm` 도 걷고 라이프사이클도 안 걺 → **아무도 안 지운다.**
+  #    ⇒ 그래서 한 PR 로 묶었다. 라이프사이클 쪽(`mp-pg-dump-ap2` · Std → IA 30-90d →
+  #      Glacier IR 90-180d → 만료 190일)은 **A4 에서 버킷과 함께 생긴다** — 지금은 버킷 자체가 없다.
+  #
+  # ⚠️ 지금은 ① 때문에 이 컨테이너가 아예 안 돈다. 그래도 **지금 걷는다** — A4 에서 suspend 를
+  #    풀 때 이 줄이 살아 있으면, 그 순간부터 7일에 지워지는데 **아무도 그걸 다시 보지 않는다.**
+  # 🔴 그래서 파생되는 것 하나 — **A-47 의 `mp-pg-dump` IAM 롤에서 `s3:DeleteObject` 가 불요**다
+  #    (보존을 S3 라이프사이클이 맡으므로). 최소권한에서 빼야 한다.
+  # 🔵 온프렘은 7일 유지(C-83) ⇒ **두 사이트 보존 기간이 의도적으로 다르다.**
+  #
+  # 🔴 `op: test` 로 컨테이너 신원을 먼저 확인한다 — 인덱스 기반 JSON6902 는 base 의 컨테이너
+  #    순서가 바뀌면 **엉뚱한 컨테이너의 args 를 통째로 갈아치운다.** test 가 깨지면 렌더가 죽는다.
+  - target: {group: batch, kind: CronJob, name: mp-pg-onsite-dump}
+    patch: |-
+      - op: test
+        path: /spec/jobTemplate/spec/template/spec/containers/0/name
+        value: upload
+      - op: replace
+        path: /spec/jobTemplate/spec/template/spec/containers/0/args/0
+        value: |
+          set -eu
+          OUT=$(cat /work/latest-path)
+          mc alias set m "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+          mc cp "$OUT" "m/mp-pg-onsite/foodbudget/"
+          echo "[upload] 완료 — 원격 확인:"
+          mc stat "m/mp-pg-onsite/foodbudget/$(basename "$OUT")"
+          # 🔴 보존 정리 없음 — AWS 쪽 보존은 S3 라이프사이클(C-79 · 190일)이 맡는다.
+          #    여기서 지우면 계층 전환이 발동 전에 객체가 사라진다(A-49 ②).
+          echo "[state] 현재 보관분:"
+          mc ls "m/mp-pg-onsite/foodbudget/"
 
   # ── 0-13 서비스별 PG 롤 — **AWS PG 는 처음부터 갈라서 짓는다** (2026-08-13) ──
   # 설계 정본 = 앱 레포 `docs/prd/schema-roles.md`(+ 멱등 DDL `schema-roles.sql`, #566).
@@ -356,12 +411,12 @@ patches:
               passwordSecret: {name: mp-pg-role-pgsync}
 
 # ── 🔴 이 트랙에 남은 결정 (사람이 정할 것) ────────────────────────────────────
-#  · `mp-pg-onsite-minio` + `onsite-backup.yaml` — 목적지가 인클러스터 MinIO 인데 C-18 로 EKS 에는
-#    MinIO 가 없다. eks 오버레이에서 **둘 다 걷어낼지**, `mp-pg-dump-ap2`(C-69)로 살릴지가 미결.
-#    지금은 **일부러 남겨 뒀다** — 백업 트랙을 지우는 것은 자동 판단할 일이 아니다.
-#    🔴 살리기로 하면 그 CronJob 도 전용 SA + IRSA 가 필요하다(0-14c 는 app·pipeline ns 만 했다).
-#      이미 `platform/policies-data/overlays/eks/netpol-pg-onsite-s3.yaml` 이 STS 를 열어 두었으므로
-#      **네트워크는 IRSA 를 전제하는데 신원이 없는** 어정쩡한 상태다.
+#  · ~~`mp-pg-onsite-minio` + `onsite-backup.yaml` 을 걷을지 살릴지~~ → 🟢 **해소(A-49, 위 두 패치)**
+#    = 살린다. eks 에서는 `suspend: true` 로 재워 두고 **A4 에서 목적지를 `mp-pg-dump-ap2`(C-69)로
+#    재작성하며 깨운다.** 보존은 CronJob 이 아니라 **S3 라이프사이클**(C-79 · 190일)이 맡는다.
+#    🟢 신원 문제도 닫혔다 — 전용 SA + IRSA 는 위 0-14c 잔여분 패치가 붙였다.
+#      (`platform/policies-data/overlays/eks/netpol-pg-onsite-s3.yaml` 이 STS 를 열어 둔 것과 짝이 맞는다.)
+#    🔴 **남은 것은 A4 의 "suspend 해제"** — 체크리스트 `2-8`·`1-20` 에 명시돼 있어야 한다.
 #  · 🔴 **`bootstrap.pg_basebackup` 이 죽은 VM 을 가리킨다** — base cluster.yaml 의
 #    `externalClusters: vm-pg → 192.168.0.8` 은 P4(2026-07-31)에서 파괴된 호스트다.
 #    eks 렌더가 이걸 그대로 들고 있어 **AWS 클러스터가 부트스트랩 자체를 못 한다.**
