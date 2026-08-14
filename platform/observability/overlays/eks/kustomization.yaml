@@ -18,6 +18,7 @@ kind: Kustomization
 resources:
   - ../../base
   - externalsecret-grafana-admin.yaml
+  - externalsecret-alertmanager-slack.yaml
 patches:
   - target: {group: external-secrets.io, kind: ExternalSecret, name: mp-lgtm-object-store}
     patch: |-
