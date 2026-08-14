@@ -8,7 +8,7 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-price-service
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-price-service
-  newTag: 4fcabbcd937c6ebf54529d3ca7d79a158abf8d14
+  newTag: "4a7fc5bc62ffc826c6adde462bee561292ee8da8"
 
 # ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
 # 300m → 150m. 🔴 base 의 300m 은 **HPA 를 켜기 위한 값이 아니다** — price 에는 HPA 가 없다
