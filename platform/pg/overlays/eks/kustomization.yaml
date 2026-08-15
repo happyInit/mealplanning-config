@@ -395,7 +395,16 @@ patches:
               ensure: present
               login: true
               connectionLimit: 5
-              inRoles: []
+              # 🔴 `[]` 였다 — 그래서 라이브에서 500 이 났다(실측 2026-08-14).
+              #    pantry 는 `public` 을 4곳에서 읽는다(앱 레포 `services/pantry/app/queries.py`):
+              #      :38 item_master · :39 item_alias  (resolve_item_id — 이름→표준품목)
+              #      :140 item_master                  (valid_item_id — 존재 검증)
+              #      :191 shelf_life_ref               (lookup_shelf_life — 보관 이동 시 소비기한 재계산)
+              #    증상 = POST /api/pantry/receipts 1건 · PATCH /api/pantry/items/{id} 11건이
+              #    전부 InsufficientPrivilege. pantry 스키마 권한은 정상이었고 public 읽기만 막혀 있었다.
+              #    🔴 CNPG 의 `inRoles` 는 **배타적**이라, 앱 레포 `schema-roles.sql` 에서 GRANT 만 하면
+              #       다음 reconcile 이 조용히 REVOKE 한다 — 두 곳을 반드시 같이 고쳐야 한다.
+              inRoles: [mp_data_reader]
               passwordSecret: {name: mp-pg-role-pantry}
             - name: svc_mealplan
               ensure: present
