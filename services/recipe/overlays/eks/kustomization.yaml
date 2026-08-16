@@ -67,7 +67,29 @@ images:
 #   patch-bluegreen.yaml            strategy 교체 + MP_RELEASE 주입 (근거는 그 파일 머리말)
 #   service-preview.yaml            green 만 보는 창구
 #   analysistemplate-bluegreen.yaml 승격 게이트 (preview 대상)
+
+# ══ 1-43 집행 — Karpenter 버스트 노드 toleration ═══════════════════════════════
+# 🔴 **이게 없으면 Karpenter 는 장식이다.** `mp-burst` NodePool 은 자기 노드에
+#    `mp.io/burst=true:NoSchedule` 를 박는다(ansible `eks_karpenter/templates/nodepool.yaml.j2`).
+#    그 롤 주석이 *"앱(무상태)은 config 오버레이에서 toleration 을 받고, PG·ES 는 받지 않는다"* 로
+#    설계를 적어 뒀는데 **그 절반이 구현돼 있지 않았다.**
+# 🔴 2026-08-16 실측 — BG 승격 창에서 이 결손이 3단 연쇄로 터졌다:
+#      ① green 파드 `0/2 nodes are available: 2 Insufficient cpu`
+#      ② Karpenter 가 버스트 노드를 띄웠지만 **green 이 taint 를 못 견뎌 못 올라감**
+#      ③ 스케줄러가 대신 **Prometheus 를 선점**(app-normal 100000 vs Prometheus priority 0)
+#         → Prometheus 도 갈 곳이 없어(빈 자리가 그 tainted 노드뿐) 약 5분 다운
+#         → 승격 게이트가 Prometheus 를 못 읽어 **RolloutAborted**
+#    즉 "노드가 모자란다"가 아니라 **"여분 노드를 아무도 쓸 수 없다"** 가 진짜 고장이었다.
+# 🔵 무상태 앱이라 버스트 노드(`expireAfter: 720h` · `WhenEmpty` 회수)에 올라가도 잃을 상태가 없다.
+#    PG·ES 가 toleration 을 안 받는 이유가 정확히 그 반대다(노드가 사라지면 데이터가 이사해야 한다).
+# ⚠️ 남은 결손 = 나머지 앱 11종에도 같은 toleration 이 필요하다(1-43 잔여). 여기선 BG 를 켠 둘만 닫는다.
 patches:
+- path: patch-burst-toleration.yaml
+  target:
+    group: argoproj.io
+    kind: Rollout
+    name: mp-recipe
+    version: v1alpha1
 - path: patch-bluegreen.yaml
   target:
     group: argoproj.io
