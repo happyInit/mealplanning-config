@@ -89,13 +89,23 @@ patches:
       kind: Application
       metadata: {name: gateway-internal, namespace: argocd}
 
-  # 🔴 `monitoring` — 골격. EKS 관측은 platform-root 의 kube-prometheus-stack 이 별도로 든다.
-  - target: {group: argoproj.io, kind: Application, name: monitoring}
-    patch: |-
-      $patch: delete
-      apiVersion: argoproj.io/v1alpha1
-      kind: Application
-      metadata: {name: monitoring, namespace: argocd}
+  # 🟢 `monitoring` — **삭제를 걷었다 (2026-08-16 감사 F-1).**
+  #    종전 근거는 *"골격. EKS 관측은 platform-root 의 kube-prometheus-stack 이 별도로 든다"* 였고
+  #    **쓰인 시점엔 맞았다.** 그 뒤 `monitoring/overlays/eks` 가 실물로 채워졌는데 스위치를 안 켰다.
+  #
+  # 🔴 **kube-prometheus-stack 은 이것을 대신하지 못한다.** 그 차트가 주는 것은 *플랫폼* 규칙
+  #    (Kube*·Node*·Watchdog)이고, **우리 앱 규칙·ServiceMonitor·대시보드는 전부 이 트랙에 있다**:
+  #      ServiceMonitor/mp-app-services + PrometheusRule 9종
+  #      (mp-app-sli · mp-app-symptom · mp-backup · mp-container-memory · mp-data-tier
+  #       · mp-descheduler · mp-rollouts · mp-tempo · **mp-workload-spread-eks**)
+  #    `mp-workload-spread-eks` 라는 **EKS 전용 이름**이 "골격이 아니다"의 증거다.
+  #
+  # 🔴 **없는 동안 실제로 무슨 일이 있었나** — 감사 F-8 이 답이다. `mp-backup` 규칙이 없어서
+  #    *"백업이 조용히 실패해도 모른다"* 가 예측이 아니라 **이미 일어난 상태**였다.
+  #    앱이 죽어도 Slack 이 안 울고, BG 승격 실패(`mp-rollouts`)도 조용했다.
+  #
+  # ⚠️ 켠 뒤 **`up` 으로 확인할 것** — `mp-app-services` 의 셀렉터·포트가 온프렘 라벨 그대로면
+  #    Application 은 Synced 인데 타깃이 0일 수 있다(= 초록불인데 안 잡힘).
 
   # 🔴 정책 4종 — 골격이고 `0-17`·`0-18` 이 선행이다. 온프렘 netpol 은 LAN `192.168.0.0/24` 를
   #    ipBlock 으로 박고 있는데 `0-18` 이 **"VPC CIDR 로 기계적 치환 금지"** 를 명시한다.
@@ -153,6 +163,14 @@ patches:
       - op: replace
         path: /spec/source/path
         value: common/overlays/eks
+  # 🔴 `monitoring` 은 base 가 `overlays/onprem` 을 가리킨다 — 위에서 삭제만 걷고 이 줄을 빼면
+  #    **온프렘 규칙이 EKS 에 실린다**(LAN ipBlock·MinIO·site 라벨이 전부 온프렘 값이다).
+  #    삭제를 걷는 것과 경로를 돌리는 것은 **한 쌍이다.**
+  - target: {group: argoproj.io, kind: Application, name: monitoring}
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: monitoring/overlays/eks
   - target: {group: argoproj.io, kind: Application, name: mp-account}
     patch: |-
       - op: replace
