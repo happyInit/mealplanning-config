@@ -622,3 +622,26 @@ patches:
           operator:
             annotations:
               eks.amazonaws.com/role-arn: arn:aws:iam::689192361171:role/mp-crawl-scaler
+
+# ── policies-observability → overlays/eks (2026-08-16 · 감사 A-1·A-2) ────────
+# 🔴 **이 Application 은 EKS 에서 `overlays/onprem` 을 보고 있었다** — 그래서 라이브의
+#    observability ns 가 **온프렘용 정책 10개**로 통제됐고, 그중 `mp-minio-egress` ·
+#    `mp-observability-minio-backup` 은 **C-18 로 EKS 에 존재하지도 않는 MinIO** 를 겨냥한
+#    죽은 규칙이었다. 위 주석의 *"policies-observability 는 그대로 미착수"* 를 여기서 닫는다.
+#
+# 🟢 **선행이 끝났다** — `0-17`(egress 무제한 워크로드 잠금)·`0-18`(LAN ipBlock 재작성)이
+#    eks 오버레이에 이미 쓰여 있고, 같은 커밋에서 app·data·pipeline·ingress 4트랙도 켰다.
+#
+# 🔴 **그리고 이 전환이 A-1 의 올바른 해법이다.** 대시보드 EC2(C-84) 접근 경로가 라이브에
+#    **손으로만** 있었는데(NodePort 3 + netpol 3), 온프렘 오버레이에 넣으면 **온프렘까지
+#    번져 C-83 위반**이 된다. eks 오버레이로 옮기면서 **거기** 넣는 것이 유일하게 맞는 자리다.
+#    ⚠️ 그래서 이 패치와 `policies-observability/overlays/eks/dashboard-access.yaml` 은 **한 쌍**이다.
+#       경로만 돌리고 그 파일이 없으면 **sync 하는 순간 대시보드가 관측 스택을 통째로 잃는다.**
+  - target: {group: argoproj.io, kind: Application, name: mp-policies-observability}
+    patch: |-
+      - op: test
+        path: /spec/source/path
+        value: platform/policies-observability/overlays/onprem
+      - op: replace
+        path: /spec/source/path
+        value: platform/policies-observability/overlays/eks

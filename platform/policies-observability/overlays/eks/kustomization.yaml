@@ -29,6 +29,9 @@ resources:
   - ../../base
   - netpol-observability-egress.yaml
   - netpol-deny-imds.yaml
+  # 🔴 (2026-08-16 · 감사 A-1) 대시보드 EC2 접근 경로 — NodePort 3종 + Loki·Tempo 유입 정책.
+  #    **라이브에 손으로만 있던 것을 IaC 로 되찾는다.** 근거·위험은 그 파일 머리말.
+  - dashboard-access.yaml
 patches:
   # ── (C-18) MinIO 소멸 ──────────────────────────────────────────────────────
   - patch: |-
@@ -76,3 +79,22 @@ patches:
           - ports:
               - { protocol: TCP, port: 443 }
               - { protocol: TCP, port: 80 }
+  # ── 🔴 (2026-08-16 · 감사 A-1) Prometheus 에 대시보드 EC2 유입 추가 ─────────
+  #
+  # Loki·Tempo 와 달리 Prometheus 는 **base 에 이미 정책이 있다**(operations·argo-rollouts 유입).
+  # 같은 이름으로 새로 만들면 base 규칙을 통째로 덮으므로 **규칙 하나만 덧댄다.**
+  # 🔴 이 규칙이 없으면 BG 승격 게이트(argo-rollouts→Prometheus)는 살아 있는데
+  #    **대시보드만 조용히 Prometheus 를 잃는다** — 라이브에 손으로 있던 것이 정확히 이 한 줄이다.
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: mp-observability-prometheus-query
+    patch: |-
+      - op: add
+        path: /spec/ingress/-
+        value:
+          from:
+            - ipBlock: { cidr: 10.10.0.72/32 }   # mp-dashboard EC2 (C-84)
+          ports:
+            - { port: 9090, protocol: TCP }
