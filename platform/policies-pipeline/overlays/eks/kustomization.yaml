@@ -23,6 +23,9 @@ kind: Kustomization
 resources:
   - ../../base
   - netpol-deny-imds.yaml
+  # A5-b — 리파이너 3종의 S3·SQS·STS egress. 🔴 크롤 FQDN 3종을 뺀 자리를 메우는 게 아니라
+  # **운반 경로가 Kafka→객체로 바뀌어 새로 생긴 목적지**다(C-44). 근거는 그 파일 머리말.
+  - netpol-pipeline-fqdn-aws-transport.yaml
 patches:
   # ── (C-3) 크롤 FQDN 3종 = 온프렘 전용 ──────────────────────────────────────
   - patch: |-
