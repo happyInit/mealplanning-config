@@ -22,7 +22,13 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: mp-kubecost-aggregator
-  namespace: cost
+  # 🔴 **`cost` 가 아니라 `observability` 다.** `platform` AppProject 의 destinations 에
+  #    `cost` ns 가 없어서 거기 두면 *"one or more synchronization tasks are not valid"* 로
+  #    조용히 sync 가 안 된다(실측 2026-08-16). AppProject 는 앱 레포(Ansible) 소관이라
+  #    config 만으로 못 고친다. ⇒ ServiceMonitor 는 어디에 있든 `namespaceSelector` 로
+  #    대상을 찾으므로 **여기 두는 것이 맞다** — 차트의 finopsagent SM 도 같은 이유로
+  #    `namespace: observability` 를 쓴다(`platform/argocd/base/kubecost.yaml`).
+  namespace: observability
   labels:
     app.kubernetes.io/part-of: mealplanning
 spec:
