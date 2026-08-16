@@ -47,6 +47,23 @@ images:
 #   노드 allocatable ephemeral 43.7 GiB 의 8% 다(sizeLimit 은 예약이 아니라 상한).
 # 🔴 `op: test` 를 앞에 두는 이유 = 인덱스 기반 JSON6902 는 base 의 volumes 순서가 바뀌면
 #    **엉뚱한 볼륨에 상한을 건다.** test 가 깨지면 렌더가 죽어서 validate.py 가 잡는다.
+  # ── ML 재랭킹 호출 활성화 — EKS 전용 (2026-08-16) ────────────────────────────
+  # 🔵 **스위치의 정본은 `base/configmap.yaml` 의 `RANKING_ML_ENABLED: "false"` 다.**
+  #    여기서는 위 PGUSER 와 **똑같은 방식**으로 그 값을 덮는다(`env` 가 `envFrom` 을 이긴다).
+  #    base 를 "true" 로 바꾸면 온프렘까지 켜져서 C-83 형상 동결을 깬다 — 그래서 사이트 분기다.
+  #    ⚠️ 렌더에는 ConfigMap 의 "false" 와 이 env 의 "true" 가 **둘 다** 보인다. 이기는 쪽은 env 다.
+  # 🔴 **켜지 않으면 모델을 실어도 개인화가 안 산다.** `ranking_ml_enabled` 기본값이 False 라
+  #    `personalize()` 가 첫 줄에서 None 을 돌려주고(`ranking_client.py:17`) mealplan 은
+  #    `/rank/personalize` 를 **아예 호출하지 않는다.** 서빙에 모델을 넣어도 경로가 안 열린다.
+  #    ⇒ 모델 적재(`mp-ci-job` 의 S3 읽기 권한)와 **이 스위치는 별개의 두 조건**이다.
+  # 🟢 모델이 없는 동안 켜 두는 것이 안전한 근거(실측 2026-08-16):
+  #      POST /rank/personalize → HTTP 200 · **21ms** · `personalized: false`
+  #    → `personalize()` 가 None 을 돌려주고 **규칙순이 그대로 유지**된다(동작 변화 0).
+  #    실패 경로도 넓다 — 미가용·타임아웃·오류 **무엇이든** except 에서 None 이다.
+  #    상한은 `ranking_serving_timeout_s` 0.3s 라 서빙이 죽어도 추천이 0.3초 이상 안 밀린다.
+  # ⚠️ 온프렘에는 걸지 않는다 — C-83 형상 동결. 거기는 모델 PVC 경로라 조건 자체가 다르다.
+  # 🔵 규칙 랭킹(재고·임박·예산)은 이것과 무관하게 이미 유저별로 동작한다. 이 스위치가 켜는 것은
+  #    그 **위에 얹는 학습 재정렬**이다 — 켜도 모델이 없으면 규칙순 그대로다.
   # ── 클릭스트림 학습 라벨 축적 — EKS 전용 (C-88 · 이슈 #640) ────────────────
   # 추천 노출을 activity.recipe_impression 에 적어야 담기(ADD_CART)와 조인이 서고
   # 랭킹 학습 라벨이 생긴다. 🔴 **base 가 아니라 여기** 인 이유 —
@@ -131,6 +148,8 @@ patches:
               env:
                 - name: PGUSER
                   value: svc_mealplan
+                - name: RANKING_ML_ENABLED
+                  value: "true"
   target:
     group: apps
     kind: Deployment
