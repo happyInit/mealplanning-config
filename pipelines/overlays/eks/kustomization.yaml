@@ -662,12 +662,29 @@ patches:
 # 🔴 인증은 `authenticationRef` → `TriggerAuthentication/mp-crawl-sqs`(triggerauth.yaml).
 #    **`roleArn` 을 트리거에 적지 않는 이유**가 거기 적혀 있다 — 적으면 롤 체이닝이 되고
 #    신뢰정책이 그 경로를 안 열어 둬서 AccessDenied 다.
+# ── 🔴 maxReplicaCount 1 — SQS 는 Kafka 의 **상품별 컨슈머 친화성**을 안 준다 ──────────
+# 2026-08-16 실측 사고: 백로그 76,774건을 드레인하다 리파이너가 반복 재시작(exit 1)했다.
+#
+#   psycopg.errors.DeadlockDetected — while inserting index tuple in relation "retail_product"
+#
+# 🔵 **Kafka 에선 일어날 수 없던 일이다.** 프로듀서가 `key=source:product_id` 로 발행해
+#    같은 상품은 **항상 같은 파티션 → 같은 컨슈머**로 갔다. 즉 상품 단위 직렬화가 운반 계층에
+#    공짜로 딸려 있었다. SQS 메시지는 그런 친화성이 없다 — 아무 파드나 아무 객체를 집고,
+#    객체들의 상품 집합이 겹치므로 **동시 upsert 가 서로를 물어 데드락**이 난다.
+#    ⇒ C-44(Kafka→S3/SQS)가 데이터 계층에 넘긴 대가이고, 그 값을 여기서 치른다.
+#
+# 🔵 왜 replica 를 줄이는 것이 맞나: 우리 크롤은 **애초에 스트리밍이 아니라 배치**다
+#    (하루 5회 + 주 2회 · 4.7MB/일 — `_s3.py` 머리말이 C-44 의 근거로 든 바로 그 사실).
+#    병렬로 얻을 것이 거의 없는데 데드락 위험만 산다. **scale-to-zero(0↔1)는 그대로 유지**되므로
+#    KEDA 를 쓰는 본래 목적은 하나도 잃지 않는다.
+# 🔴 근본 해결은 앱 쪽 데드락 재시도다(일시 실패인데 파드를 통째로 죽인다). 후속 과제.
   - target: {group: keda.sh, kind: ScaledObject, name: mp-retail-refiner}
     patch: |-
       apiVersion: keda.sh/v1alpha1
       kind: ScaledObject
       metadata: {name: mp-retail-refiner}
       spec:
+        maxReplicaCount: 1
         triggers:
           - type: aws-sqs-queue
             authenticationRef: {name: mp-crawl-sqs}
@@ -681,6 +698,7 @@ patches:
       kind: ScaledObject
       metadata: {name: mp-recipe-refiner}
       spec:
+        maxReplicaCount: 1   # 위 mp-retail-refiner 주석 참조 — deal·retail 은 같은 테이블을 쓴다
         triggers:
           - type: aws-sqs-queue
             authenticationRef: {name: mp-crawl-sqs}
@@ -694,6 +712,7 @@ patches:
       kind: ScaledObject
       metadata: {name: mp-deal-notifier}
       spec:
+        maxReplicaCount: 1   # 위 mp-retail-refiner 주석 참조 — deal·retail 은 같은 테이블을 쓴다
         triggers:
           - type: aws-sqs-queue
             authenticationRef: {name: mp-crawl-sqs}
