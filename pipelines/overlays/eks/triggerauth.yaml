@@ -1,0 +1,38 @@
+# A5-b — KEDA 가 SQS 큐 깊이를 읽을 때 쓰는 신원 (EKS 전용 · 2026-08-16)
+#
+# 리파이너 3종의 ScaledObject 가 `authenticationRef` 로 이걸 가리킨다. 큐마다 나누지 않는 이유 =
+# 신원이 같기 때문이다 — 롤 하나(`mp-crawl-scaler`)가 큐 3개를 다 본다. TriggerAuthentication 은
+# "무엇을 읽나" 가 아니라 "누구로 읽나" 만 담으므로 큐별로 쪼갤 것이 없다.
+#
+# 🔴 **`roleArn` 을 여기 적지 않는다 — 적으면 인증이 깨진다.** (2026-08-16 실측으로 확정)
+#    KEDA 2.20 은 `podIdentity.roleArn` 이 있으면 **오퍼레이터의 기본 자격증명으로 그 롤을
+#    AssumeRole** 한다(`stscreds.NewAssumeRoleProvider`, 롤 체이닝). 그런데
+#      ① `keda-operator` SA 에는 IRSA 어노테이션이 없었다 → 기본 자격증명 = **노드 인스턴스 롤**
+#         (실측: 파드에 `AWS_ROLE_ARN` env·`aws-iam-token` 볼륨 둘 다 부재)
+#      ② `mp-crawl-scaler` 의 신뢰정책은 **`sts:AssumeRoleWithWebIdentity` · sub=keda:keda-operator**
+#         하나뿐이다 — 노드 롤의 `sts:AssumeRole` 은 아예 못 들어온다
+#    ⇒ 체이닝 경로가 양쪽에서 다 막혀 있었다. **AccessDenied 로 큐 깊이를 영영 못 읽는다**
+#      (증상은 "스케일이 안 된다" 지만 원인은 인증이라, 트리거 설정을 아무리 고쳐도 안 낫는다).
+#
+# 🟢 그래서 **신뢰정책이 이미 적어 둔 경로를 그대로 쓴다** — keda-operator SA 에 IRSA 어노테이션을
+#    달아 오퍼레이터의 *기본* 자격증명 자체를 `mp-crawl-scaler` 로 만든다
+#    (`platform/argocd/overlays/eks/kustomization.yaml` 의 keda 패치). 그러면 여기서는
+#    `provider: aws` 한 줄로 끝나고, roleArn 은 **없어야 맞다** — 적으면 자기 자신을 AssumeRole
+#    하려 들고 self-trust 가 없어 다시 AccessDenied 다.
+#
+# 🔵 `identityOwner: workload`(워크로드 SA 의 토큰을 오퍼레이터가 발급받아 쓰는 방식)는
+#    이미 기각됐다 — ClusterRole `keda-operator` 에 `serviceaccounts/token` create 권한이 없고,
+#    클러스터 전역 컴포넌트에 토큰 발급 권한을 주는 쪽이 롤 하나 더 파는 것보다 넓다.
+#    근거·실측 = app 레포 커밋 16d22e4(`mp-crawl-scaler` 롤 신설).
+#
+# 🔴 폭발 반경 = `sqs:GetQueueAttributes` **한 액션 · 큐 3개**. 리파이너 롤(`mp-crawl-refiner`)을
+#    재사용하지 않은 이유가 이것이다 — 그걸 주면 KEDA 가 S3 원본 읽기·격리 쓰기·**메시지 삭제**까지
+#    갖는다. 스케일러가 메시지를 소비하면 리파이너가 볼 것이 사라진다(조용한 데이터 유실).
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: mp-crawl-sqs
+  namespace: pipeline
+spec:
+  podIdentity:
+    provider: aws
