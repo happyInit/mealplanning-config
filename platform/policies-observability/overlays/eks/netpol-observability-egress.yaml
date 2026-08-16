@@ -135,6 +135,16 @@ spec:
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
+    # Operations 대시보드 webhook (EC2 10.10.0.72:8011, 클러스터 밖 — FQDN이 없어 toCIDR).
+    # kube-prometheus-stack.yaml의 operations-webhook receiver 추가 시 이 규칙을 같이
+    # 안 넣어서 88.89% 발송 실패(AlertmanagerFailedToSendAlerts)로 처음 드러났다 —
+    # 이 파일 §④ 헤더가 미리 경고한 바로 그 실패 모드("다른 채널이 설정돼 있으면
+    # 여기서 막힌다").
+    - toCIDR:
+        - "10.10.0.72/32"
+      toPorts:
+        - ports:
+            - { port: "8011", protocol: TCP }
 ---
 # ── ⑤ Loki — 청크 저장소가 MinIO → S3 (C-18) ────────────────────────────────
 # 🔴 netpol 만 고쳐서는 안 된다. `platform/argocd/loki.yaml` 의 인라인 valuesObject 에
