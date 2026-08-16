@@ -1,5 +1,5 @@
 # 🔴🔴 이 파일은 **앱 레포의 사본**이다 — 정본 = happyInit/food-budget-app
-#      `pipelines/transport/relay_kafka_s3.py` (MR !22 · 사본 시점 dfd23c5)
+#      `pipelines/transport/relay_kafka_s3.py` (MR !22·!24 · 사본 시점 eb4fae1)
 #
 # 왜 사본이 여기 있나 = **온프렘 이미지를 다시 구울 수 없어서**다(2026-08-16).
 #   온프렘 라이브 이미지는 `mp-data-pipeline:4f03052e`(2026-08-10)에 멈춰 있다 —
@@ -96,14 +96,21 @@ def _source(msg) -> str:
     return dict(msg.headers() or {}).get("source", b"oasis").decode()
 
 
-def _flush(batches, uploader, bucket_hint):
+def _flush(batches, uploader, bucket_hint, run_rid, flush_seq):
     """모아 둔 배치를 S3 객체로 올린다. 반환 = (올린 객체 수, 올린 레코드 수).
 
     🔴 배치 하나가 실패하면 예외를 그대로 올린다 — 호출부가 **커밋을 건너뛰게** 하기 위해서다.
        여기서 삼키면 오프셋이 전진해 그 크롤분이 사라진다.
+
+    🔴 **`flush_seq` 가 키 충돌을 막는다 — 없으면 조용히 덮어쓴다.**
+       `run_id()` 는 초 단위(`%Y%m%dT%H%M%SZ`)라, 백로그를 빠르게 드레인할 때 같은 초에 여러 번
+       flush 되면 **같은 (stream,source) 가 같은 키를 만든다.** S3 PutObject 는 덮어쓰기가
+       기본이고 이 버킷은 버전관리가 꺼져 있어, 앞 객체가 **에러 없이 사라진다.**
+       게다가 flush 마다 오프셋을 커밋하므로 Kafka 재전달도 안 온다 = 진짜 유실이다.
+       🔴 2026-08-16 첫 실전 실행에서 실제로 밟았다 — 37회 업로드 중 고유 키 22개,
+          **35,000건(45.6%) 유실**. 로그는 37건 전부 "success" 였다(그래서 조용하다).
     """
     objects = records = 0
-    rid = run_id()
     for (stream, source), rows in sorted(batches.items()):
         if not rows:
             continue
@@ -114,7 +121,8 @@ def _flush(batches, uploader, bucket_hint):
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             path = fh.name
         try:
-            key = uploader(path, stream, source, rid=f"{rid}-{stream}-{source}")
+            key = uploader(path, stream, source,
+                           rid=f"{run_rid}-{flush_seq:04d}-{stream}-{source}")
         finally:
             os.unlink(path)
         objects += 1
@@ -150,14 +158,20 @@ def run(*, consumer_factory=None, uploader=upload_run, idle_exit=IDLE_EXIT,
     batches = {}
     pending = idle = 0
     objects = records = 0
+    # 🔴 run_rid 는 **실행당 한 번**만 뽑는다. flush 마다 다시 뽑으면 같은 초에 걸린 flush 들이
+    #    같은 값을 받아 키가 겹친다(위 `_flush` 머리말의 유실 사고). 유일성은
+    #    run_rid(타임스탬프+파드이름) × flush_seq(단조증가) × (stream,source) 로 보장한다.
+    run_rid = run_id()
+    flush_seq = 0
 
     def flush_and_commit():
         """🔴 업로드가 **전부** 성공한 뒤에만 커밋한다. 순서를 지키는 유일한 지점이다."""
-        nonlocal batches, pending, objects, records
+        nonlocal batches, pending, objects, records, flush_seq
         if not pending:
             return
-        o, r = _flush(batches, uploader, bucket_hint)
+        o, r = _flush(batches, uploader, bucket_hint, run_rid, flush_seq)
         c.commit()  # ← 여기까지 왔다 = 전 객체가 ETag 로 전달 확인됨
+        flush_seq += 1
         objects += o
         records += r
         batches = {}
