@@ -1,0 +1,53 @@
+# recipe Blue-Green 승격 게이트 (C-76 · EKS 전용).
+# 설계 근거·함정(왜 카나리 템플릿 재사용이 안 되는가 · 왜 web provider 가 필요한가 · netpol 전제)은
+# services/account/overlays/eks/analysistemplate-bluegreen.yaml 머리말에 있다. 여기선 대상만 다르다.
+# 🔴 **4-dot FQDN 을 쓰지 않는다**(`...svc.cluster.local`). 파드 resolv.conf 의 search 에 `local` 이
+#    있어 4-dot 이름이 ISP 로 새어 공인 IP 로 해석된 실측이 있다(21.7% · tempo 닷새간 420회 재시작).
+#    `<svc>.<ns>.svc` 단축형이 정본이고, validate.py 가 이 규칙을 검사한다.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: recipe-bluegreen-analysis
+spec:
+  metrics:
+    - name: preview-health
+      interval: 10s
+      count: 3
+      failureLimit: 0
+      provider:
+        web:
+          url: http://recipe-preview.app.svc:8001/health
+          timeoutSeconds: 5
+          jsonPath: "{$.status}"
+      successCondition: result == "ok"
+
+    - name: preview-5xx-rate
+      interval: 30s
+      count: 2
+      successCondition: "len(result) == 0 || result[0] < 0.05"
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.observability:9090
+          query: |
+            (
+              sum(rate(istio_requests_total{destination_service_name="recipe-preview",reporter="destination",response_code=~"5.."}[1m]))
+              /
+              sum(rate(istio_requests_total{destination_service_name="recipe-preview",reporter="destination"}[1m]))
+              >= 0
+            ) or vector(0)
+
+    - name: preview-p95-latency-ms
+      interval: 30s
+      count: 2
+      successCondition: "len(result) == 0 || result[0] < 2000"
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.observability:9090
+          query: |
+            (
+              histogram_quantile(0.95,
+                sum(rate(istio_request_duration_milliseconds_bucket{destination_service_name="recipe-preview",reporter="destination"}[1m])) by (le))
+              >= 0
+            ) or vector(0)

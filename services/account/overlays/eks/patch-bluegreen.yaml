@@ -1,0 +1,57 @@
+# account: 카나리 → Blue-Green (C-76 · EKS 전용 · JSON6902)
+#
+# 🔴 **JSON merge 로는 이걸 못 한다.** Rollout 은 CRD 라 kustomize 가 스키마를 모르고 JSON merge
+#    로 처리하는데, merge 는 *덮어쓰기*라 `blueGreen` 을 적어도 `canary` 가 **그대로 남는다**.
+#    Rollout 은 둘 중 하나만 허용하므로 렌더는 통과하고 **클러스터에서 거부**된다 — 가장 늦게
+#    드러나는 실패다. ⇒ `op: replace /spec/strategy` 로 통째로 갈아끼운다.
+#
+# 🔴 `op: test` 를 앞에 둔다 — base 가 canary 를 벗어나면(예: 온프렘도 BG 로 전환) 이 패치는
+#    말없이 엉뚱한 것을 지운다. test 가 깨지면 렌더가 죽어 validate.py 가 잡는다.
+#
+# ── 왜 trafficRouting 이 사라지는가 (지우는 게 아니라 필요가 없어지는 것) ──────
+# 카나리는 HTTPRoute 의 weight 를 옮겨 트래픽을 나눈다(Gateway API 플러그인). BG 는 **Service
+# 셀렉터를 원자적으로 갈아끼우는** 방식이라 라우터가 관여하지 않는다. `mp-account-route` 는
+# `account 100 / account-canary 0` 인 채로 남고, 플러그인이 손대지 않으므로 그게 곧 최종 형상이다.
+# ⚠️ 그래서 `account-canary` Service 와 그 backendRef 는 **EKS 에서 불활성 잔재**가 된다. 지금
+#    지우지 않는 이유 = HTTPRoute 는 별도 앱(`gateway`, 수동 sync)이고, backendRef 를 먼저 걷지
+#    않고 Service 를 지우면 dangling ref 가 된다. BG 가 실증된 뒤 별건으로 순서대로 걷는다.
+#
+# ── 파라미터 근거 ────────────────────────────────────────────────────────────
+# `autoPromotionEnabled: false` — 🔴 기본값(true)이면 분석 통과 즉시 넘어간다. 그러면 *"신버전은
+#   떴는데 사용자는 아직 구버전"* 이라는 BG 의 핵심 상태가 존재하지 않는 시간이 되어, 검증할
+#   창도 시연할 화면도 사라진다. 승격은 사람이 누른다.
+# `scaleDownDelaySeconds: 300` — 🔴 이게 **롤백 비용을 0 으로 만드는 유일한 장치**다. 승격 후에도
+#   blue RS 를 5분 살려 두므로 `undo` 가 셀렉터를 되돌리는 것으로 끝난다(재빌드·재스케줄 없음).
+#   기본값 30초는 사람이 이상을 알아채기엔 너무 짧다. 대가 = 그 5분 동안 파드가 2배로 남는 것.
+# `prePromotionAnalysis` — 명백히 죽은 green 을 승격시키지 않기 위한 최소 게이트(템플릿 머리말 참조).
+#
+# ── MP_RELEASE ──────────────────────────────────────────────────────────────
+# 🔴 BG 승격은 Service 셀렉터 교체라서 **언제 넘어갔는지가 파드 목록에도 이벤트에도 안 보인다.**
+#    응답 자체가 버전을 말해야 관측이 된다(앱 레포 `/api/auth/health`).
+# 🔴 값을 손으로 적지 않고 `rollouts-pod-template-hash` 라벨에서 뽑는다 — 템플릿이 바뀌면
+#    쿠버네티스가 다시 계산하므로 어긋날 수 없다. 손으로 적은 문자열은 이미지만 갈릴 때 거짓말을 한다.
+# ⚠️ 라벨이 없으면 downward API 는 실패가 아니라 **빈 문자열**을 준다. 앱이 빈 값을 `dev` 로
+#    치환하므로(config.release()) "주입 누락"이 "버전 미상"으로 정직하게 드러난다.
+# 🔴 `env/-` 로 **append** 한다 — 컨테이너 리스트를 통째로 적으면 JSON merge 가 교체해 버린다
+#    (이 오버레이의 PGUSER 패치와 같은 규약).
+- op: test
+  path: /spec/strategy/canary/stableService
+  value: account
+- op: replace
+  path: /spec/strategy
+  value:
+    blueGreen:
+      activeService: account
+      previewService: account-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 300
+      prePromotionAnalysis:
+        templates:
+          - templateName: account-bluegreen-analysis
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: MP_RELEASE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['rollouts-pod-template-hash']

@@ -1,0 +1,17 @@
+# recipe preview Service — Blue-Green 의 "green 만 보는 창구" (C-76 · EKS 전용).
+# 설계 근거·함정은 services/account/overlays/eks/service-preview.yaml 머리말과 동일하다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: recipe-preview
+  labels:
+    app: recipe
+spec:
+  type: ClusterIP
+  selector:
+    app: recipe
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+      appProtocol: http

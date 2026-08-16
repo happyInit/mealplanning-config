@@ -1,0 +1,28 @@
+# account preview Service — Blue-Green 의 "green 만 보는 창구" (C-76 · EKS 전용).
+#
+# 🔴 **이건 사용자 트래픽 경로가 아니다.** HTTPRoute 는 이 Service 를 backendRef 로 갖지 않는다 —
+#    승격 전의 신버전을 *게이트웨이 밖에서* 때려보기 위한 문이고, 그래서 공개 경로가 없는 게 맞다.
+#    (검증 = `kubectl -n app port-forward svc/account-preview 8004:8004`)
+#
+# 🔴 selector 는 `app: account` 뿐이지만 **Argo Rollouts 가 `rollouts-pod-template-hash` 를 주입**해
+#    green ReplicaSet 파드로 좁힌다. 그 주입은 라이브 드리프트라 ArgoCD 가 OutOfSync 로 볼 텐데,
+#    `argocd/base/account.yaml` 의 ignoreDifferences 가 **kind: Service 전체**(name 필터 없음)로
+#    `/spec/selector` 를 무시하므로 이 Service 도 이미 덮인다 — 별도 예외를 더할 필요가 없다.
+#
+# ⚠️ 승격이 끝나면 active·preview 가 **같은 RS 를 가리킨다**(green 이 곧 stable). 그 상태에서
+#    preview 로 받은 응답이 active 와 같다고 해서 이상한 게 아니다 — 다음 배포가 시작되면 다시 갈린다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: account-preview
+  labels:
+    app: account
+spec:
+  type: ClusterIP
+  selector:
+    app: account
+  ports:
+    - name: http            # 🔴 Istio 프로토콜 판별 — base service.yaml 과 같은 이름·형식을 유지한다
+      port: 8004
+      targetPort: 8004
+      appProtocol: http

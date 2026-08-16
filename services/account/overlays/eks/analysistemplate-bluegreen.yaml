@@ -1,0 +1,77 @@
+# account Blue-Green 승격 게이트 (C-76 · EKS 전용) — `prePromotionAnalysis` 가 참조한다.
+#
+# ── 왜 카나리 템플릿을 재사용하지 않나 ────────────────────────────────────────
+# base 의 `account-canary-analysis` 는 `destination_service_name="account-canary"` 를 본다.
+# BG 에서 그 Service 는 아무도 안 쓰므로 쿼리는 영원히 무데이터 → `or vector(0)` → **항상 통과**한다.
+# 🔴 **항상 통과하는 게이트는 없는 게이트보다 나쁘다** — 있다고 믿게 만들기 때문이다.
+#    그래서 새 템플릿을 쓰고, 보는 대상을 `account-preview` 로 바꾼다.
+#
+# ── 🔴 핵심: 무트래픽에서도 실제로 판정하는 게이트가 하나는 있어야 한다 ──────────
+# BG 의 시간 순서는 `green Ready → prePromotionAnalysis → BlueGreenPause(수동 승격 대기)` 다.
+# 즉 **분석이 도는 시점엔 preview 로 트래픽을 흘린 적이 없다.** Prometheus 기반 5xx·p95 는
+# 그 순간 전부 무데이터라 통과할 수밖에 없다(그게 no-data=pass 의 의도이기도 하다).
+# ⇒ `web` provider 로 **preview Service 를 직접 호출**한다. 이건 트래픽이 없어도 답이 나온다:
+#    신버전이 뜨긴 했는데 기동에 실패해 5xx 를 뱉거나 응답 계약이 깨졌으면 여기서 걸린다.
+#    ⚠️ 이건 "충분한 검증"이 아니다 — 부하·회귀 판정은 승격 전에 사람이 preview 를 때려서 한다
+#       (port-forward). 자동 게이트가 막는 것은 **명백히 죽은 green 을 승격하는 것**까지다.
+#
+# 🔵 `/health` 를 쓴다(`/api/auth/health` 아님) — 컨트롤러는 Service 로 직접 호출하므로
+#    게이트웨이 경로가 필요 없고, `/health` 가 모든 서비스에 있는 공통 계약이라 recipe 와 형태가 같아진다.
+# 🔴 provider 가 닿는 경로 = argo-rollouts ns → app ns:8004. 2026-08-16 실측 기준 EKS 의 app ns 에는
+#    NetworkPolicy·PeerAuthentication 이 **없어서** 평문 호출이 통한다. 온프렘처럼 default-deny+STRICT 를
+#    EKS 에 넣는 날(0-17 계열), **이 호출 경로를 함께 열지 않으면 승격이 조용히 실패**한다.
+# 🔴 **4-dot FQDN 을 쓰지 않는다**(`...svc.cluster.local`). 파드 resolv.conf 의 search 에 `local` 이
+#    있어 4-dot 이름이 ISP 로 새어 공인 IP 로 해석된 실측이 있다(21.7% · tempo 닷새간 420회 재시작).
+#    `<svc>.<ns>.svc` 단축형이 정본이고, validate.py 가 이 규칙을 검사한다.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: account-bluegreen-analysis
+spec:
+  metrics:
+    # ── ① 신버전이 실제로 응답하는가 (무트래픽에서도 판정 가능) ──────────────
+    - name: preview-health
+      interval: 10s
+      count: 3                    # 3회 연속 — 기동 직후 한 번 우연히 성공한 것과 구분한다
+      failureLimit: 0             # 🔴 여기선 관용을 두지 않는다. 헬스가 흔들리는 걸 승격시킬 이유가 없다
+      provider:
+        web:
+          url: http://account-preview.app.svc:8004/health
+          timeoutSeconds: 5
+          jsonPath: "{$.status}"
+      successCondition: result == "ok"
+
+    # ── ② preview 5xx (사람이 port-forward 로 때린 트래픽이 있으면 판정된다) ──
+    - name: preview-5xx-rate
+      interval: 30s
+      count: 2
+      successCondition: "len(result) == 0 || result[0] < 0.05"
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.observability:9090
+          # NaN 가드는 base 템플릿과 같은 이유·같은 형태다(2026-08-03 오탐 사고).
+          #   `>= 0` 이 NaN 샘플을 떨궈 빈 벡터로 만들고 `or vector(0)` 이 0 을 채운다.
+          query: |
+            (
+              sum(rate(istio_requests_total{destination_service_name="account-preview",reporter="destination",response_code=~"5.."}[1m]))
+              /
+              sum(rate(istio_requests_total{destination_service_name="account-preview",reporter="destination"}[1m]))
+              >= 0
+            ) or vector(0)
+
+    # ── ③ preview p95 지연 ────────────────────────────────────────────────
+    - name: preview-p95-latency-ms
+      interval: 30s
+      count: 2
+      successCondition: "len(result) == 0 || result[0] < 2000"
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.observability:9090
+          query: |
+            (
+              histogram_quantile(0.95,
+                sum(rate(istio_request_duration_milliseconds_bucket{destination_service_name="account-preview",reporter="destination"}[1m])) by (le))
+              >= 0
+            ) or vector(0)
