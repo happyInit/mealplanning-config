@@ -645,3 +645,35 @@ patches:
       - op: replace
         path: /spec/source/path
         value: platform/policies-observability/overlays/eks
+
+# ── kubecost aggregator ServiceMonitor 를 우리 것으로 바꾼다 (2026-08-16 · 감사 F-4) ──
+#
+# 🔴 **증상** — `job="kubecost-aggregator"` 의 타깃 2개 중 하나가 **30시간 넘게 0/56** 이었다.
+#    `kubecost-aggregator`(`tcp-api`) = 56/56 정상 / `kubecost-aggregator-clickhouse`
+#    (`db-metrics` 9363) = **0/56**. `TargetDown` 이 영구 발화해 **진짜 장애를 가리는 소음**이 된다.
+#
+# 🔴 **원인은 우리 설정이 아니다** — 파드 안 `/proc/net/tcp` 실측상 9363 의 로컬 주소가
+#    **`0100007F` = 127.0.0.1** 이다. 내장 ClickHouse 가 루프백에만 바인드하므로
+#    **파드 밖에서는 원리적으로 닿을 수 없다.** 차트가 그 엔드포인트용 ServiceMonitor 를
+#    같이 만들어 버리는 것이 문제다(온프렘도 2026-08-02 부터 같은 상태 — C-83 로 손대지 않는다).
+#
+# 🔴 **왜 선택자로 못 거르나** — 두 ServiceMonitor 의 라벨이 **완전히 동일하다**
+#    (`app=aggregator` · `app.kubernetes.io/name=aggregator` · 같은 chart 라벨).
+#    Prometheus 의 `serviceMonitorSelector` 로는 한쪽만 뺄 방법이 없다.
+# 🔴 **차트에도 레버가 없다** — `helm show values kubecost 3.2.0` 에 ClickHouse `listen_host`
+#    노출이 없고, 끄는 길은 `legacyMode: true`(= ClickHouse 자체를 안 씀 · 데이터 재적재 필요)뿐이라
+#    자기 메트릭 하나 때문에 저장엔진을 바꾸는 것은 비례하지 않는다.
+#
+# 🟢 **그래서 차트 ServiceMonitor 를 끄고 살아 있는 엔드포인트만 우리가 정의한다.**
+#    잃는 것 = ClickHouse 자기 메트릭(애초에 한 번도 수집된 적이 없다). 얻는 것 = 소음 제거.
+#    🔵 **비용 데이터에는 영향이 없다** — 실측으로 확인했다(`/model/allocation?window=7d`
+#       정상 응답 · 7일 합 $21.33). 이건 kubecost 저장엔진의 자기 상태 지표일 뿐이다.
+#    ⚠️ 대체 ServiceMonitor 는 `platform/cluster-baseline/overlays/eks` 에 둔다(EKS 전용).
+  - target: {group: argoproj.io, kind: Application, name: kubecost}
+    patch: |-
+      - op: test
+        path: /spec/source/helm/valuesObject/aggregator/serviceMonitor/enabled
+        value: true
+      - op: replace
+        path: /spec/source/helm/valuesObject/aggregator/serviceMonitor/enabled
+        value: false

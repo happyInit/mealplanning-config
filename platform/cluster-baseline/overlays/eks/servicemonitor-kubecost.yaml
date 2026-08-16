@@ -1,0 +1,45 @@
+# kubecost aggregator 스크레이프 — **차트 것을 대신한다** (2026-08-16 · 감사 F-4)
+#
+# 🔴 **왜 우리가 직접 쓰나** — 차트(`kubecost 3.2.0`)는 ServiceMonitor 를 **두 개** 만든다:
+#      `kubecost-aggregator`            port `tcp-api`(9004)  → 🟢 정상 (실측 up 56/56)
+#      `kubecost-aggregator-clickhouse` port `db-metrics`(9363) → 🔴 **원리적으로 불가**
+#    9363 은 내장 ClickHouse 가 **127.0.0.1 에만 바인드**한다(파드 안 `/proc/net/tcp` 의
+#    로컬 주소가 `0100007F`). 파드 밖에서 닿을 수 없으므로 영원히 `connection refused` 이고
+#    `TargetDown` 이 **영구 발화**해 진짜 장애를 가린다.
+#
+# 🔴 두 ServiceMonitor 는 **라벨이 완전히 동일**해서 `serviceMonitorSelector` 로 한쪽만 뺄 수 없고,
+#    차트에도 ClickHouse listen 설정이나 개별 토글이 없다(끄는 길은 `legacyMode: true` = 저장엔진
+#    교체뿐이라 비례하지 않는다). ⇒ `aggregator.serviceMonitor.enabled: false` 로 **둘 다 끄고**
+#    살아 있는 것만 여기서 되살린다. (그 patch = `platform/argocd/overlays/eks/kustomization.yaml`)
+#
+# 🟢 **비용 데이터는 영향 없다** — 실측 확인(`/model/allocation?window=7d&aggregate=namespace`
+#    정상 · 7일 합 $21.33). 잃는 것은 ClickHouse **자기 메트릭**뿐이고 그건 한 번도 수집된 적이 없다.
+#
+# 🔵 아래는 차트가 만들던 `kubecost-aggregator` ServiceMonitor 를 **그대로 옮긴 것**이다
+#    (라이브 실물에서 복사). 이름만 `mp-` 접두사를 붙여 우리 소유임을 드러낸다.
+# 🔵 온프렘도 같은 결함이 있으나(2026-08-02 부터 TargetDown) **C-83 동결로 손대지 않는다.**
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mp-kubecost-aggregator
+  namespace: cost
+  labels:
+    app.kubernetes.io/part-of: mealplanning
+spec:
+  namespaceSelector:
+    matchNames: [cost]
+  selector:
+    matchLabels:
+      app: aggregator
+      app.kubernetes.io/instance: kubecost
+      app.kubernetes.io/name: aggregator
+  endpoints:
+    - port: tcp-api
+      path: /metrics
+      scheme: http
+      interval: 1m
+      scrapeTimeout: 10s
+      relabelings:
+        - action: replace
+          sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
