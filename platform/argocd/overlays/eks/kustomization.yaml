@@ -73,7 +73,98 @@ resources:
 #    `config-pin` 잡이고, 그것이 eks 핀을 자동 갱신해야 이 수동 대조가 없어진다.
 # 🟢 계정 ID 확정(2026-08-14 · `689192361171`) — `scripts/sites.yaml` eks.registry 와 **같은 값이어야 한다**.
 #    계정이 정해지면 sites.yaml 을 고치고 `validate.py` 가 열거하는 목록대로 맞춘다.
+# ══ PriorityClass 배선 — platform-critical · observability-high (2026-08-16) ═══
+# 🔴 **왜 필요했나** — 라이브 실측에서 이 차트들이 만든 파드 **34개가 전부 priority 0** 이었다.
+#    분류가 3층(data/app/pipeline)뿐이라 우리가 직접 깐 플랫폼·관측 컴포넌트가 표 밖에 있었고,
+#    그래서 **배치성 크롤(pipeline-low=1000)이 CNPG 오퍼레이터·Prometheus 보다 높았다.**
+#    2026-08-16 BG 승격 창의 압력이 실제로 Prometheus 를 선점해 내려 롤아웃이 중단됐다.
+# 🔴 **merge 패치를 쓴다(JSON6902 아님).** `valuesObject` 아래 부모 키가 차트마다 있기도 없기도
+#    한데(cnpg·eck 는 `helm` 블록 자체가 없다), JSON6902 `add` 는 부모가 없으면 실패한다.
+#    Application 은 CRD 라 kustomize 가 JSON merge 로 처리 → **객체는 재귀 병합**되므로
+#    기존 values 를 보존한 채 키 하나만 얹는다. (리스트를 적으면 교체되지만 여기엔 리스트가 없다)
+# 🔴 **키 이름은 차트마다 다르고, 틀리면 조용히 무시된다**(= "설정됨 ≠ 동작함"). 그래서 전부
+#    `helm show values` 로 경로를 확인하고 `helm template` 렌더로 실제 주입을 검증했다:
+#      loki  = `global.priorityClassName`(전 파드 일괄)   tempo = 최상위   alloy = `controller.`
+#      argo-rollouts = `controller.` + `dashboard.`       keda·cnpg·barman·eck = 최상위
+# 🔵 kubecost 는 일부러 비워 둔다 — 비용 분석은 밀려도 서비스·복구·관측 어디에도 영향이 없다.
+#    `mp-unclassified`(globalDefault=5000)를 받는 것이 의도한 자리다.
 patches:
+  - target: {group: argoproj.io, kind: Application, name: rollouts}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: rollouts}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              controller: {priorityClassName: platform-critical}
+              dashboard: {priorityClassName: platform-critical}
+  - target: {group: argoproj.io, kind: Application, name: keda}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: keda}
+      spec:
+        source:
+          helm:
+            valuesObject: {priorityClassName: platform-critical}
+  - target: {group: argoproj.io, kind: Application, name: cnpg-operator}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: cnpg-operator}
+      spec:
+        source:
+          helm:
+            valuesObject: {priorityClassName: platform-critical}
+  - target: {group: argoproj.io, kind: Application, name: cnpg-plugin-barman-cloud}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: cnpg-plugin-barman-cloud}
+      spec:
+        source:
+          helm:
+            valuesObject: {priorityClassName: platform-critical}
+  - target: {group: argoproj.io, kind: Application, name: eck-operator}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: eck-operator}
+      spec:
+        source:
+          helm:
+            valuesObject: {priorityClassName: platform-critical}
+  - target: {group: argoproj.io, kind: Application, name: loki}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: loki}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              global: {priorityClassName: observability-high}
+  - target: {group: argoproj.io, kind: Application, name: tempo}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: tempo}
+      spec:
+        source:
+          helm:
+            valuesObject: {priorityClassName: observability-high}
+  - target: {group: argoproj.io, kind: Application, name: alloy}
+    patch: |-
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata: {name: alloy}
+      spec:
+        source:
+          helm:
+            valuesObject:
+              controller: {priorityClassName: observability-high}
   - target: {group: argoproj.io, kind: Application, name: rollouts}
     patch: |-
       - op: test
