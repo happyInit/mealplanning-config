@@ -14,3 +14,15 @@ namespace: pipeline
 resources:
   - ../../base
   - pvc.yaml
+  # A5-b — 온프렘 Kafka → S3 브리지(크롤 CronJob 무변경 · C-83 덧셈형). 근거는 그 파일 머리말.
+  - crawl-s3-relay.yaml
+
+# ── A5-b 릴레이 코드 = ConfigMap (🔴 이미지를 다시 굽지 않기 위한 한시적 조치) ──────
+# 정본은 앱 레포 `pipelines/transport/`(MR !22)이고 여기 있는 건 **사본**이다. 이유·해소 조건은
+# 각 .py 파일 머리말에 적어 뒀다. 🔵 generator 라 내용이 바뀌면 이름 해시가 바뀌고,
+# 그러면 다음 Job 이 새 ConfigMap 을 물어 **갱신이 자동으로 전파**된다.
+configMapGenerator:
+  - name: mp-crawl-relay-code
+    files:
+      - relay/_s3.py
+      - relay/relay_kafka_s3.py

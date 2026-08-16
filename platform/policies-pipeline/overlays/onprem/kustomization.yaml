@@ -11,3 +11,5 @@ kind: Kustomization
 #    - 0-18 pipeline ns egress 규칙의 LAN 전제
 resources:
   - ../../base
+  # A5-b — 릴레이의 S3 egress. 🔴 온프렘은 default-deny 가 **실제로 켜져 있어** 없으면 첫 실행부터 막힌다.
+  - netpol-fqdn-s3-relay.yaml
