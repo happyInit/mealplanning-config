@@ -63,10 +63,20 @@ images:
 #   노드 allocatable ephemeral 43.7 GiB 의 8% 다(sizeLimit 은 예약이 아니라 상한).
 # 🔴 `op: test` 를 앞에 두는 이유 = 인덱스 기반 JSON6902 는 base 의 volumes 순서가 바뀌면
 #    **엉뚱한 볼륨에 상한을 건다.** test 가 깨지면 렌더가 죽어서 validate.py 가 잡는다.
-      # models → 1Gi — 🔴 온프렘은 이 볼륨을 PVC(mp-ranking-model **1Gi**)로 치환한다(overlays/onprem).
-      #    EKS 오버레이에는 그 치환이 없어 emptyDir 인 채다 → 같은 크기를 상한으로 잡았다.
-      #    ⚠️ "EKS 에서 모델이 재시작마다 사라져도 되나" 는 **0-8 스토리지 레인 소관**이다 —
-      #       여기서는 상한만 걸고 사실을 남긴다(docs/eks-emptydir-sizing.md §미결 ①)
+      # tmp 만 상한을 건다 — models 볼륨은 아래에서 **통째로 뺀다**.
+#
+# ── models 볼륨 제거 — 잔재가 오해를 만든다 (2026-08-16) ──────────────────────
+# 🔴 **EKS 에서 `/models` 는 아무도 안 쓴다.** C-20 이 PVC 를 소거하면서 모델의 자리가
+#    **이미지 안 `/app/ranker.pkl`** 로 옮겨졌다(위 RANKING_MODEL_PATH 블록). 그런데 base 의
+#    emptyDir 마운트는 남아 있어서, 보는 사람마다 *"여기 채우면 되겠네"* 로 읽힌다.
+#    실제로 그 오해가 리뷰에서 나왔다(2026-08-16 — *"마운트 지점과 불일치"* 지적).
+# 🔴 **채울 수도 없다** — `readOnlyRootFilesystem: true` 이고 EKS 에는 그 emptyDir 을 채울
+#    주체(initContainer·PVC·재학습 잡)가 없다. 빈 채로 서 있기만 하는 마운트다.
+# 🟢 빼면 오해의 여지가 사라지고 "모델은 이미지에 있다" 가 형상으로 드러난다.
+# ⚠️ 온프렘은 **그대로** 둔다 — 거기는 같은 자리가 PVC(`mp-ranking-model`)이고 재학습이
+#    쓰는 실물 경로다(C-83 형상 동결).
+# 🔴 `op: test` 를 지우지 말 것 — base 의 volumes/volumeMounts 순서가 바뀌면 인덱스 기반
+#    remove 가 **엉뚱한 볼륨을 지운다.** test 가 깨지면 렌더가 죽어 validate.py 가 잡는다.
 patches:
 - patch: |-
     apiVersion: external-secrets.io/v1
@@ -121,14 +131,11 @@ patches:
     kind: ExternalSecret
     name: mp-ranking-serving-secrets
 - path: pg-direct.yaml
-- patch: "# tmp → 64Mi — readOnlyRootFilesystem 스크래치 · 관측 4KiB\n- op: test\n  path:
-    /spec/template/spec/volumes/0/name\n  value: tmp\n- op: add\n  path: /spec/template/spec/volumes/0/emptyDir/sizeLimit\n
-    \ value: 64Mi\n# models → 1Gi — \U0001F534 온프렘은 이 볼륨을 PVC(mp-ranking-model **1Gi**)로
-    치환한다(overlays/onprem).\n#    EKS 오버레이에는 그 치환이 없어 emptyDir 인 채다 → 같은 크기를 상한으로 잡았다.\n#
-    \   ⚠️ \"EKS 에서 모델이 재시작마다 사라져도 되나\" 는 **0-8 스토리지 레인 소관**이다 —\n#       여기서는 상한만
-    걸고 사실을 남긴다(docs/eks-emptydir-sizing.md §미결 ①)\n- op: test\n  path: /spec/template/spec/volumes/1/name\n
-    \ value: models\n- op: add\n  path: /spec/template/spec/volumes/1/emptyDir/sizeLimit\n
-    \ value: 1Gi"
+- patch: "- op: test\n  path: /spec/template/spec/volumes/0/name\n  value: tmp\n- op: add\n
+    \ path: /spec/template/spec/volumes/0/emptyDir/sizeLimit\n  value: 64Mi\n- op: test\n
+    \ path: /spec/template/spec/volumes/1/name\n  value: models\n- op: remove\n  path:
+    /spec/template/spec/volumes/1\n- op: test\n  path: /spec/template/spec/containers/0/volumeMounts/1/name\n
+    \ value: models\n- op: remove\n  path: /spec/template/spec/containers/0/volumeMounts/1"
   target:
     group: apps
     kind: Deployment
