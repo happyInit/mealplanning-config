@@ -34,6 +34,19 @@ images:
 # AWS PG 는 처음부터 롤이 갈린 상태로 짓는다. 롤 실체 = platform/pg/overlays/eks,
 # GRANT = 앱 레포 `docs/prd/schema-roles.sql`(사람이 psql 로 1회).
 # 🔴 `env` 가 `envFrom` 을 이긴다 — app-common 의 `PGUSER: fbapp` 을 이 한 줄이 덮는다.
+#
+# ── C-20 나머지 절반 — `RANKING_MODEL_PATH` 를 구운 모델로 돌린다 (2026-08-15) ──
+# 🔴 base 는 `/models/ranker.pkl` 인데 **EKS 에서 그 경로는 영영 빈다.** `/models` 는
+#    emptyDir 이고(온프렘만 PVC 로 치환한다) emptyDir 은 파드가 재시작할 때마다 비워진다.
+#    위 0-8d 주석이 남긴 미결 *"EKS 에서 모델이 재시작마다 사라져도 되나"* 의 답이 이것이다.
+# 🔴 **에러가 안 나는 게 이 버그의 성질이다** — `serve.py:203` 이 모델을 못 찾으면 경고 한 줄만
+#    남기고 **규칙순 폴백**으로 정상 기동한다. /health 는 초록이고 응답도 오는데 개인화만 죽는다.
+# 🟢 실물 = 이미지 안 `/app/ranker.pkl`. CI 가 S3(`mp-ai-model-ap2`)에서 받아 빌드 컨텍스트에
+#    떨구고 Dockerfile 의 `COPY . .` 가 담는다(앱 레포 `.gitlab-ci.yml` 의 `MODEL_S3_URI`
+#    · `ml/recipe-ranking/.dockerignore` 의 `!ranker.pkl` 예외).
+# ⚠️ 온프렘은 **건드리지 않는다** — 거기는 PVC(`mp-ranking-model`)라 base 값이 맞다.
+# ⚠️ 선행 = `mp-ci-job` 롤의 `s3:GetObject`. 그 전에 이 값만 바꾸면 파일이 없어 폴백 그대로다
+#    (지금과 같은 상태 · 나빠지지는 않는다).
 # 🔴 비밀번호 출처도 같이 간다 — 유저명과 비번은 한 세트다. 한쪽만 바꾸면 인증이 전부 실패한다.
 #    `op: test` 로 base 의 순서 변경을 렌더 실패로 드러낸다(0-16 패치와 같은 규약).
 
@@ -90,6 +103,8 @@ patches:
               env:
                 - name: PGUSER
                   value: svc_ranking
+                - name: RANKING_MODEL_PATH
+                  value: /app/ranker.pkl
   target:
     group: apps
     kind: Deployment
