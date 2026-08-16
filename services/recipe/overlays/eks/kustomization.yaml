@@ -4,6 +4,8 @@ namespace: app
 resources:
 - ../../base
 - serviceaccount.yaml
+- service-preview.yaml            # C-76 Blue-Green preview 창구
+- analysistemplate-bluegreen.yaml # C-76 승격 게이트
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
 images:
 - name: 192.168.0.10/mealplanning/mp-recipe-service
@@ -56,7 +58,22 @@ images:
 #    주석을 밖으로 한 벌 더 복제하면서 원본은 남겨서, CD 빌드마다 1줄씩 무한히 늘어난다
 #    (v5.4.3 실측 1→2→3→4). `patches:` 위 최상위 주석만 반복 edit 에 불변이다.
 #   tmp → 64Mi — readOnlyRootFilesystem 스크래치 · 관측 4KiB
+
+# ══ C-76 카나리 → Blue-Green (EKS 전용 · 2026-08-16) ═══════════════════════════
+# 🔴 base 는 손대지 않는다 — 온프렘은 카나리 그대로다(C-83 형상 동결). 여기서만 갈아끼운다.
+#    C-76 이 *"eks 오버레이는 처음부터 blueGreen 으로 쓴다(두 번 쓰지 않는다)"* 로 못박은 지점이다.
+# 🔴 아래 주석을 `patch:` 리터럴 **안**에 두지 말 것 — kustomize 가 CD 빌드마다 복제해 무한히 늘린다.
+#    (PR #166 · `patches:` 위 최상위 주석만 반복 edit 에 불변이다) ⇒ 패치 본문은 별도 파일로 뺐다.
+#   patch-bluegreen.yaml            strategy 교체 + MP_RELEASE 주입 (근거는 그 파일 머리말)
+#   service-preview.yaml            green 만 보는 창구
+#   analysistemplate-bluegreen.yaml 승격 게이트 (preview 대상)
 patches:
+- path: patch-bluegreen.yaml
+  target:
+    group: argoproj.io
+    kind: Rollout
+    name: mp-recipe
+    version: v1alpha1
 - patch: |-
     - op: replace
       path: /spec/template/spec/topologySpreadConstraints/1/whenUnsatisfiable

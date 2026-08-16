@@ -1,0 +1,22 @@
+# recipe: 카나리 → Blue-Green (C-76 · EKS 전용 · JSON6902)
+# 설계 근거 전문(왜 JSON merge 가 안 되는가 · trafficRouting 이 사라지는 이유 · 파라미터 근거)은
+# services/account/overlays/eks/patch-bluegreen.yaml 머리말에 있다.
+#
+# ⚠️ recipe 에는 `MP_RELEASE` 를 넣지 않는다 — 앱이 아직 그 값을 응답에 노출하지 않아(account 만
+#    `/api/auth/health` 를 갖는다) 주입해도 관측되는 곳이 없다. **쓰이지 않는 env 를 심어 두면
+#    "이미 되어 있다"고 읽혀서 나중에 진짜 배선을 건너뛰게 된다.** recipe 쪽 엔드포인트가 생기는
+#    시점에 같이 넣는다.
+- op: test
+  path: /spec/strategy/canary/stableService
+  value: recipe
+- op: replace
+  path: /spec/strategy
+  value:
+    blueGreen:
+      activeService: recipe
+      previewService: recipe-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 300
+      prePromotionAnalysis:
+        templates:
+          - templateName: recipe-bluegreen-analysis
