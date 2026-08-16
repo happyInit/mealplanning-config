@@ -94,3 +94,27 @@ patches:
           options:
             - name: ndots
               value: "1"
+  # ── C-44 신규 워크로드는 하드닝된 채로 태어난다 ────────────────────────────────
+  # 🔴 위 공통 패치는 `op: add` 라 **merge 가 아니라 replace** 다(validate.py 헤더의 1번 사고).
+  #    그래서 base 의 Deployment 에 securityContext 를 적어봐야 렌더 단계에서 증발한다 —
+  #    여기서 **뒤에** 덮어써야 살아남는다(패치는 순서대로 적용된다).
+  # 🔴 공통 패치에 runAsNonRoot 를 넣을 수는 없다: 기존 파이프라인 이미지는 root 로 돌아서
+  #    전 워크로드가 기동 불가가 된다(공통 패치 주석의 "의도적으로 뺐다"가 그 뜻).
+  #    그건 이미지 쪽 별건이고, **새로 만드는 것까지 그 부채를 물려받을 이유는 없다** —
+  #    scripts/policy-baseline.txt 가 "이 파일은 줄어들기만 해야 한다"고 못박고 있다.
+  # 실행 조건: mp-data-pipeline 이미지의 /app 은 root 소유 0755(읽기 가능)이고 이 컨슈머는
+  #    디스크에 아무것도 쓰지 않는다(S3 → PG 스트리밍). 쓰기가 필요한 곳은 /tmp 뿐이라 emptyDir 로 준다.
+  - target:
+      kind: Deployment
+      name: mp-retail-refiner-s3
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true

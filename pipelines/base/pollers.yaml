@@ -42,18 +42,43 @@ spec:
               #    아니라 덜 기다린 것. 이제 카드 개수가 멈출 때까지 기다린다(꽉 차면 즉시 통과).
               #    부수 효과로 페이지당 고정 2초가 사라져 잡 전체가 ~18초 짧아진다.
               image: 192.168.0.10/mealplanning/mp-crawler-kurly:4f03052ef394f1a3064296f9f321516fa5e08575
-              command: ["python", "crawler/kurly/prototype.py", "--kafka"]
+              # 🔴 C-44 카나리 — **dual-write**. `--kafka` 를 그대로 두고 `--s3` 를 **더한다.**
+              #    Kafka 경로가 계속 프로덕션이라 이 단계에서 S3 가 깨져도 잃는 데이터가 없고,
+              #    같은 실행의 같은 레코드가 두 경로로 가므로 결과를 **대조**할 수 있다
+              #    (컬리 수확량은 실행마다 흔들려서 어제 값과 비교하는 걸로는 판정이 안 된다).
+              #    적재 SQL 이 전부 `on conflict do nothing` 이라 이중 도착은 무해하다.
+              #    되돌리기 = `--out`·`--s3` 두 인자 제거(볼륨은 남겨도 무해).
+              command: ["python", "crawler/kurly/prototype.py", "--kafka",
+                        "--out", "/work/kurly.jsonl", "--s3"]
+              env:
+                # 🔴 명시 env 가 envFrom 보다 우선한다 — mp-pipeline-secrets 의 AWS_* (Bedrock 공유키)를
+                #    이 컨테이너에서만 크롤 업로더 신원으로 덮는다. 반대로 하면 리뷰 AI 가 죽는다.
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom: {secretKeyRef: {name: mp-crawl-uploader, key: AWS_ACCESS_KEY_ID}}
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom: {secretKeyRef: {name: mp-crawl-uploader, key: AWS_SECRET_ACCESS_KEY}}
               envFrom:
                 - configMapRef:
                     name: mp-pipeline-env
                 - secretRef:
                     name: mp-pipeline-secrets
+              volumeMounts:
+                # 산출 파일 자리. 이 이미지는 USER 1000 으로 도는데 emptyDir 은 0777 로 생성되므로
+                # fsGroup 없이도 쓸 수 있다(파드 securityContext 는 kustomization 패치가 관리한다).
+                - name: crawl-out
+                  mountPath: /work
               resources:
                 requests:
                   cpu: 50m
                   memory: 1Gi # 실측 피크 1131Mi(2026-07-30 검증 런) — 스케줄러가 실사용을 반영하도록
                 limits:
                   memory: 2Gi # 1Gi 는 OOMKill 실장애(chromium 크롤 피크 1131Mi > 1Gi), 2Gi = 여유 ~45%
+          volumes:
+            # PVC 가 아니라 emptyDir — 객체가 S3 로 올라가면 파일은 쓸모가 없다. 잡이 끝나면 사라진다.
+            # 실측 4.7MB/일 규모라 sizeLimit 100Mi 는 충분한 상한이면서 노드 디스크를 지켜준다.
+            - name: crawl-out
+              emptyDir:
+                sizeLimit: 100Mi
 ---
 # 오아시스 가격 폴링(카테고리 13종) → Kafka
 apiVersion: batch/v1
