@@ -34,6 +34,7 @@ kind: Kustomization
 resources:
   - ../../base
   - serviceaccounts.yaml
+  - pvc.yaml # A5-a — mp-chat-reports 하나뿐(C-20 정정 근거는 그 파일 머리말)
 
 #      🔴 그 판정이 나면 아래 mp-crawler-kurly 매핑은 **같이 지운다** — 지금은
 #         "base 통과 + 레지스트리만 교체" 라 매핑이 남아 있어야 렌더가 Harbor 를 안 가리킨다.
@@ -51,12 +52,21 @@ images:
 # ── 0-9 레지스트리 = ECR ────────────────────────────────────────────────────
 # 호스트 정본 = scripts/sites.yaml `eks.registry`. 계정 ID 가 정해지면 거기를 고치고
 # validate.py 가 잡아 주는 목록대로 각 오버레이를 맞춘다(불일치 = 실패).
+  # 🔴 **태그 정정 (A5-a · 2026-08-16).** 종전 값 `710b056de817…` 은 0-9(2026-08-10) 때
+  #    적어 둔 **자리표시**였다 — 그 시점엔 GitLab CI 가 이 이미지를 굽지도 않았고(C-89 가
+  #    "EKS 에서 안 쓴다" 로 15종만 굽게 했다) **ECR 에 한 번도 push 된 적이 없다**(실측:
+  #    ECR 태그 5개 중 그 값 없음). 즉 이 오버레이를 붙이는 순간 전부 ImagePullBackOff 였다.
+  #    ⚠️ **렌더도 validate.py 도 이걸 못 잡는다** — 레지스트리 *호스트*는 맞았기 때문이다.
+  #      태그 실재는 ECR 에 물어봐야만 안다. 오버레이를 붙이기 전에 반드시 대조할 것.
+  #    🟢 아래 값 = 오늘 11:52 push · `latest` 와 동일 다이제스트 · main 소속 커밋(실측).
   - name: 192.168.0.10/mealplanning/mp-data-pipeline
     newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-data-pipeline
-    newTag: "710b056de8174c5026ab3c5273d4dee973da4ff7"
-  - name: 192.168.0.10/mealplanning/mp-crawler-kurly
-    newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-crawler-kurly
-    newTag: "1ea4a8be3d274a675a419a34aaa91366e2cc8980"
+    newTag: "dbe788011e57c7519f86e87553c5c4cab445d369"
+  # ⛔ `mp-crawler-kurly` 매핑 삭제 (A5-a).
+  #    이 파일 위쪽 주석이 예고한 그대로다 — *"그 판정이 나면 아래 mp-crawler-kurly 매핑은
+  #    같이 지운다"*. D4-a 로 `mp-poller-kurly` 가 EKS 에서 빠졌으므로 이 이미지를 쓰는
+  #    워크로드가 렌더에 **0개**다. 남겨 두면 "EKS 도 컬리를 굽는다" 로 읽혀 C-89(crawler-kurly =
+  #    amd64 온프렘 전용)와 어긋난다. 🔵 ECR 리포는 비어 있는 채로 둔다(해롭지 않다).
 
 
 # ── 🔴 알려진 미해결: 매달린 claimName 2건 ─────────────────────────────────────
@@ -412,3 +422,164 @@ patches:
       - op: replace
         path: /spec/data/0/remoteRef
         value: {key: pg-roles, property: svc_pipeline}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# D4-a — 워크로드를 사이트별로 가른다 (A5-a · 2026-08-16 · 사용자 확정 운영모델)
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 **이 오버레이가 스스로 예고해 둔 숙제다.** 위 머리말이 *"eks 오버레이는 base 통과가
+#    아니라 부분집합 선택이 될 가능성이 높다 — 🔴 미착수"* 라고 적었다. 여기가 그 착수다.
+#
+# 🟢 **분류 기준이 이제 하나로 정해졌다** — 사용자 확정(2026-08-16):
+#      *"AWS 가 정본. 온프렘은 크롤 파이프라인만 남아서 데이터를 준다."*
+#    ⇒ **외부 사이트를 긁는 것 = 온프렘 / 우리 DB 를 손보는 것 = AWS.**
+#
+#   온프렘 전용 7 (아래 ①)  크롤 폴러 — kurly · oasis-dawn/noon · deal-timesale/closesale
+#                                     · recipe · recipe-review
+#   AWS 10 (남김)          내부 배치 — price-matview · es-recipes · price-anomaly
+#                                     · score-review-sentiment · summarize-reviews
+#                                     · data-invariants · pantry-expire-recompute
+#                                     · deal-pruner · user-data-pruner · chat-insights
+#
+# 🟢 **부수 효과 — 매달린 claimName 이 하나 사라진다.** `mp-poller-recipe` 를 빼면
+#    `mp-recipe-crawl-state` 참조가 함께 사라진다. 남은 `mp-chat-reports` 는 pvc.yaml 이 받는다.
+#    ⇒ 오버레이 머리말의 *"알려진 미해결: 매달린 claimName 2건"* 이 이 커밋으로 **둘 다 해소**된다.
+#
+# 🔴 **왜 지금 급한가 (라이브 실측 2026-08-16)**: `pipelines` 앱이 아직 `overlays/onprem` 을
+#    보고 있어 EKS 에 온프렘 이미지가 그대로 올라갔고, **실패 파드 17개 · 발화 알림 20건**
+#    (KubeJobNotCompleted 10 · MpConsumerLagUnobserved 3)이다. 진짜 신호가 묻힌다.
+
+# ── ① 크롤 폴러 7종 = 온프렘 전용 ────────────────────────────────────────────
+# 🔵 이미지가 문제가 아니라 **자리가 문제**다. 크롤은 C-3 로 온프렘 상시 프로덕션이고,
+#    AWS 에서 같이 돌면 같은 소스를 두 번 긁는다(상대 사이트에 대한 예의 문제이기도 하다).
+  - target: {group: batch, kind: CronJob, name: mp-poller-kurly}
+    patch: |
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-kurly}
+  - target: {group: batch, kind: CronJob, name: mp-poller-oasis-dawn}
+    patch: |
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-oasis-dawn}
+  - target: {group: batch, kind: CronJob, name: mp-poller-oasis-noon}
+    patch: |
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-oasis-noon}
+  - target: {group: batch, kind: CronJob, name: mp-poller-deal-timesale}
+    patch: |
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-deal-timesale}
+  - target: {group: batch, kind: CronJob, name: mp-poller-deal-closesale}
+    patch: |
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-deal-closesale}
+  - target: {group: batch, kind: CronJob, name: mp-poller-recipe}
+    patch: |
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-recipe}
+  - target: {group: batch, kind: CronJob, name: mp-poller-recipe-review}
+    patch: |
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: mp-poller-recipe-review}
+
+# ── ② Kafka 를 전제한 상주 컨슈머 5종 + ScaledObject 4종 ─────────────────────
+# 🔴 **EKS 에 Kafka 가 없다**(C-44 — 양쪽 다 제거 확정). 남겨 두면 KEDA 가 kafka 트리거를
+#    영원히 평가하지 못해 `MpConsumerLagUnobserved` 가 상시 발화한다(실측 3건).
+#
+# 🔵 **셋의 운명이 다르다 — 뭉뚱그리면 안 된다:**
+#   ⓐ 리파이너 3(retail·recipe·deal-notifier) = **A5-b 에서 SQS 판으로 돌아온다.**
+#      코드는 이미 있다 — `pipelines/transport/consume_*.py`(#593). 지금 빼는 것은
+#      *폐기*가 아니라 **큐가 생길 때까지의 부재**다.
+#   ⓑ `mp-user-event-sink` = **영구 제외.** EKS 는 `EVENT_SINK=pg`(C-88)라 앱이
+#      `activity.user_event` 에 직접 INSERT 한다. 중간 컨슈머가 존재할 이유가 없다.
+#   ⓒ `mp-price-anomaly-notifier` = **영구 제외 · 대체품이 아래 ③ 이다.**
+#      🔴 이건 그냥 빼면 안 되는 물건이었다 — `notify.notification` 의 **유일한 writer** 라,
+#         빼기만 하면 최저가 알림(P0 AI 기능)이 AWS 에서 죽고 알림 목록이 영원히 빈다.
+  - target: {group: apps, kind: Deployment, name: mp-retail-refiner}
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-retail-refiner}
+  - target: {group: apps, kind: Deployment, name: mp-recipe-refiner}
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-recipe-refiner}
+  - target: {group: apps, kind: Deployment, name: mp-deal-notifier}
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-deal-notifier}
+  - target: {group: apps, kind: Deployment, name: mp-user-event-sink}
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-user-event-sink}
+  - target: {group: apps, kind: Deployment, name: mp-price-anomaly-notifier}
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: mp-price-anomaly-notifier}
+  - target: {group: keda.sh, kind: ScaledObject, name: mp-retail-refiner}
+    patch: |
+      $patch: delete
+      apiVersion: keda.sh/v1alpha1
+      kind: ScaledObject
+      metadata: {name: mp-retail-refiner}
+  - target: {group: keda.sh, kind: ScaledObject, name: mp-recipe-refiner}
+    patch: |
+      $patch: delete
+      apiVersion: keda.sh/v1alpha1
+      kind: ScaledObject
+      metadata: {name: mp-recipe-refiner}
+  - target: {group: keda.sh, kind: ScaledObject, name: mp-deal-notifier}
+    patch: |
+      $patch: delete
+      apiVersion: keda.sh/v1alpha1
+      kind: ScaledObject
+      metadata: {name: mp-deal-notifier}
+  - target: {group: keda.sh, kind: ScaledObject, name: mp-user-event-sink}
+    patch: |
+      $patch: delete
+      apiVersion: keda.sh/v1alpha1
+      kind: ScaledObject
+      metadata: {name: mp-user-event-sink}
+
+# ── ③ 최저가 알림을 Kafka 없이 살린다 — `--emit` → `--emit-direct` ────────────
+# 🟢 **앱 코드 변경 0.** 이 스위치는 C-88 로 **이미 만들어져 있다**
+#    (`pipelines/ingest/detect_price_anomaly.py`). 종전 경로가
+#      detect --emit → Kafka `price.anomaly.detected` → notifier → notify.notification
+#    이었는데, 종착지가 PG 라 **중간을 걷어내고 배치가 직접 fan-out** 한다.
+# 🟢 정책·멱등을 **재구현하지 않고 그대로 재사용**한다 — `--emit-direct` 가 컨슈머의
+#    `fanout()` 을 그대로 호출한다(price_alert_sent PK + 7일 쿨다운 + price_anomaly EXISTS 가드).
+#    ⇒ 두 경로의 알림 결과가 같다는 것이 코드 수준에서 보장된다.
+# 🔴 CLI 가 `--emit` 과 배타로 막아 둔다("목적지는 하나" — C-88). 여기서 args 를 통째로
+#    replace 하는 이유가 그것이다. 둘 다 주면 렌더가 아니라 **런타임에** 죽는다.
+# 🔵 온프렘은 `--emit` 그대로다 — 그쪽은 Kafka 경로가 정상 가동 중이다(C-83 동결).
+#    🟢 C-88 이 *"기존 --emit 을 한 글자도 안 바꾼다"* 를 설계 원칙으로 못박은 덕에
+#      이 분기가 오버레이 한 줄로 끝난다.
+  - target: {group: batch, kind: CronJob, name: mp-poller-price-anomaly}
+    patch: |-
+      - op: test
+        path: /spec/jobTemplate/spec/template/spec/containers/0/name
+        value: poller-price-anomaly
+      - op: replace
+        path: /spec/jobTemplate/spec/template/spec/containers/0/command
+        value: ["python", "pipelines/ingest/detect_price_anomaly.py", "--emit-direct"]
