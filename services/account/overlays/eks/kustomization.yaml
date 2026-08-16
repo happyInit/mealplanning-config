@@ -11,7 +11,7 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-account-service
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-account-service
-  newTag: "06a1264465184088555e98cb27629ff0b8e1d0f4"
+  newTag: "4a7fc5bc62ffc826c6adde462bee561292ee8da8"
 
 # ── 0-6 hard TSC 완화 + 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────
 #
