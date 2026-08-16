@@ -1,0 +1,137 @@
+# crawl-s3-relay — 온프렘 Kafka → S3 `incoming/` 브리지 (A5-b · **온프렘 전용**)
+#
+# 이관 후 배치(C-3): **크롤은 온프렘 상시 프로덕션 / 적재는 AWS.** 크롤러는 Kafka 로 produce 하고
+# AWS 리파이너는 SQS 를 보므로 그 사이가 비어 있었다 — A5-b 의 AWS 절반(리파이너 3종·SQS·KEDA)이
+# **먹을 것 없이** 서 있는 상태였다. 이 CronJob 이 그 다리다.
+#
+# ── 🔴 왜 크롤 CronJob 에 `--s3` 를 안 붙이나 = C-83 (사용자 확정 2026-08-16 · 덧셈형) ──
+# 크롤 CronJob 7종의 args 를 고치는 것은 **라이브 프로덕션 크롤의 형상 변경**이다. 대신
+# **컨슈머 그룹 하나**를 더한다:
+#
+#   크롤러 ──produce──> Kafka ──┬──> 온프렘 리파이너 3종 (group: retail-refiner …)  [무변경]
+#                               └──> 이 릴레이     (group: crawl-s3-relay)         [신설]
+#
+# Kafka 는 그룹마다 오프셋이 독립이라 **기존 리파이너가 보는 것이 한 건도 안 줄어든다.**
+# 되돌리기 = 이 파일 삭제(그러면 온프렘은 정확히 이전 상태). 🔵 EKS 엔 이 오브젝트가 없다 —
+# 거기 리파이너는 SQS 를 직접 보므로 릴레이가 낄 자리가 없다. 그래서 base 가 아니라 여기다.
+#
+# ── 🔴 첫 실행은 최대 7일치를 한꺼번에 올린다 ──────────────────────────────────
+# 새 컨슈머 그룹 + `auto.offset.reset=earliest`(`_kafka.consumer`) 라 **토픽에 남아 있는 전부**를
+# 읽는다. 토픽 retention 실측 = `604800000ms`(**7일**, 3토픽 동일) · 크롤량 ≈ 4.7MB/일
+# ⇒ 약 33MB · 객체 수십 개. 🟢 **이건 사고가 아니라 이득이다** — AWS PG 가 2026-08-14 에 얼어
+#    있어서, 이 replay 가 일주일치 크롤을 그대로 채워 준다. 적재가 전부 `on conflict do nothing`
+#    이라 중복도 무해하다.
+#    ⚠️ 다만 첫 실행만 길다(수 분). `startingDeadlineSeconds`·`concurrencyPolicy: Forbid` 로
+#       겹치지 않게 잡아 뒀다.
+---
+# ── 업로더 자격증명 — 🔴 `mp-pipeline-secrets` 와 **별개**여야 한다 ──────────────
+# 🔴 그 시크릿의 `AWS_ACCESS_KEY_ID`/`SECRET` 은 **Bedrock 용**이다(base externalsecret.yaml 이
+#    "지금은 공유 secret(least-privilege 위배 인지)" 라고 적어 둔 그 키). 재사용하면 둘 중 하나가
+#    깨지거나, 안 깨지려면 한쪽 사용자에게 남의 권한을 얹어야 한다 — 후자가 더 나쁘다.
+# 🟢 그래서 업로더 전용 시크릿을 따로 두고, CronJob 이 컨테이너 `env` 로 **덮어쓴다**
+#    (K8s 에서 컨테이너 `env` 는 `envFrom` 보다 우선한다 — 그 우선순위가 이 분리의 유일한 장치다).
+# 🔴 선행조건: `fb-secrets` ns 에 Secret `crawl-uploader-secrets`
+#    (`AWS_ACCESS_KEY_ID`·`AWS_SECRET_ACCESS_KEY` — IAM 사용자 `mp-crawl-uploader`).
+#    발급은 **Terraform 밖 수동 1회**다 — `aws_iam_access_key` 를 쓰면 비밀이 tfstate 에 평문으로
+#    들어가고 state 버킷은 버전관리조차 없다(infra/terraform/aws/iam.tf 머리말·README §액세스 키).
+# 🔴 로테이션 = 값 교체 + `rollout restart` 가 한 묶음이다(주입이 env 라 도는 파드는 옛 키를 쓴다).
+#    CronJob 은 다음 실행에 자동 반영되므로 이 워크로드에 한해서는 값 교체만으로 끝난다.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mp-crawl-uploader-secrets
+  namespace: pipeline
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: fb-kubernetes
+  target:
+    name: mp-crawl-uploader-secrets
+    creationPolicy: Owner
+  data:
+    - secretKey: AWS_ACCESS_KEY_ID
+      remoteRef: {key: crawl-uploader-secrets, property: AWS_ACCESS_KEY_ID}
+    - secretKey: AWS_SECRET_ACCESS_KEY
+      remoteRef: {key: crawl-uploader-secrets, property: AWS_SECRET_ACCESS_KEY}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-crawl-s3-relay
+  namespace: pipeline
+spec:
+  suspend: false
+  # 매 30분 — 크롤 창(03:30·04:10·13:10·15:05·17:05 + 일·수 05:00)이 하루에 흩어져 있어
+  # 크롤마다 거는 것보다 주기 드레인이 단순하고, 크롤이 늦어져도 다음 주기가 알아서 받는다.
+  # 🔵 빈 주기의 비용은 ~40초(연결 + idle-exit 30s)다. 큐가 비어 있으면 객체를 안 만든다.
+  schedule: "*/30 * * * *"
+  timeZone: Asia/Seoul # 결정(CLAUDE.md) — KST 값을 그대로 쓴다
+  concurrencyPolicy: Forbid # 🔴 겹치면 같은 오프셋 구간을 두 파드가 잡는다
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 실패 = 다음 주기에 맡긴다. 커밋을 안 했으므로 재전달은 보장돼 있다
+      template:
+        metadata:
+          labels:
+            app: crawl-s3-relay
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          # 🔴 restricted 베이스라인을 **처음부터** 만족시킨다. 기존 파이프라인 워크로드는
+          #    `scripts/policy-baseline.txt` 에 유예로 올라가 있지만, 그건 레거시 목록이지
+          #    신규가 들어갈 자리가 아니다(넣으면 그 목록이 영영 안 줄어든다).
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile: { type: RuntimeDefault }
+          volumes:
+            # 🔴 `readOnlyRootFilesystem: true` 의 대가 — 릴레이는 업로드 전에 JSONL 을
+            #    임시파일로 쓴다(`upload_run` 이 경로를 받아 본문 MD5 로 ETag 를 대조하는
+            #    전달 판정 때문). 루트가 읽기전용이면 그 write 가 죽으므로 /tmp 를 따로 준다.
+            #    메모리 백업이 아닌 기본 emptyDir 이다 — 객체가 수 MB 라 디스크로 충분하고,
+            #    memory 백업이면 파드 메모리 한도(512Mi)를 갉아먹는다.
+            - name: tmp
+              emptyDir: {}
+          containers:
+            - name: crawl-s3-relay
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
+              command: ["python", "pipelines/transport/relay_kafka_s3.py"]
+              envFrom:
+                - configMapRef:
+                    name: mp-pipeline-env # KAFKA_BOOTSTRAP 이 여기서 온다
+                - secretRef:
+                    name: mp-pipeline-secrets
+              env:
+                # 🔴 아래 두 개가 `envFrom` 의 Bedrock 키를 **덮어쓴다**(컨테이너 env 우선).
+                #    이 두 줄이 빠지면 릴레이가 Bedrock 자격증명으로 S3 에 붙으려다
+                #    AccessDenied 가 난다 — 권한이 없는 게 맞고, 그게 정상이다.
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: {name: mp-crawl-uploader-secrets, key: AWS_ACCESS_KEY_ID}
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: {name: mp-crawl-uploader-secrets, key: AWS_SECRET_ACCESS_KEY}
+                - name: AWS_REGION
+                  value: ap-northeast-2
+                - name: MP_CRAWL_BUCKET
+                  value: mp-crawl-ap2
+                - name: RELAY_IDLE_EXIT
+                  value: "30"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi

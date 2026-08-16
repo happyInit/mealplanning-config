@@ -14,3 +14,5 @@ namespace: pipeline
 resources:
   - ../../base
   - pvc.yaml
+  # A5-b — 온프렘 Kafka → S3 브리지(크롤 CronJob 무변경 · C-83 덧셈형). 근거는 그 파일 머리말.
+  - crawl-s3-relay.yaml
