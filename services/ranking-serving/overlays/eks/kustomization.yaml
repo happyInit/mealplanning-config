@@ -10,13 +10,21 @@ resources:
 # `mp-ranking-model` PVC(1Gi · openebs-lvm)와 /models 볼륨 치환 패치는 **이미
 # `overlays/onprem` 에만** 있다(model-pvc.yaml · model-volume.yaml). 즉 base 는 emptyDir 이고
 # 이 오버레이는 그 emptyDir 을 그대로 쓴다 — EKS PVC 0개라는 C-20 결정과 이미 일치한다.
-# 🔴 다만 C-20 의 나머지 절반("ranker.pkl 을 이미지에 굽는다")은 **앱 레포 Dockerfile 소관**이다.
-#    그게 안 되면 EKS 에서는 파드 재시작마다 모델을 다시 받아야 한다(emptyDir 은 비휘발이 아니다).
-#    ⚠️ 그 emptyDir 은 지금 sizeLimit 이 없다 — 0-8d 대상. 모델 1개(0.95 MiB)라 위험도는 낮다.
+# 🟢 **C-20 의 나머지 절반이 닫혔다** (2026-08-16 감사 F-2 · 체크리스트 1-21).
+#    배선은 처음부터 다 있었다 — `.gitlab-ci.yml` 이 `MODEL_S3_URI` 로 받아 `.dockerignore` 의
+#    `!ranker.pkl` 예외를 타고 `COPY . .` 로 굽는다. **빠진 것은 S3 객체 하나**였다.
+#    🔴 그동안의 증상 = 파드 Ready·헬스 200 인데 `/rank/personalize` 가 `personalized:false` +
+#       `ml_score` 전부 0 + **입력 순서 그대로**를 200 으로 돌려줬다(= AI 가 빠진 채로 통과).
+#    조치 = 온프렘 PVC → `s3://mp-ai-model-ap2/models/ranking/ranker.pkl`
+#           (702,418 B · sha256 `d52e82ca…` = `MODEL_MANIFEST.txt` 와 일치)
+#           + `mp-ci-job` 에 `s3:GetObject`(terraform `ci_job_model_read`) + 재빌드.
+#    🔵 emptyDir 은 그대로 둔다 — 이제 모델이 `/app/ranker.pkl` 이라 `/models` 를 쓰지 않는다.
 images:
 - name: 192.168.0.10/mealplanning/mp-ranking-serving
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-ranking-serving
-  newTag: "4a7fc5bc62ffc826c6adde462bee561292ee8da8"
+  # 🔴 **모델이 구워진 첫 이미지** (파이프라인 #59). 이 앞 태그로 되돌리면 에러 없이
+  #    규칙순 폴백으로 떨어져 **롤백이 조용하다** — 되돌릴 땐 `/health` 의 `model_loaded` 를 같이 볼 것.
+  newTag: "9bea7dfed36b24a2ac8bdf1017f6869f80f305bf"
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
