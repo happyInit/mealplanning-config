@@ -97,17 +97,37 @@ spec:
             #    memory 백업이면 파드 메모리 한도(512Mi)를 갉아먹는다.
             - name: tmp
               emptyDir: {}
+            # ── 🔴 릴레이 코드를 ConfigMap 으로 넣는다 = **이미지를 다시 굽지 않기 위해서** ──
+            # 온프렘 이미지는 `4f03052e`(2026-08-10)에 멈춰 있고 다시 구울 경로가 없다
+            # (Jenkins=GitHub 웹훅인데 08-14 정본화로 끊김 · GitLab CI=arm64·ECR 전용).
+            # 🟢 그런데 **모자란 건 라이브러리가 아니라 코드였다** — 실측으로 그 이미지에
+            #    boto3 1.43.67 · confluent_kafka 2.15.0 이 이미 있다(Bedrock 배치·Kafka 컨슈머
+            #    때문에). 그래서 파일 두 개만 얹으면 이미지 재빌드 없이 돈다.
+            - name: relay-code
+              configMap:
+                name: mp-crawl-relay-code
           containers:
             - name: crawl-s3-relay
               volumeMounts:
                 - name: tmp
                   mountPath: /tmp
+                # 🔴 **`/app/pipelines/transport` 에 마운트하지 않는다.** 거기 걸면 지금은 잘 돌지만,
+                #    나중에 이미지를 다시 구웠을 때 ConfigMap 이 이미지 안의 진짜
+                #    `pipelines/transport/`(`_sqs.py`·`_refinery.py`·`consume_*.py`)를 **통째로 가린다.**
+                #    중립 경로에 얹고 PYTHONPATH 로 잇는다 — 그러면 사본을 지우는 날 이 마운트만
+                #    빼면 끝이고, 그 전에 이미지가 갱신돼도 아무것도 안 가린다.
+                - name: relay-code
+                  mountPath: /opt/mp-relay
+                  readOnly: true
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
                 capabilities: { drop: ["ALL"] }
+              # 🔵 **라이브 이미지 그대로다** — 이 파일은 새 이미지를 요구하지 않는다.
+              #    태그를 base 와 같은 값으로 박아 두는 이유 = CD 가 온프렘 태그를 갱신할 때
+              #    이 워크로드도 같이 따라가게 하기 위해서다(뒤처지면 라이브러리가 갈린다).
               image: 192.168.0.10/mealplanning/mp-data-pipeline:4f03052ef394f1a3064296f9f321516fa5e08575
-              command: ["python", "pipelines/transport/relay_kafka_s3.py"]
+              command: ["python", "/opt/mp-relay/relay_kafka_s3.py"]
               envFrom:
                 - configMapRef:
                     name: mp-pipeline-env # KAFKA_BOOTSTRAP 이 여기서 온다
@@ -129,6 +149,15 @@ spec:
                   value: mp-crawl-ap2
                 - name: RELAY_IDLE_EXIT
                   value: "30"
+                # 🔴 릴레이가 `_kafka`·`_topics`·`_observability` 를 **이미지 안**에서 찾게 한다.
+                #    코드 자신은 `Path(__file__).parent`(= /opt/mp-relay)를 sys.path 에 넣으므로
+                #    `_s3` 는 사본에서, 나머지는 이미지에서 온다. 그래서 앱 레포 코드를
+                #    **한 줄도 안 고치고** 그대로 쓴다(사본이 곧 원본이라는 뜻이기도 하다).
+                - name: PYTHONPATH
+                  value: /app/pipelines/stream
+                # 🔵 .pyc 를 못 쓰는 경로(ConfigMap=읽기전용)에서 나는 소음을 끈다.
+                - name: PYTHONDONTWRITEBYTECODE
+                  value: "1"
               resources:
                 requests:
                   cpu: 50m
