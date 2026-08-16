@@ -583,3 +583,83 @@ patches:
       - op: replace
         path: /spec/jobTemplate/spec/template/spec/containers/0/command
         value: ["python", "pipelines/ingest/detect_price_anomaly.py", "--emit-direct"]
+
+# ══════════════════════════════════════════════════════════════════════════════
+# A5-a 후속 — 관측 대상이 없는 규칙을 걷는다 (2026-08-16)
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 **발단 = 실측.** D4-a 적용 직후 발화 알림이 20 → 7 건으로 떨어졌는데, 남은 것 중
+#    `MpConsumerLagUnobserved × 3`(service=data-pipeline)이 **영구 발화**다. 당연하다 —
+#    그 규칙은 *"컨슈머 lag 메트릭이 안 보인다"* 를 알리는데, 위에서 컨슈머를 지웠으니
+#    메트릭은 앞으로도 영원히 안 보인다.
+#
+# 🔴 **이건 단순 소음이 아니다.** 상시 빨강은 **진짜 실패를 묻는다** —
+#    `common/overlays/eks` 의 1-31 과 정확히 같은 논리다(영구 SecretSyncedError 를 걷은 이유).
+#    알림은 "지금 사람이 봐야 하는가" 에만 답해야 한다.
+#
+# 🔵 **전부 걷지는 않는다 — 두 개는 EKS 에서도 유효하다:**
+#   · `MpPollerStale` = 유지. `cronjob=~` 정규식이라 **빠진 CronJob 은 그냥 매칭이 안 될 뿐**
+#     오탐이 되지 않는다. 남은 내부 배치(price-matview·deal-pruner·user-data-pruner·
+#     chat-insights·es-recipes)를 그대로 감시한다.
+#   · `MpPipelineSinkWriteFailure` = 유지. 적재 실패는 사이트와 무관하다.
+
+# ── ① PodMonitor — 스크레이프 대상이 0개다 ──────────────────────────────────
+# selector 가 `app in (retail-refiner, deal-notifier, recipe-refiner, user-event-sink)` 인데
+# 넷 다 D4-a 로 EKS 에서 뺐다. 남기면 대상 없는 스크레이프 잡이 남는다.
+# 🔵 A5-b 에서 리파이너가 SQS 판으로 돌아오면 **이 삭제를 되돌린다**(라벨이 같다).
+  - target: {group: monitoring.coreos.com, kind: PodMonitor, name: mp-pipeline-consumers}
+    patch: |
+      $patch: delete
+      apiVersion: monitoring.coreos.com/v1
+      kind: PodMonitor
+      metadata: {name: mp-pipeline-consumers}
+
+# ── ② 대상이 없는 알림 8개 제거 ─────────────────────────────────────────────
+# 🔴 **내림차순으로 지운다.** JSON6902 의 인덱스는 각 op 실행 시점에 재계산되므로
+#    오름차순으로 지우면 뒤 인덱스가 밀려 **엉뚱한 규칙이 사라진다.**
+# 🔴 각 remove 앞의 `op: test` 는 base 순서가 바뀌었을 때 **렌더를 죽여서** 드러내기 위한 것이다
+#    (이 레포의 기존 규약 — 0-16 패치 주석 참조). 없으면 조용히 다른 알림이 지워진다.
+#
+#   지우는 것 = 컬리 크롤 4 (C-3 로 크롤은 온프렘 전용 — EKS 엔 그 CronJob 자체가 없다)
+#             + Kafka 컨슈머·KEDA 4 (C-44 로 EKS 에 Kafka 가 없다)
+  - target: {group: monitoring.coreos.com, kind: PrometheusRule, name: mp-pipeline}
+    patch: |-
+      - op: test
+        path: /spec/groups/0/rules/8/alert
+        value: MpConsumerLagUnobserved
+      - op: test
+        path: /spec/groups/0/rules/7/alert
+        value: MpKedaScalerErrors
+      - op: test
+        path: /spec/groups/0/rules/6/alert
+        value: MpConsumerBacklogStuck
+      - op: test
+        path: /spec/groups/0/rules/5/alert
+        value: MpConsumerIdleWithBacklog
+      - op: test
+        path: /spec/groups/0/rules/4/alert
+        value: MpKurlyCrawlTruncated
+      - op: test
+        path: /spec/groups/0/rules/3/alert
+        value: MpKurlyLatestRunFailed
+      - op: test
+        path: /spec/groups/0/rules/2/alert
+        value: MpKurlyDataStaleCritical
+      - op: test
+        path: /spec/groups/0/rules/1/alert
+        value: MpKurlyDataStaleWarning
+      - op: remove
+        path: /spec/groups/0/rules/8
+      - op: remove
+        path: /spec/groups/0/rules/7
+      - op: remove
+        path: /spec/groups/0/rules/6
+      - op: remove
+        path: /spec/groups/0/rules/5
+      - op: remove
+        path: /spec/groups/0/rules/4
+      - op: remove
+        path: /spec/groups/0/rules/3
+      - op: remove
+        path: /spec/groups/0/rules/2
+      - op: remove
+        path: /spec/groups/0/rules/1
