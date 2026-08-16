@@ -8,7 +8,12 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-mealplan-service
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-mealplan-service
-  newTag: "4a7fc5bc62ffc826c6adde462bee561292ee8da8"
+  # ⟳ 2026-08-17 — 임프레션 조용한 실패에 관측을 붙인 이미지(앱 MR !40).
+  # 🔴 **손으로 올린다.** CD 가 지금 끊겨 있다 — 핀을 갱신하는 주체가 Jenkins(호스트 C)인데
+  #    그 호스트가 의도적으로 내려가 있고, GitLab 쪽 `config-pin` 잡은 `MP_ENABLE_CD` 미설정으로
+  #    기본 비활성이다(C-89 유예). ⇒ 이미지는 ECR 에 올라가는데 **아무도 핀을 안 옮긴다.**
+  #    호스트 C 가 꺼져 있는 동안 EKS 배포는 이 파일을 손으로 고치는 것이 유일한 경로다.
+  newTag: "ee8ed7e8d960eaada4ebaf860b35ea0670e393b5"
 
 # ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
 # 150m → 100m (= 다른 백엔드 8종과 같은 값). mealplan 은 HPA 대상이 아니고
