@@ -26,6 +26,13 @@ kind: Kustomization
 #    ② `mp-backup` 에서 **AWS 에 대상이 없는 4알람 제거**
 #    근거·전수 분류는 `monitoring/EKS-RULESET.md`.
 #
+# 4. **Blue-Green `-preview` 를 알림 집계에서 제외 (2026-08-17)** — 맨 아래 블록.
+#    base 의 `service!~".*-canary"` 는 **카나리 시절 식**이라 EKS 에서 절반만 듣는다.
+#    C-76 으로 Service 가 셋(`account`·`account-canary`·`account-preview`)이 되면서
+#    preview 가 남아 **2중 계상**된다 ⇒ `MpAuthPathFailing` 이 실제 3건에서 운다(의도 5건).
+#    🔴 이건 "쓰인 시점엔 맞았던 규칙이 형상 변경을 못 따라온" 부류다 —
+#       ALB(C-26→C-60)·MinIO(C-18)·Kafka(C-44) 와 정확히 같은 유형이니 다음에도 여기부터 의심할 것.
+#
 # ── ✅ 여기서 해소된 것 (종전 "앱 레포 소관" 이었던 것) ──────────────────────────
 # 🔴 아래 A·B·C 는 **더 이상 미결이 아니다** — 0-3(2026-08-13)이 EKS 쪽 kube-prometheus-stack 을
 #    ArgoCD/config 소유로 **신설**하면서 values 가 이 레포 안으로 들어왔다:
@@ -165,3 +172,149 @@ patches:
         value: MpBackupEtcdStale
       - op: remove
         path: /spec/groups/0/rules/4
+
+  # ══ Blue-Green `-preview` 를 알림 집계에서 제외 (2026-08-17) ═════════════════════
+  # 🔴 **base 의 `service!~".*-canary"` 는 EKS 에서 절반만 듣는다.**
+  #    base 주석은 *"카나리 중에는 같은 파드가 두 Service 에 동시에 속해 2배가 된다"* 고 적었다.
+  #    맞는 말이지만 **그건 카나리 시절 얘기다.** C-76 으로 EKS 는 account·recipe 가 Blue-Green 이고
+  #    Argo Rollouts 가 Service 를 **세 개**(`account` · `account-canary` · `account-preview`) 유지한다.
+  #    ⇒ 제외가 `-canary` 하나뿐이라 **preview 가 남아 2중 계상**된다.
+  #
+  # 🔴 실측 (2026-08-17 · `sum(increase(http_requests_total[1h]))`):
+  #       account = 3374.1   account-canary = 3379.2   account-preview = 3380.2
+  #       recipe  =    9.076 recipe-canary  =    9.076 recipe-preview  =    9.076
+  #    세 Service 가 **같은 파드**를 가리키므로 값이 같다. BG 는 배포 중이 아닐 때
+  #    active 와 preview 가 같은 ReplicaSet 을 가리키기 때문이다(배포 중에만 갈린다).
+  #
+  # 🔴 왜 이게 실제 오발화인가 — `mp-app-symptom` 3알람은 전부 **절대 건수** 임계값이다.
+  #    `MpAuthPathFailing` 은 `>= 5` 인데 2배로 세므로 **실제 3건에서 운다.** 의도한 감도의 1.6배다.
+  #    (비율 알람은 분자·분모가 같이 2배라 상쇄되지만, `mp-app-sli` 는 `sum by(service)` 라
+  #     같은 사건에 **알람이 3개** 뜬다 — 수치는 맞고 소음만 3배인 별개 증상이다.)
+  #
+  # ── 왜 base 가 아니라 여기서 고치나 ────────────────────────────────────────────
+  # 🔴 **온프렘에는 `-preview` Service 가 없다**(실측 2026-08-17: `account-canary`·`recipe-canary` 뿐).
+  #    C-27 의 전면 Blue-Green 전환은 **이관 후**라 온프렘은 카나리로 남는다.
+  #    ⇒ base 를 고치면 온프렘 동작은 그대로인데 **렌더가 바뀌어** C-83 안전기준
+  #      (`kubectl kustomize monitoring/overlays/onprem | sha256sum` 불변)이 깨진다.
+  #      preview 는 EKS 전용 산물이므로 제외도 EKS 오버레이에 있는 것이 형상과 일치한다.
+  #
+  # 🔴 **`op: test` 를 `expr` 전문에 건다** — 여기서는 인덱스 확인만으로 부족하다.
+  #    이 패치는 expr **전체를 replace** 하므로, 누가 base 에서 임계값을 조정하면
+  #    EKS 는 낡은 식을 조용히 계속 쓴다(알람 임계가 두 사이트에서 갈리는데 아무도 모른다).
+  #    expr 을 test 하면 그 순간 **렌더가 죽어** validate.py 가 잡는다.
+  #    ⚠️ 그래서 base 의 expr 을 고치면 **이 블록도 같이 고쳐야 한다.** 그게 의도다.
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: PrometheusRule
+      name: mp-app-symptom
+    patch: |
+      - op: test
+        path: /spec/groups/0/rules/0/alert
+        value: MpAuthPathFailing
+      - op: test
+        path: /spec/groups/0/rules/0/expr
+        value: |
+          sum(increase(http_requests_total{namespace="app",service!~".*-canary",
+              handler=~"/api/auth/(login|signup|refresh|google|kakao)",status=~"5.."}[30m])) >= 5
+      - op: replace
+        path: /spec/groups/0/rules/0/expr
+        value: |
+          sum(increase(http_requests_total{namespace="app",service!~".*-(canary|preview)",
+              handler=~"/api/auth/(login|signup|refresh|google|kakao)",status=~"5.."}[30m])) >= 5
+      - op: test
+        path: /spec/groups/0/rules/1/alert
+        value: MpMealplanRecommendFailing
+      - op: test
+        path: /spec/groups/0/rules/1/expr
+        value: |
+          sum(increase(http_requests_total{namespace="app",service!~".*-canary",
+              handler="/api/mealplan/recommend",status=~"5.."}[30m])) >= 3
+      - op: replace
+        path: /spec/groups/0/rules/1/expr
+        value: |
+          sum(increase(http_requests_total{namespace="app",service!~".*-(canary|preview)",
+              handler="/api/mealplan/recommend",status=~"5.."}[30m])) >= 3
+      - op: test
+        path: /spec/groups/0/rules/2/alert
+        value: MpAppErrorsAccumulating
+      - op: test
+        path: /spec/groups/0/rules/2/expr
+        value: |
+          sum by (service) (increase(http_requests_total{namespace="app",
+              service!~".*-canary",status=~"5.."}[30m])) >= 10
+      - op: replace
+        path: /spec/groups/0/rules/2/expr
+        value: |
+          sum by (service) (increase(http_requests_total{namespace="app",
+              service!~".*-(canary|preview)",status=~"5.."}[30m])) >= 10
+
+  # ── `mp-app-sli` — 제외가 **아예 없다** (같은 사건에 알람 3개) ──────────────────
+  # 🔴 base 의 SLI 3알람은 `sum by(service)` 라 계산은 맞다. 대신 `account`·`account-canary`
+  #    ·`account-preview` 가 **각각 별개 시리즈**라 한 장애에 알람이 세 번 뜬다.
+  #    온콜이 같은 사건을 셋으로 보고 중복 대응한다 — 위 symptom 과 원인은 같고 증상만 다르다.
+  # 🟢 `MpCoreApiSevereLatency`(rules/1)는 **손대지 않는다** — 이미 명시 allowlist
+  #    (`service=~"account|mealplan|…"`)라 `account-canary` 가 애초에 매치되지 않는다. 면역이다.
+  # 🟢 `MpAppContainerOOMKilled`(rules/3)도 대상 아님 — `service` 라벨을 쓰지 않는다(pod/container 기준).
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: PrometheusRule
+      name: mp-app-sli
+    patch: |
+      - op: test
+        path: /spec/groups/0/rules/0/alert
+        value: MpAppHighP95Latency
+      - op: test
+        path: /spec/groups/0/rules/0/expr
+        value: |
+          histogram_quantile(
+            0.95,
+            sum by(service, le) (
+              rate(http_request_duration_highr_seconds_bucket{namespace="app"}[15m])
+            )
+          ) > 1
+          and on(service)
+          (sum by(service) (increase(http_requests_total{namespace="app"}[15m])) >= 20)
+      - op: replace
+        path: /spec/groups/0/rules/0/expr
+        value: |
+          histogram_quantile(
+            0.95,
+            sum by(service, le) (
+              rate(http_request_duration_highr_seconds_bucket{namespace="app", service!~".*-(canary|preview)"}[15m])
+            )
+          ) > 1
+          and on(service)
+          (sum by(service) (increase(http_requests_total{namespace="app", service!~".*-(canary|preview)"}[15m])) >= 20)
+      - op: test
+        path: /spec/groups/0/rules/2/alert
+        value: MpAppHighErrorRate
+      - op: test
+        path: /spec/groups/0/rules/2/expr
+        value: |
+          (
+            sum by(service) (
+              increase(http_requests_total{namespace="app", status=~"5.."}[15m])
+            )
+            /
+            sum by(service) (
+              increase(http_requests_total{namespace="app"}[15m])
+            )
+          ) > 0.05
+          and on(service)
+          (sum by(service) (increase(http_requests_total{namespace="app"}[15m])) >= 20)
+      - op: replace
+        path: /spec/groups/0/rules/2/expr
+        value: |
+          (
+            sum by(service) (
+              increase(http_requests_total{namespace="app", service!~".*-(canary|preview)", status=~"5.."}[15m])
+            )
+            /
+            sum by(service) (
+              increase(http_requests_total{namespace="app", service!~".*-(canary|preview)"}[15m])
+            )
+          ) > 0.05
+          and on(service)
+          (sum by(service) (increase(http_requests_total{namespace="app", service!~".*-(canary|preview)"}[15m])) >= 20)
