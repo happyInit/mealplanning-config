@@ -70,6 +70,20 @@ patches:
         value: mp-minio
       - op: remove
         path: /spec/groups/2
+      # 🔴 **`mp-kafka` 그룹 제거 (C-44 · 2026-08-16)** — EKS 에 Kafka 가 없다.
+      #    `MpKafkaMetricsUnavailable` 이 `absent(up{job="data/mp-kafka-exporter"})` 라
+      #    **대상이 없으면 발화한다** ⇒ 바로 위 MinIO 와 정확히 같은 실패 유형이다.
+      #    🔵 `EKS-RULESET.md §ⓑ` 가 *"EKS 에 Kafka 없음으로 확정되면 여기서 제거"* 라고
+      #       처방까지 적어 뒀고 **C-44(Kafka 전면 제거)가 그 조건을 닫았다.**
+      #    🔴 **실측으로 드러났다** — `monitoring` 트랙을 켠 직후(감사 F-1) 이 알림이 실제로 발화했다.
+      #       *켜기 전에는 규칙 자체가 없어 안 보였을 뿐이다.* 관측을 켜면 이런 게 같이 나온다.
+      #    ⚠️ **인덱스가 하나 당겨진다** — 위에서 `2`(mp-minio)를 지우면 `mp-kafka` 가 **1** 이 된다.
+      #       그래서 `op: test` 로 이름을 먼저 확인한다(순서가 바뀌면 렌더가 죽는다).
+      - op: test
+        path: /spec/groups/1/name
+        value: mp-kafka
+      - op: remove
+        path: /spec/groups/1
 
   # ══ §1-28 ① `mp-workload-spread` 통째 교체 (2026-08-13) ═════════════════════
   # base 판은 zone 을 노드 **이름 정규식**으로 파생한다(`k8s-worker-([ab])[0-9]+`). EKS 노드는
