@@ -71,3 +71,32 @@ patches:
             - ports:
                 - { port: "443", protocol: TCP }
                 - { port: "80", protocol: TCP }
+      # ── ③ 🔴 **ALB 유입 (C-60) — 2026-08-16 신설. 이게 없으면 공개 사이트가 죽는다.** ──
+      #
+      # 위 ①②는 **C-26(NLB · target-type `instance`) 시절에 쓰였다.** C-60 이 진입을 ALB 로
+      # 바꾸면서 유입 형상이 통째로 달라졌는데 이 파일이 따라오지 않았다:
+      #
+      #   NLB(instance) : 클라이언트 IP 보존 → 소스 = world · 헬스체크 = **노드**(host)
+      #   ALB(ip)       : ALB ENI 가 **파드 IP 로 직접** 연결 · 헬스체크도 **그 ENI 에서** 온다
+      #
+      # 🔴 **실측(2026-08-16)** — 타깃그룹 포트 **443** · 헬스체크 포트 **15021** `/healthz/ready`
+      #    · targetType **ip** · 등록 타깃 = 파드 IP `10.10.66.144`·`10.10.83.233`(healthy).
+      #    base 의 15021 규칙은 `fromEntities: host` 뿐이라 **ALB 헬스체크가 걸리지 않는다**
+      #    ⇒ 타깃 2개가 전부 unhealthy 로 떨어지고 **`aws.mealbong.cloud` 가 죽는다.**
+      #    증상이 "정책만 켰는데 사이트가 죽음" 이라 원인을 게이트웨이에서 찾게 된다.
+      #
+      # 🔵 **`world` 로 때우지 않고 CIDR 로 못박는 이유** — Cilium 이 VPC 안의 미지 IP 를
+      #    `world` 로 볼지는 IPAM·native-routing 설정에 딸린 문제다. ALB 가 사는 곳은
+      #    확정돼 있으므로(공개 서브넷 2개) **거기서 온다고 적는 편이 분류에 의존하지 않아
+      #    안전하고, 범위도 `world` 보다 좁다.**
+      - op: add
+        path: /spec/ingress/-
+        value:
+          fromCIDRSet:
+            - cidr: 10.10.0.0/24   # mp-subnet-public-ap-northeast-2a
+            - cidr: 10.10.1.0/24   # mp-subnet-public-ap-northeast-2b
+          toPorts:
+            - ports:
+                - { port: "443", protocol: TCP }
+                - { port: "80", protocol: TCP }
+                - { port: "15021", protocol: TCP }   # 🔴 ALB 헬스체크

@@ -107,34 +107,47 @@ patches:
   # ⚠️ 켠 뒤 **`up` 으로 확인할 것** — `mp-app-services` 의 셀렉터·포트가 온프렘 라벨 그대로면
   #    Application 은 Synced 인데 타깃이 0일 수 있다(= 초록불인데 안 잡힘).
 
-  # 🔴 정책 4종 — 골격이고 `0-17`·`0-18` 이 선행이다. 온프렘 netpol 은 LAN `192.168.0.0/24` 를
-  #    ipBlock 으로 박고 있는데 `0-18` 이 **"VPC CIDR 로 기계적 치환 금지"** 를 명시한다.
-  #    🟢 정책이 없는 동안 앱은 정상 통신한다(default-deny 가 없으므로). 보안 수위는 낮지만
-  #       검증 단계의 의도된 상태이고, `0-18` 이 끝나면 여기 4블록을 지우면 켜진다.
+  # 🟢 정책 4종 — **삭제를 걷었다 (2026-08-16 · `0-17`·`0-18` 종결).**
+  #    종전 근거는 *"골격이고 0-17·0-18 이 선행"* 이었고 맞았다. 그 선행이 끝났다 —
+  #    `platform/policies*/overlays/eks` 네 벌이 전부 실물로 쓰여 있고, LAN ipBlock 을
+  #    VPC CIDR 로 기계적 치환하지 않았다(FQDN·엔티티·서브넷 CIDR 로 다시 썼다).
+  #
+  # 🔴 **켜기 전 감사에서 확인한 것 (전부 실측)**
+  #    ① app ns 12파드 전부 `tier` 라벨 보유 ⇒ default-deny 가 고아를 만들지 않는다
+  #    ② 게이트웨이 파드 라벨 `gateway.networking.k8s.io/gateway-name=mp-gw-public` 일치
+  #    ③ 🔴 **kubelet 프로브는 15020 인데 정책은 15021 만 연다** — 그런데 온프렘에서
+  #       같은 형상이 10일째 라이브고 파드 16/17 Ready 다. Cilium 이 **로컬 호스트→파드를
+  #       기본 허용**(`allow-localhost: auto`)하기 때문이고, 그래서 문제가 되지 않는다.
+  #    ④ FQDN 정책 전부 **DNS L7 rule(`matchPattern: '*'`) 동반** ⇒ IP 학습이 된다
+  #       (이게 없으면 FQDN 정책은 전부 차단으로 동작한다)
+  #    ⑤ video 는 Vertex(`GCP_LOCATION=global`)라 `aiplatform.googleapis.com` 이 맞다
+  #       — 리전 엔드포인트가 아니므로 `matchName` 으로 걸린다
+  #    ⑥ app ns 에 IRSA SA **0개** ⇒ 앱은 AWS 를 직접 부르지 않는다(엔드포인트 egress 불요)
+  #    🔴 ⑦ **ALB 헬스체크가 막히는 것을 발견해 `policies-ingress/overlays/eks` 를 고쳤다**
+  #         (C-26 NLB 시절 규칙이 C-60 ALB 를 따라오지 않았다 — 그 파일 주석 ③ 참조)
+  #
+  # ⚠️ 이 앱들은 **수동 sync** 다. 위험도 순으로 하나씩 켜고 검증한다:
+  #    pipeline → data → app → **ingress(마지막 · 공개 진입)**
   - target: {group: argoproj.io, kind: Application, name: mp-policies}
     patch: |-
-      $patch: delete
-      apiVersion: argoproj.io/v1alpha1
-      kind: Application
-      metadata: {name: mp-policies, namespace: argocd}
+      - op: replace
+        path: /spec/source/path
+        value: platform/policies/overlays/eks
   - target: {group: argoproj.io, kind: Application, name: mp-policies-data}
     patch: |-
-      $patch: delete
-      apiVersion: argoproj.io/v1alpha1
-      kind: Application
-      metadata: {name: mp-policies-data, namespace: argocd}
+      - op: replace
+        path: /spec/source/path
+        value: platform/policies-data/overlays/eks
   - target: {group: argoproj.io, kind: Application, name: mp-policies-ingress}
     patch: |-
-      $patch: delete
-      apiVersion: argoproj.io/v1alpha1
-      kind: Application
-      metadata: {name: mp-policies-ingress, namespace: argocd}
+      - op: replace
+        path: /spec/source/path
+        value: platform/policies-ingress/overlays/eks
   - target: {group: argoproj.io, kind: Application, name: mp-policies-pipeline}
     patch: |-
-      $patch: delete
-      apiVersion: argoproj.io/v1alpha1
-      kind: Application
-      metadata: {name: mp-policies-pipeline, namespace: argocd}
+      - op: replace
+        path: /spec/source/path
+        value: platform/policies-pipeline/overlays/eks
 
   # ── ② 남은 14개의 source.path 를 eks 오버레이로 ─────────────────────────────
   # 🔴 `op: replace` 를 쓴다 — 대상 필드가 없으면 **렌더가 죽어서** 오타가 즉시 드러난다.
