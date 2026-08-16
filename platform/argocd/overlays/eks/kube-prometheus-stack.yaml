@@ -48,6 +48,18 @@ spec:
       #    어노테이션 한도(256KB)에 닿는다. keda 와 같은 사정.
       skipCrds: false
       valuesObject:
+        # ══ PriorityClass 배선 (2026-08-16) — 관측 스택은 `observability-high` ═════
+        # 🔴 근거 = 2026-08-16 실사고. BG 승격 창(파드 2배)의 압력이 **Prometheus 를 선점해 내렸고**,
+        #    그 5분 동안 승격 게이트가 판정 근거를 잃어 롤아웃이 중단됐다 — 배포가 자기 판정 근거를
+        #    부순 것. 원인은 이 스택 전부가 `priorityClassName` 없이 **priority 0** 이었던 것이다.
+        # 🔵 앱(100000)보다 위(300000)에 두는 근거는 중요도가 아니라 **비대칭**이다 —
+        #    Prometheus 는 replica 1 이라 밀리면 즉시 전면 실명이고, 앱은 replica 2~4 라 하나 밀려도
+        #    서비스가 산다. 자리가 정말 없으면 앱 스케일업이 **눈에 보이게** Pending 되는 편이 낫다.
+        # 🔴 키 경로는 차트마다 다르고 틀리면 **조용히 무시된다.** 아래 6곳은 `helm template` 렌더로
+        #    실제 주입을 확인했다(Prometheus·Alertmanager CR · operator · grafana · KSM · webhook Job).
+        # ⚠️ 이건 **선점(scheduler)만** 막는다. 노드압박 축출(kubelet)은 QoS 를 먼저 보는데 이 스택은
+        #    전부 Burstable 이다 — 완전히 지키려면 memory request == limit 이 필요하고 별건이다.
+        # ⚠️ 적용에는 파드 재생성이 필요하다 → 관측 스택 **재시작 1회**(메트릭 1~2분 공백).
         # ── 컨트롤플레인 컴포넌트: EKS 는 **관리형이라 스크레이프 대상이 없다** ──────
         # 온프렘과 값이 같지만(`false`) **이유가 다르다** — 온프렘은 kubeadm + kube-proxy 미설치
         # (Cilium kubeProxyReplacement), EKS 는 컨트롤플레인이 AWS 소유라 엔드포인트가 없다.
@@ -69,6 +81,7 @@ spec:
 
         # ── kube-state-metrics ────────────────────────────────────────────────
         kube-state-metrics:
+          priorityClassName: observability-high
           resources:
             requests:
               cpu: 10m
@@ -84,6 +97,10 @@ spec:
             - --metric-labels-allowlist=nodes=[topology.kubernetes.io/zone]
 
         prometheusOperator:
+          priorityClassName: observability-high
+          admissionWebhooks:
+            patch:
+              priorityClassName: observability-high
           resources:
             requests:
               cpu: 10m
@@ -92,6 +109,7 @@ spec:
         # ── Prometheus ────────────────────────────────────────────────────────
         prometheus:
           prometheusSpec:
+            priorityClassName: observability-high
             # 🔴 0-3b — **AWS 쪽에만 붙인다.** 온프렘 Prometheus 에는 붙이지 않는다:
             #    ① `external_labels` 는 로컬 TSDB 에 저장되지 않아 **소급이 애초에 불가능**하다.
             #       이미 쌓인 시계열에 라벨이 생기지 않으므로 양쪽에 붙여도 비대칭은 남는다.
@@ -158,6 +176,7 @@ spec:
         # ── Alertmanager ──────────────────────────────────────────────────────
         alertmanager:
           alertmanagerSpec:
+            priorityClassName: observability-high
             # 0-5 — 온프렘의 `nodeSelector zone: host-b` 제거(Prometheus 와 같은 이유).
             resources:
               requests:
@@ -245,6 +264,7 @@ spec:
 
         # ── Grafana ───────────────────────────────────────────────────────────
         grafana:
+          priorityClassName: observability-high
           enabled: true
           # 🔴 **`adminPassword` 를 여기에 적을 수 없다.** 온프렘 values 는 평문으로 갖고 있지만
           #    (Ansible `secrets.yml` → 템플릿), 그 파일은 git 밖이다. 이 파일은 **공개 레포**다.

@@ -43,6 +43,9 @@ spec:
     targetRevision: "4.56.1" # = 온프렘 라이브와 동일. appVersion 1.12.1
     helm:
       valuesObject:
+        # PriorityClass (2026-08-16) — 노드 메트릭이 끊기면 용량 판단 근거가 사라진다.
+        # 🔵 DaemonSet 이라 노드당 1개고 요청이 작아, 올려도 다른 파드를 실질적으로 밀어내지 않는다.
+        priorityClassName: observability-high
         extraArgs:
           - --collector.textfile.directory=/host/root/var/lib/node_exporter/textfile_collector
         prometheus:

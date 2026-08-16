@@ -20,8 +20,15 @@
 # ⚠️ 🔴 **`lvm-localpv-*-critical` 2종은 여기 없다** — OpenEBS LVM 차트가 만드는 것이고
 #    C-16(EBS gp3 CSI)로 EKS 에는 OpenEBS 가 없다. aws-ebs-csi-driver 는 자기 것을 들고 온다.
 #
-# 🔴 globalDefault 를 **아무 것에도 켜지 않는다**(라이브도 전부 <none>). 켜면 priorityClassName 을
-#    안 적은 파드 전부가 그 값을 받아, 축출 순서 설계(§13.7)가 조용히 무의미해진다.
+# 🔄 **globalDefault 규칙 정정(2026-08-16 · 사용자 확정)** — 종전 규칙은
+#    *"globalDefault 를 아무 것에도 켜지 않는다. 켜면 지정 안 한 파드가 전부 그 값을 받아 축출
+#    순서 설계가 조용히 무의미해진다"* 였다. 🔴 **실측이 이 전제를 뒤집었다**: 안 켜도 그 파드들은
+#    이미 한 값을 받고 있었다 — **0, 즉 최하위**다. 라이브에 **34 파드**가 그렇게 앉아 있었고
+#    (observability 7 · argocd 8 · argo-rollouts 3 · cert-manager 3 · ESO 3 · keda 3 · cnpg 2 ·
+#     eck 1 · cost 4), 그 결과 **배치성 크롤(pipeline-low=1000)이 데이터 티어 오퍼레이터보다 높았다.**
+#    ⇒ 실제로 벌어진 일은 "설계가 무의미해지는 것"이 아니라 **"까먹으면 최악이 되는 것"** 이었다.
+#    ⇒ 기본값을 **의도적으로 배치 위·앱 아래**에 두어 *실수의 기본값을 안전한 쪽으로* 돌린다.
+#    ⚠️ globalDefault 는 **새로 만들어지는 파드에만** 적용된다 — 이미 도는 파드는 재생성 전까지 0 이다.
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -52,5 +59,75 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-options: Prune=false
 value: 1000
+# 🔴 **`Never` = 낮은 것과 "남을 밀어낼 권한이 없는 것"은 별개다**(2026-08-16 정정).
+#    종전 `PreemptLowerPriority` 면 크롤 CronJob 이 자기보다 낮은 것을 **쫓아낼 수 있다** —
+#    실측상 그 대상이 priority 0 인 오퍼레이터·관측 34 파드였다. 배치성 작업은 자리가 날 때까지
+#    **줄만 서면 된다**(Pending 은 정상 상태다). 늦게 도는 것과 남을 죽이는 것은 값이 다르다.
+# ⚠️ 🔴 `preemptionPolicy` 는 **불변 필드**다(실측: `field is immutable`). 이 값을 바꾸려면
+#    오브젝트를 **지우고 다시 만들어야** 하고, 그 사이에 `pipeline-low` 를 참조하는 파드가
+#    생성되면 admission 에서 **거부**된다(이 파일 머리말 참조). 그래서 **사람이 1회 수동**으로
+#    `delete && apply` 를 붙여서 실행한다 — ArgoCD 에 `Force=true` 를 상시로 달지 않는다
+#    (상시로 달면 임의 시점의 sync 가 클러스터 전역 admission 공백을 만든다).
+preemptionPolicy: Never
+description: 크롤러·CronJob·재학습 — 압박 시 가장 먼저 밀려나야 하는 배치성 작업 (남을 밀어내지는 않는다)
+---
+# ══ platform-critical — 복구 수단 (2026-08-16 신설) ════════════════════════════
+# 🔴 **사고를 수습하는 도구가 사고 때 가장 먼저 죽으면 안 된다.** 이게 C-65 가 *"보안 알림을
+#    Alertmanager 로 보내지 않는다"* 로 거부한 것과 같은 원칙이다. 여기 드는 것들은 전부
+#    "무언가 잘못됐을 때 되돌리는 데 필요한 것"이다 — cert-manager(인증서 갱신) ·
+#    external-secrets(비밀 공급) · CNPG/ECK(데이터 티어 페일오버·백업) · ArgoCD(배포·롤백) ·
+#    argo-rollouts(BG 승격·undo) · KEDA(컨슈머 기동).
+# 🔵 **data-critical 보다 아래인 이유** — CNPG 는 PG 를 *돌보고*, PG 가 *서빙한다.* 자리가 하나면
+#    PG 를 지킨다. 오퍼레이터가 잠깐 없어도 이미 도는 PG 는 계속 답한다(페일오버·백업만 멈춘다).
+# 🔵 **app-normal 보다 위인 이유** — 앱은 replica 가 여럿이라 하나 밀려도 서비스가 살지만,
+#    이것들은 대부분 단일 인스턴스라 밀리면 능력 자체가 사라진다.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-critical
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+value: 800000
 preemptionPolicy: PreemptLowerPriority
-description: 크롤러·CronJob·재학습 — 압박 시 가장 먼저 밀려나야 하는 배치성 작업
+description: 오퍼레이터·컨트롤러 — cert-manager·ESO·CNPG·ECK·ArgoCD·argo-rollouts·KEDA (복구 수단)
+---
+# ══ observability-high — 진단 수단 (2026-08-16 신설) ═══════════════════════════
+# 🔴 **앱보다 위에 두는 근거는 "중요도"가 아니라 비대칭이다.**
+#      Prometheus = replica 1 → 밀리면 **즉시 전면 실명**
+#      앱          = replica 2~4 → 하나 밀려도 **서비스는 산다**
+#    위로 올려서 잃는 것(앱 파드 하나, 그마저도 Karpenter 가 받는다)보다 아래 둬서 잃는 것
+#    (관측 전체)이 훨씬 크다. 자리가 정말 없으면 앱 스케일업이 Pending 으로 **눈에 보이게** 실패하는
+#    편이, 관측이 조용히 사라지는 것보다 낫다.
+# 🔴 실사고 근거(2026-08-16) — BG 승격 창의 파드 2배 압력이 Prometheus 를 선점해 내렸고,
+#    그 5분 동안 승격 게이트가 판정 근거를 잃어 롤아웃이 중단됐다. *배포가 자기 판정 근거를 부순 것.*
+# ⚠️ **이것만으로는 절반이다.** 선점(scheduler)은 이 값이 막지만, 노드압박 축출(kubelet)은
+#    **QoS 를 먼저 본다** — 관측 스택은 현재 전부 Burstable 이다. 완전히 지키려면 해당 파드의
+#    memory request == limit(Guaranteed)이 필요하고, 그건 메모리 예약이라 별건으로 판단한다.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: observability-high
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+value: 300000
+preemptionPolicy: PreemptLowerPriority
+description: Prometheus·Alertmanager·Loki·Tempo·Grafana — 밀리면 전면 실명 (진단 수단)
+---
+# ══ mp-unclassified — "분류 안 됨"의 바닥 (2026-08-16 신설 · globalDefault) ═════
+# 🔴 **이 클래스의 목적은 보호가 아니라 0 을 불가능하게 만드는 것이다.** 지정을 빠뜨린 워크로드가
+#    최하위로 앉아 배치보다도 먼저 밀려나는 일을 없앤다. 이름이 `mp-unclassified` 인 이유도 같다 —
+#    `kubectl describe` 에 이 이름이 보이면 **"분류를 안 한 것"이 즉시 드러나야** 하기 때문이다.
+#    (`mp-default` 같은 이름이면 정상으로 읽혀서 영영 안 고친다.)
+# 🔵 값의 자리 = **pipeline-low 위 · app-normal 아래.** 위로 올리면 아무 stray 파드가 앱을
+#    밀어내고, 아래로 내리면 지금 문제(까먹으면 최악)가 그대로다.
+# ⚠️ 새 파드에만 적용된다. 지금 0 인 34 파드는 재생성될 때 이 값을 받는다.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: mp-unclassified
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+value: 5000
+globalDefault: true
+preemptionPolicy: PreemptLowerPriority
+description: 분류 누락 워크로드의 바닥값 — 이 이름이 보이면 priorityClassName 을 지정하라는 신호다
