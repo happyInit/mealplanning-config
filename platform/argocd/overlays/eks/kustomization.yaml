@@ -677,3 +677,53 @@ patches:
       - op: replace
         path: /spec/source/helm/valuesObject/aggregator/serviceMonitor/enabled
         value: false
+
+# ══ cnpg-operator · keda — 거대 CRD 재적용 실패 (2026-08-17) ═══════════════════
+#
+# 증상: 두 앱이 `Synced` + `Healthy` 인데 **마지막 sync 작업만 빨갛다.**
+#   error when patching "/dev/shm/…": CustomResourceDefinition "clusters.postgresql.cnpg.io"
+#   is invalid: metadata.annotations: Too long: may not be more than 262144 bytes
+#
+# 원인: CRD 실물이 **674KB(cnpg clusters) · 979KB(keda scaledjobs)** 다. 클라이언트 사이드 apply 는
+#   전체 매니페스트를 `kubectl.kubernetes.io/last-applied-configuration` 어노테이션에 넣는데
+#   그 한도가 256KB 라 **원리적으로 불가능**하다.
+#   🔴 `ServerSideApply=true` 는 이미 켜져 있다. 그런데도 `/dev/shm/…` 를 patch 한다는 것은
+#      ArgoCD 가 **SSA 에 실패해 CSA 로 되돌아갔다**는 뜻이다(필드 소유권 충돌이 유력 —
+#      managedFields 에 `argocd-controller/Apply` 와 `kube-apiserver/Update` 가 공존한다).
+#
+# 왜 지금 드러났나: 온프렘의 같은 두 앱은 **2026-07-31 이후 sync 를 시도한 적이 없어** 초록으로 보인다.
+#   사이트 차이가 아니라 **"실제로 apply 를 해봤느냐"** 의 차이다. 온프렘도 지금 sync 하면 같이 깨진다.
+#   ⇒ 이건 EKS 전용 결함이 아니라 **아직 안 터진 공통 결함**이다(C-83 로 온프렘은 그대로 둔다).
+#
+# ── 🔴🔴 절대 쓰면 안 되는 처방 ────────────────────────────────────────────────
+# 이 오류를 검색하면 `Replace=true` 또는 `Force=true` 가 먼저 나온다. **여기서는 금지다.**
+#   `Replace=true` 는 실패 시 **삭제 후 재생성**으로 넘어갈 수 있고, `clusters.postgresql.cnpg.io`
+#   CRD 를 지우면 **그 CRD 의 모든 Cluster 오브젝트가 캐스케이드로 삭제된다 = PG 전손.**
+#   얻는 것(빨간 표시 제거)과 잃는 것(데이터베이스 전체)이 비교가 되지 않는다.
+#
+# ── 🟢 채택: `ApplyOutOfSyncOnly=true` ────────────────────────────────────────
+# ArgoCD 는 기본적으로 **차이가 없어도 전 리소스를 다시 apply** 한다. 두 앱은 `automated`
+# (prune·selfHeal)라 그 재적용이 주기적으로 돌고, 매번 이 CRD 에서 깨진다.
+# 이 옵션은 **OutOfSync 인 것만** 적용하므로 이미 맞는 CRD 를 건드리지 않는다 → 실패가 사라진다.
+# 🔵 위험 0 — apply **방식**이 아니라 **대상 선정**만 바꾼다.
+#
+# 🔴 **근본 해결은 아니다** — 차트를 올려 CRD 가 실제로 바뀌는 날에는 apply 대상이 되고 같은 오류가
+#    다시 난다. 다만 그때는 **업그레이드라는 명확한 맥락에서** 시끄럽게 실패한다. 지금처럼
+#    "아무것도 안 했는데 상시 빨간" 상태가 아니다. 그때의 정답은 SSA 충돌 해소이고,
+#    **PG 가 걸린 변경이라 별도 창에서 다뤄야 한다.**
+  - target: {group: argoproj.io, kind: Application, name: cnpg-operator}
+    patch: |-
+      - op: test
+        path: /spec/syncPolicy/syncOptions/0
+        value: ServerSideApply=true
+      - op: add
+        path: /spec/syncPolicy/syncOptions/-
+        value: ApplyOutOfSyncOnly=true
+  - target: {group: argoproj.io, kind: Application, name: keda}
+    patch: |-
+      - op: test
+        path: /spec/syncPolicy/syncOptions/0
+        value: ServerSideApply=true
+      - op: add
+        path: /spec/syncPolicy/syncOptions/-
+        value: ApplyOutOfSyncOnly=true
