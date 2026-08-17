@@ -22,9 +22,14 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-ranking-serving
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-ranking-serving
-  # 🔴 **모델이 구워진 첫 이미지** (파이프라인 #59). 이 앞 태그로 되돌리면 에러 없이
-  #    규칙순 폴백으로 떨어져 **롤백이 조용하다** — 되돌릴 땐 `/health` 의 `model_loaded` 를 같이 볼 것.
-  newTag: "9bea7dfed36b24a2ac8bdf1017f6869f80f305bf"
+  # 🔴 모델이 구워진 첫 이미지 = `9bea7dfe…`(파이프라인 #59). 그 앞으로 되돌리면 에러 없이
+  #    규칙순 폴백으로 떨어져 **롤백이 조용했다.**
+  # 🟢 **이제는 조용하지 않다** (2026-08-17 · 파이프라인 #77) — 이 태그부터 `/metrics` 와
+  #    `mp_ranking_model_loaded` 가 붙는다. 모델 없는 리비전으로 되돌아가면
+  #    `MpRankingModelNotLoaded` 가 15분 뒤 울고, **계측조차 없는** 리비전으로 되돌아가면
+  #    `MpRankingMetricsMissing`(absent)이 1시간 뒤 운다.
+  #    ⇒ 되돌릴 때 `/health` 를 손으로 확인하던 절차가 알림으로 대체됐다(체크리스트 `1-21` 완결).
+  newTag: "a43b0ed2799241beca0d3da8c9fead26455fb598"
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
