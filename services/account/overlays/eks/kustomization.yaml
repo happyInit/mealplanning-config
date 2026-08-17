@@ -134,6 +134,22 @@ patches:
     kind: Rollout
     name: mp-account
     version: v1alpha1
+# ── 배포 실증용 릴리스 표식 (BG 시연) ────────────────────────────────────────
+# 🔴 **이 값을 바꾸는 것이 곧 배포다.** 파드 템플릿이 달라지면 `rollouts-pod-template-hash` 가
+#    새로 계산되고 Argo Rollouts 가 green ReplicaSet 을 띄운다 — 이미지를 안 바꿔도
+#    BG 전 과정(green 기동 → 승격 게이트 → 수동 승격)이 그대로 돈다.
+# 🔵 그 해시가 `MP_RELEASE` 로 주입돼 `/api/auth/health` 의 `release` 로 나온다
+#    ⇒ **승격 순간이 응답에서 눈에 보인다**(patch-bluegreen.yaml 의 MP_RELEASE 절).
+# ⚠️ 시연용이라 값 자체엔 의미가 없다. 실제 릴리스는 이미지 태그 교체로 한다.
+- patch: |-
+    - op: add
+      path: /spec/template/metadata/annotations/mp.io~1release-note
+      value: "v1.4.0"
+  target:
+    group: argoproj.io
+    kind: Rollout
+    name: mp-account
+    version: v1alpha1
 - patch: |-
     - op: replace
       path: /spec/metrics/0/containerResource/target/averageUtilization
