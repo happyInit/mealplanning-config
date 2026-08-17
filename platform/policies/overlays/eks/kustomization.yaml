@@ -64,3 +64,32 @@ patches:
                 cidr: 10.10.0.0/16
           ports:
             - { protocol: TCP, port: 6379 }
+      # ── 🔴 Blue-Green 승격 게이트 경로 (C-76 · 2026-08-17) ─────────────────────
+      # `argo-rollouts` 컨트롤러 → `<svc>-preview.app.svc:8004` 의 `prePromotionAnalysis`.
+      # **이 규칙이 없으면 account·recipe 배포가 통째로 막힌다.**
+      #
+      # 이건 예고돼 있던 결손이다 — `services/account/overlays/eks/analysistemplate-bluegreen.yaml`
+      # 머리말이 이렇게 적어 뒀다:
+      #     "2026-08-16 실측 기준 EKS 의 app ns 엔 NetworkPolicy 가 없어서 평문 호출이 통한다.
+      #      온프렘처럼 default-deny 를 EKS 에 넣는 날, 이 경로를 함께 열지 않으면 승격이 조용히 실패한다."
+      # 그날이 2026-08-16 밤(netpol 적용)이었고, 경로는 함께 열리지 않았다.
+      #
+      # 🔴 **증상이 조용하다** — 게이트가 `failureLimit: 0` 이라 첫 프로브 타임아웃에 곧바로
+      #    `RolloutAborted` 다. "네트워크가 막혔다"가 아니라 "분석이 실패했다"로 보인다.
+      #    실측(2026-08-17, argo-rollouts ns 임시 파드):
+      #        http://account-preview.app.svc:8004/health → **urlopen error timed out**
+      #    거부(refused)가 아니라 **타임아웃**인 것이 netpol drop 의 지문이다.
+      #
+      # 🔵 왜 EKS 오버레이인가 = BG 는 EKS 전용이다(C-27 · 온프렘은 ADR-0001 카나리이고,
+      #    그 분석은 app ns 로 들어오지 않고 Prometheus 를 본다). 온프렘 형상은 안 건드린다(C-83).
+      # 🔵 포트 범위는 base ingress[0]·[1] 과 같은 8001–8011 로 맞춘다 — preview Service 는
+      #    서비스마다 포트가 다르므로(account 8004 · recipe 8002 …) 한 포트만 열면 다음 서비스에서 또 막힌다.
+      - op: add
+        path: /spec/ingress/-
+        value:
+          from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: argo-rollouts
+          ports:
+            - { protocol: TCP, port: 8001, endPort: 8011 }
