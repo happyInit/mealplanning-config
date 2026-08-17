@@ -198,9 +198,17 @@ data:
         print(f"index '{CONCRETE}' created from template")
 
     # ── ④ 별칭 (없을 때만) ────────────────────────────────────────────────────
-    # 🔴 별칭이 실체 인덱스와 이름이 겹치면 ES 가 거부한다 — 그 경우는 ⑤ 가 진단한다.
     if exists("/_alias/" + ALIAS):
         print(f"alias '{ALIAS}' already present — skip")
+    elif exists("/" + ALIAS):
+        # 🔴 같은 이름의 **실체 인덱스**가 있다. ES 는 인덱스와 별칭이 이름 공간을 공유하므로
+        #    이 상태에서 별칭 생성을 시도하면 400 으로 거부당한다 — 그냥 두면 처리되지 않은
+        #    예외가 스택트레이스로 죽어 **실패 메시지가 원인을 안 가리킨다.**
+        # 🔴 그렇다고 여기서 실패시키지도 않는다 — 그 인덱스의 매핑이 올바르면 **사용자에게
+        #    보이는 고장은 없다**(구조만 온프렘과 다를 뿐). 판정은 ⑤ 의 매핑 검사에 맡긴다.
+        #    = 심각도를 구조가 아니라 **실제 증상**에 건다. 구조 정리(재색인+교체)는 파괴적이라
+        #      Job 이 할 일이 아니다.
+        print(f"⚠️  '{ALIAS}' 가 별칭이 아니라 실체 인덱스다 — 별칭 생성을 건너뛴다(⑤ 가 매핑을 판정).")
     else:
         request("/_aliases", "POST", {"actions": [{"add": {"index": CONCRETE, "alias": ALIAS}}]})
         print(f"alias '{ALIAS}' -> '{CONCRETE}' created")
