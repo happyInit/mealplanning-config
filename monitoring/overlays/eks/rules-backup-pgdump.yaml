@@ -1,0 +1,40 @@
+# 논리 덤프 신선도 — **EKS 전용 트랙** (2026-08-17)
+#
+# 🔴 base 에 없는 이유: 온프렘의 같은 자리(`MpBackupPgOnsiteDumpStale`)는 목적지가 **온사이트
+#    MinIO** 였고 판정 근거도 `kube_cronjob_status_last_successful_time` 이었다. C-18 로 MinIO 가
+#    사라지면서 그 룰은 EKS 오버레이에서 제거됐다(§1-28 ②). 하지만 **덤프 자체는 사라지지 않았다** —
+#    목적지가 `s3://mp-pg-dump-ap2/aws/` 로 바뀌었을 뿐이고, A-49 로 라이프사이클 190일까지 붙었다.
+#    ⇒ 실재하는 트랙에 알림이 없는 상태였다. 이 파일이 그 자리를 메운다.
+#
+# 🔴 판정 근거를 바꾼 것이 핵심이다 — 구 룰은 *"CronJob 이 성공했나"* 를 봤다.
+#    그러면 잡은 성공했는데 업로드가 조용히 실패한 경우를 **못 잡는다**(2026-08-03 이미지 백업이
+#    정확히 그 사례였다). 새 룰은 프로브가 보는 **S3 실물**을 본다.
+#
+# 임계 = 30시간. 근거 = 일 1회(04:00 KST) + **1회 놓침 허용**(24h + 6h 여유).
+#   한 번 걸러도 안 울고 두 번 연속 놓치면 운다 — 야간 오탐과 조용한 실패 사이의 타협점이고,
+#   base `rules-backup.yaml` 의 다른 트랙이 쓰는 것과 같은 계산법이다.
+#
+# 🔵 `MpBackupProbeMissing`(absent)이 이 트랙까지 함께 지켜준다 — 프로브가 죽으면
+#    이 룰도 침묵하지만, 그 침묵 자체를 absent 메타 알림이 잡는다.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-backup-eks
+  labels:
+    app.kubernetes.io/part-of: mealplanning
+spec:
+  groups:
+    - name: mp-backup-eks
+      rules:
+        - alert: MpBackupPgDumpStale
+          expr: |
+            time() - mp_backup_last_object_timestamp_seconds{track="pg_dump"} > 108000
+          for: 30m
+          labels: { severity: warning, environment: production, owner: data-platform }
+          annotations:
+            summary: "PG 논리 덤프가 30시간 넘게 갱신되지 않았다"
+            description: >-
+              s3://mp-pg-dump-ap2/aws/ 에 새 덤프가 없다. 일 1회(04:00 KST) CronJob
+              mp-pg-onsite-dump 를 먼저 본다 — 잡 실패 · IRSA 권한(mp-pg-dump 롤) ·
+              PG 접속 순으로 좁힌다. 🔴 잡이 "성공"으로 보여도 업로드가 실패했을 수 있다
+              (이 알림은 잡 상태가 아니라 S3 실물을 본다).

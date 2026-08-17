@@ -1,0 +1,230 @@
+# 백업 신선도 프로브 — EKS 판 (2026-08-17 · `EKS-RULESET.md §5①` 해소)
+#
+# ── 🔴 이것이 왜 있는가 ────────────────────────────────────────────────────────
+# 백업은 **실패해도 증상이 없는 유일한 시스템**이다. 앱이 죽으면 500 이 뜨고 파드가 죽으면
+# 재시작 카운트가 오르지만, 3주 전에 멈춘 백업과 10분 전에 성공한 백업은 **겉으로 똑같다.**
+# 차이가 드러나는 순간은 복구가 필요한 날 하나뿐이고, 그때는 이미 늦다.
+# 🔴 2026-08-03 에 실제로 당했다 — 릴리스 이미지 백업이 **전량 실패한 채 빌드는 초록**이었다
+#    (Jenkins 자격증명이 placeholder 문자열 → InvalidAccessKeyId). 사람이 우연히 로그를 읽어 발견했다.
+#
+# ── 🔴 무엇을 재는가 = "잡이 성공했나"가 아니라 **"S3 에 최신 오브젝트가 있나"** ──
+# 목적지를 직접 보므로 아래가 **한 신호로** 잡힌다:
+#   자격증명 붕괴 · 스케줄 미발화 · 업로드 무음실패 · 버킷 오타 · 권한 회수 · 라이프사이클 오설정.
+# 🔴 **CNPG 지표를 쓰지 않는다**(다음 사람이 반드시 다시 시도한다):
+#    `cnpg_collector_last_available_backup_timestamp` 는 barman-cloud **플러그인** 방식에서
+#    계속 0 이다(2026-08-03 실측 — Backup CR 은 completed 인데 지표는 비어 있다).
+#    그걸 근거로 알림을 만들면 **영구 오탐**이다. 근거는 `monitoring/base/rules-backup.yaml` 머리말.
+#
+# ── 온프렘과 무엇이 같고 무엇이 다른가 ────────────────────────────────────────
+# **같은 것 = 메트릭 계약.** 온프렘 Ansible 롤(`backup_freshness`)이 node-exporter textfile 로
+#   내보내는 것과 **이름·라벨이 동일**하다. 그래서 `monitoring/base/rules-backup.yaml` 의 룰이
+#   한 글자도 안 바뀌고 EKS 에서 그대로 동작한다.
+# **다른 것 = 운반 방식.** EKS 에는 systemd 도 node-exporter textfile 자리도 없다.
+#   ⇒ 파드가 직접 /metrics 를 서빙하고 ServiceMonitor 가 긁는다.
+#   🟢 부수 효과 — 프로브가 죽으면 타깃이 사라져 `MpBackupProbeMissing`(absent)이 **참으로** 운다.
+#      textfile 방식은 파일이 남아 **낡은 값을 계속 보여주는** 함정이 있었는데 그게 없어진다.
+#
+# ── 트랙 선정 (온프렘 6 → EKS 3) ──────────────────────────────────────────────
+#   🟢 `pg_wal`  = barman-cloud WAL 아카이브 — RPO 를 정하는 값(실측 5분 간격)
+#   🟢 `pg_base` = barman-cloud 베이스 백업 — 매일 03:00 KST
+#   🟢 `pg_dump` = 논리 덤프 — 매일 04:00 KST · **EKS 전용 트랙**(온프렘은 MinIO 였고 C-18 로 소멸)
+#   ⛔ `etcd`·`source`·`image` = 대상이 AWS 에 없다(관리형 컨트롤플레인 · 호스트 C · ECR).
+#   ⛔ `secrets` = **의도적으로 뺐다.** 온프렘은 K8s Secret 을 S3 로 떠 넣어야 했지만
+#      EKS 는 **Secrets Manager 자체가 durable store** 다(다중 AZ · 버전 · 삭제 복구창).
+#      "우리가 뜬 백업"이 존재하지 않으므로 잴 것이 없다 — etcd 와 같은 논리다.
+#      ⇒ 짝이 되는 `MpBackupSecretsStale` 도 `monitoring/overlays/eks` 에서 함께 걷었다.
+#      🔴 트랙을 안 내면서 룰만 남기면 시리즈가 비어 **영원히 침묵**한다(= 감시되는 척).
+#
+# 🔴 권한은 **`s3:ListBucket` 뿐이다** — LastModified 는 목록에서 나오므로 `GetObject` 가 필요없다.
+#    백업을 감시하는 주체가 백업을 **읽을 수 있으면 안 된다**(그 자체가 새 유출 경로다).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mp-backup-probe
+  namespace: observability
+  annotations:
+    # IRSA. 롤 정의 = 앱 레포 `infra/terraform/aws-platform/iam_irsa.tf` (backup_probe)
+    eks.amazonaws.com/role-arn: arn:aws:iam::689192361171:role/mp-backup-probe
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-backup-probe-script
+  namespace: observability
+data:
+  # 🔵 스톡 이미지(`mp-data-pipeline`, boto3 포함)에 **코드만 얹는다** — 새 이미지를 굽지 않는다.
+  #    A5-b 크롤 릴레이(`/opt/mp-relay`)에서 쓴 방식과 같다.
+  # 🔴 스크립트를 고치면 **파드를 재시작해야 한다**(ConfigMap 은 기동 시 마운트된다).
+  probe.py: |
+    """백업 신선도 프로브 — 각 트랙의 S3 최신 오브젝트 시각·개수를 Prometheus 로 노출."""
+    import os, time, threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import boto3
+    from botocore.config import Config
+
+    REGION   = os.environ.get("AWS_REGION", "ap-northeast-2")
+    INTERVAL = int(os.environ.get("PROBE_INTERVAL_SEC", "300"))
+    PORT     = int(os.environ.get("PROBE_PORT", "9109"))
+
+    # name -> (bucket, prefix)
+    TRACKS = {
+        "pg_wal":  ("mp-backup-ap2",  "pg-eks/pg-eks/wals/"),
+        "pg_base": ("mp-backup-ap2",  "pg-eks/pg-eks/base/"),
+        "pg_dump": ("mp-pg-dump-ap2", "aws/"),
+    }
+
+    s3 = boto3.client("s3", region_name=REGION,
+                      config=Config(retries={"max_attempts": 3, "mode": "standard"}))
+    _lock = threading.Lock()
+    _text = "# probe starting\n"
+
+    def scan(bucket, prefix):
+        """(newest_epoch, count). 목록만 읽는다 — 오브젝트 본문은 안 건드린다."""
+        newest, count = 0.0, 0
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for o in page.get("Contents", []):
+                # 0바이트 디렉터리 플레이스홀더 제외 (온프렘 스크립트와 같은 규칙)
+                if o["Key"].endswith("/"):
+                    continue
+                count += 1
+                ts = o["LastModified"].timestamp()
+                if ts > newest:
+                    newest = ts
+        return newest, count
+
+    def render():
+        out = [
+            "# HELP mp_backup_last_object_timestamp_seconds 백업 트랙의 S3 최신 오브젝트 LastModified (unix)",
+            "# TYPE mp_backup_last_object_timestamp_seconds gauge",
+        ]
+        counts, checks = [], []
+        for name, (bucket, prefix) in TRACKS.items():
+            try:
+                newest, count = scan(bucket, prefix)
+                # 🔴 버킷은 읽히는데 오브젝트가 0개 = "배선은 됐는데 한 번도 안 올라갔다".
+                #    0 을 내보내야 알림이 '아주 오래됨'으로 잡는다(메트릭 부재는 못 잡는다).
+                out.append('mp_backup_last_object_timestamp_seconds{track="%s"} %d' % (name, int(newest)))
+                counts.append('mp_backup_object_count{track="%s"} %d' % (name, count))
+                checks.append('mp_backup_check_success{track="%s"} 1' % name)
+            except Exception:
+                # 🔴 한 트랙의 조회 실패가 나머지 계측을 막으면 안 된다. 대신 그 트랙의
+                #    check_success 를 0 으로 내려 MpBackupProbeFailed 가 잡게 한다.
+                checks.append('mp_backup_check_success{track="%s"} 0' % name)
+        out += ["# HELP mp_backup_object_count 백업 트랙의 S3 오브젝트 개수",
+                "# TYPE mp_backup_object_count gauge"] + counts
+        out += ["# HELP mp_backup_check_success 이번 조회가 성공했는지 (0 = 자격증명·권한·네트워크 문제)",
+                "# TYPE mp_backup_check_success gauge"] + checks
+        out += ["# HELP mp_backup_check_timestamp_seconds 신선도 점검기 자신의 마지막 실행 시각",
+                "# TYPE mp_backup_check_timestamp_seconds gauge",
+                "mp_backup_check_timestamp_seconds %d" % int(time.time())]
+        return "\n".join(out) + "\n"
+
+    def loop():
+        global _text
+        while True:
+            try:
+                t = render()
+            except Exception as e:                      # 렌더 자체가 죽어도 서버는 살린다
+                t = "# render failed: %r\n" % (e,)
+            with _lock:
+                _text = t
+            time.sleep(INTERVAL)
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/metrics"):
+                with _lock:
+                    body = _text.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_response(200); self.end_headers(); self.wfile.write(b"ok\n")
+        def log_message(self, *a):                      # 스크레이프 로그로 도배하지 않는다
+            pass
+
+    if __name__ == "__main__":
+        threading.Thread(target=loop, daemon=True).start()
+        HTTPServer(("0.0.0.0", PORT), H).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-backup-probe
+  namespace: observability
+  labels: {app: mp-backup-probe}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mp-backup-probe}
+  template:
+    metadata:
+      labels: {app: mp-backup-probe}
+    spec:
+      serviceAccountName: mp-backup-probe
+      # 🔴 관측 스택과 같은 티어 — 이게 낮으면 정작 사고 때 축출된다(진단수단이 먼저 죽는 실패).
+      priorityClassName: observability-high
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: probe
+          image: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-data-pipeline:dbe788011e57c7519f86e87553c5c4cab445d369
+          command: ["python", "/opt/mp-backup-probe/probe.py"]
+          ports:
+            - {name: metrics, containerPort: 9109}
+          env:
+            - {name: AWS_REGION, value: ap-northeast-2}
+          resources:
+            # 5분에 한 번 S3 목록만 읽는다. 실측 근거가 없어 작게 잡고, 부족하면 올린다.
+            requests: {cpu: 10m, memory: 64Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: script, mountPath: /opt/mp-backup-probe, readOnly: true}
+          readinessProbe:
+            httpGet: {path: /metrics, port: metrics}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+      volumes:
+        - name: script
+          configMap: {name: mp-backup-probe-script}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mp-backup-probe
+  namespace: observability
+  labels: {app: mp-backup-probe}
+spec:
+  selector: {app: mp-backup-probe}
+  ports:
+    - {name: metrics, port: 9109, targetPort: metrics}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mp-backup-probe
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: mealplanning
+spec:
+  namespaceSelector:
+    matchNames: [observability]
+  selector:
+    matchLabels: {app: mp-backup-probe}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      # 🔵 프로브 자체는 5분 주기로 S3 를 본다. 1분 스크레이프는 그 캐시를 읽을 뿐이라 싸다.
+      interval: 1m
+      scrapeTimeout: 30s

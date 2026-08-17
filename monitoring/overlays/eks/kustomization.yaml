@@ -65,6 +65,9 @@ resources:
   - ../../base
   # 1-28 ① — base `mp-workload-spread` 의 EKS 대체본. 아래 patches 의 `$patch: delete` 와 한 묶음.
   - rules-workload-spread.yaml
+  # 2026-08-17 — 논리 덤프 트랙. base 의 온사이트(MinIO) 판정이 C-18 로 사라진 자리를 메운다.
+  #   🔴 base 룰은 "CronJob 이 성공했나"를 봤지만 이건 **S3 실물**을 본다(2026-08-03 교훈).
+  - rules-backup-pgdump.yaml
 patches:
   - target:
       group: monitoring.coreos.com
@@ -167,6 +170,17 @@ patches:
         value: MpBackupSourceStale
       - op: remove
         path: /spec/groups/0/rules/6
+      # 🔴 **`MpBackupSecretsStale` 도 뺀다 (2026-08-17)** — 종전 주석은 *"비밀 = Secrets Manager
+      #    라 AWS 에도 실재한다"* 고 적었지만, 그건 **비밀이 있다**는 말이지 **우리가 뜬 백업이
+      #    있다**는 말이 아니다. 온프렘은 K8s Secret 을 S3 로 떠 넣어야 했으나(내구성이 etcd 뿐),
+      #    Secrets Manager 는 그 자체가 durable store 다(다중 AZ · 버전 · 삭제 복구창).
+      #    ⇒ 잴 대상이 없다 = etcd 와 같은 논리. 프로브도 `secrets` 트랙을 내지 않는다.
+      #    🔴 트랙을 안 내면서 룰만 남기면 시리즈가 비어 **영원히 침묵**한다(= 감시되는 척).
+      - op: test
+        path: /spec/groups/0/rules/5/alert
+        value: MpBackupSecretsStale
+      - op: remove
+        path: /spec/groups/0/rules/5
       - op: test
         path: /spec/groups/0/rules/4/alert
         value: MpBackupEtcdStale

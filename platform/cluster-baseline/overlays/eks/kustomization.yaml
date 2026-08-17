@@ -43,3 +43,10 @@ resources:
   #    `TargetDown` 이 영구 발화한다. 라벨이 같아 선택자로 못 거르고 차트에 토글도 없어서,
   #    차트 SM 을 통째로 끄고(→ `platform/argocd/overlays/eks`) 살아 있는 것만 여기서 되살린다.
   - servicemonitor-kubecost.yaml
+  # ── EKS-RULESET §5① 해소 (2026-08-17) — 백업 신선도 프로브 ────────────────────
+  # 🔴 이게 없으면 `mp-backup` 5알람 중 **4개가 영원히 침묵**한다. `mp_backup_*` 를 만드는 주체가
+  #    온프렘 Ansible 롤(systemd → node-exporter textfile)뿐이라 AWS 에는 지표 자체가 없었다.
+  #    ⇒ `MpBackupProbeMissing`(absent)만 참으로 울고 나머지 4개는 시리즈가 비어 **발화 불가**였다.
+  #    (설계자가 그 상태를 예상해 absent 메타 알림을 남겨 둔 덕에 조용히 썩지는 않았다)
+  # 🔵 근거·트랙 선정·`secrets` 를 뺀 이유는 그 파일 머리말에.
+  - backup-probe.yaml
