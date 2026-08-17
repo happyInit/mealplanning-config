@@ -181,6 +181,15 @@ spec:
         - ports:
             - { port: "7946", protocol: TCP }
     - toFQDNs:
+        # 🔴 실제 접속지는 가상호스트 이름이다 — SDK 의 addressing style 기본이 `auto` 이고
+        #    `mp-observability-eks` 는 DNS 적합 이름이라 **가상호스트 방식**을 고른다.
+        #    즉 접속지가 `s3.ap-northeast-2.amazonaws.com` 이 아니라 `mp-observability-eks.s3.…` 이고,
+        #    `matchName` 은 정확 일치라 이 줄이 없으면 **한 건도 안 맞는다.**
+        #    ⚠️ 증상이 즉시 안 나온다 — 도는 파드는 계속 살아 있고, 재시작 때 store 초기화가
+        #      S3 를 요구하면서 그제야 죽는다(2026-08-17 loki·tempo 크래시루프. 정책 적용 16시간 뒤 발현).
+        #    🔵 와일드카드(`*.s3.…`)를 쓰지 않는다 — 버킷이 하나로 정해져 있어 정확 일치가 더 좁고,
+        #      넓히면 이 파드가 계정의 아무 버킷에나 나갈 수 있게 된다. (policies-data 선례와 동일)
+        - matchName: "mp-observability-eks.s3.ap-northeast-2.amazonaws.com"
         - matchName: "s3.ap-northeast-2.amazonaws.com"
         - matchName: "sts.ap-northeast-2.amazonaws.com"
         - matchName: "sts.amazonaws.com"
@@ -212,6 +221,8 @@ spec:
             dns:
               - matchPattern: "*"
     - toFQDNs:
+        # 🔴 loki 쪽과 같은 이유로 가상호스트 이름이 필요하다 — 위 ⑤ 주석 참조.
+        - matchName: "mp-observability-eks.s3.ap-northeast-2.amazonaws.com"
         - matchName: "s3.ap-northeast-2.amazonaws.com"
         - matchName: "sts.ap-northeast-2.amazonaws.com"
         - matchName: "sts.amazonaws.com"
