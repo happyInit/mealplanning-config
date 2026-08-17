@@ -10,6 +10,9 @@ kind: Kustomization
 # · (0-17) `netpol-kafka-egress.yaml` — **egress 무제한 3 워크로드**(브로커·entity-operator·exporter) 잠금
 # · (0-17) `netpol-deny-imds.yaml`    — ns 전체 IMDS deny(하한선)
 # · (C-18) `netpol-pg-onsite-s3.yaml` — 온사이트 덤프 목적지 MinIO → S3(+STS)
+# · (C-85) `lambda-access.yaml`      — AI Lambda → PG·ES **NodePort**. 🔵 LB 0개 · $0 ·
+#          노드 SG 무변경. 🔴 NetworkPolicy 는 **아직 없다** — 허용할 출발지 IP 를
+#          측정 전에는 못 정한다(파일 머리말). 그때까지 Service 만 있고 트래픽은 떨어진다.
 #
 # ── 빼는 것 ──────────────────────────────────────────────────────────────────
 # · (C-14) `mp-redis` — Redis 가 ElastiCache for Valkey 로 나가면 **파드가 없어진다.**
@@ -31,6 +34,7 @@ resources:
   - netpol-kafka-egress.yaml
   - netpol-deny-imds.yaml
   - netpol-pg-onsite-s3.yaml
+  - lambda-access.yaml
 patches:
   # ── (C-14) Redis 파드 소멸 → 정책 삭제 ─────────────────────────────────────
   - patch: |-
