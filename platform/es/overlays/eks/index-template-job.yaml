@@ -1,0 +1,284 @@
+# 레시피 인덱스 매핑을 **선언적으로** 못박는다 — 2026-08-17 신설.
+#
+# ── 왜 생겼나 (사고 기록) ────────────────────────────────────────────────────
+# `aws.mealbong.cloud` 의 레시피 조리시간 필터가 **한 건도 안 나왔다**(온프렘은 정상).
+# 원인 = EKS `recipes_live` 를 **PGSync 가 동적 매핑으로 자동 생성**해서 `cooking_time` 이
+# `keyword` 가 아니라 `text` 로 잡혔다. 서비스는 `{"term": {"cooking_time": "30분 이내"}}` 로
+# **정확 일치**를 거는데, `text` 는 색인 시 토큰으로 쪼개져(`30분`·`이내`) 전체 문자열과 같은
+# 토큰이 없다 ⇒ **total 0**.
+#
+# 🔴 **난이도 필터가 멀쩡해 보인 것이 이 버그를 오래 숨겼다.** `초급`·`중급`·`아무나` 는 공백이
+#    없어 토큰 하나로 남아 `term` 이 우연히 맞는다. **공백이 있는 조리시간만 깨진다.**
+#    ⇒ "필터 기능은 되는데 시간만 안 된다" 로 보여 프론트 버그로 오인하기 쉽다.
+#
+# 🔴 그리고 같은 뿌리로 **한국어 검색 품질도 달랐다** — 동적 매핑엔 `korean`(nori) 분석기가
+#    아예 없어서 `name`·`ingredient_names` 가 standard 로 분석됐다(같은 검색어가 온프렘 106
+#    ↔ EKS 155). 필터만의 문제가 아니었다.
+#
+# ── 왜 온프렘엔 없고 EKS 에만 있었나 ─────────────────────────────────────────
+# 온프렘의 매핑 정본은 **app 레포 `pipelines/ingest/index_recipes_es.py`** 다 — 그게 돌면서
+# `recipes_v2` 를 명시 매핑으로 만들고 `recipes_live` **별칭**을 걸어준다.
+# EKS 엔 그 파이프라인이 안 돈다(C-78 A5 = 맨 뒤) ⇒ **먼저 손댄 쪽이 PGSync** 였고,
+# PGSync 는 매핑을 모른 채 인덱스를 만든다. **아무도 틀리지 않았고, 순서가 문제였다.**
+# ⇒ 그래서 고침은 "누가 먼저 오든 매핑이 이미 정해져 있게" 하는 것이다 = 인덱스 템플릿.
+#
+# 🔴 **온프렘에는 넣지 않는다**(C-83 동결). 거기는 이미 올바르고, base 에 넣으면 온프렘
+#    데이터 티어를 흔든다. 이 파일이 `overlays/eks` 에만 있는 이유다.
+#
+# ── 왜 쿼리를 `cooking_time.keyword` 로 바꾸지 않았나 ─────────────────────────
+# 그게 제일 빨라 보이지만 **오답이다.** 매핑 문제를 쿼리로 덮는 것이고, 무엇보다
+# **온프렘에서 깨진다** — 온프렘 `cooking_time` 은 `keyword` 타입이라 `.keyword` 하위필드가
+# 없다. 증상을 한쪽에서 다른 쪽으로 옮길 뿐이다. 매핑을 고치는 것이 유일한 정답이다.
+#
+# ── 멱등성 ───────────────────────────────────────────────────────────────────
+# `PUT _index_template` 은 upsert · 인덱스/별칭 생성은 존재 확인 후 skip. 반복 실행 안전하다.
+# 🔴 **템플릿은 인덱스가 "생성되는 순간"에만 적용된다** — 이미 존재하는 인덱스의 매핑은
+#    바꾸지 못한다(ES 는 필드 타입 변경 자체가 불가). 그래서 아래 ⑤ 드리프트 검사가 필요하다.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-es-index-template-bootstrap
+  namespace: data
+  annotations: {argocd.argoproj.io/sync-wave: "1"}
+data:
+  # 🔴 **이 매핑의 상위 정본은 app 레포 `pipelines/ingest/index_recipes_es.py` 다.**
+  #    거기를 고치면 여기도 같이 고쳐야 한다 — 레포가 둘이라 자동 동기화가 불가능하다.
+  #    다만 아래 ⑤ 검사가 두 사이트의 실물 매핑을 대조하지는 않으므로, 필드를 늘릴 때는
+  #    **양쪽 파일을 같은 PR 묶음에서** 손대는 것을 규칙으로 한다.
+  #    (현재 값 = 2026-08-17 온프렘 `recipes_v2` 실물에서 그대로 떠 온 것 · 18필드)
+  index_template.json: |
+    {
+      "index_patterns": ["recipes*"],
+      "priority": 100,
+      "_meta": {
+        "owner": "platform/es/overlays/eks/index-template-job.yaml",
+        "why": "PGSync 동적 매핑이 cooking_time 을 text 로 만들어 term 필터가 0건이 되던 것을 막는다"
+      },
+      "template": {
+        "settings": {
+          "index": {
+            "number_of_shards": "1",
+            "number_of_replicas": "1",
+            "analysis": {
+              "analyzer": {
+                "korean": {"type": "custom", "tokenizer": "nori_mixed", "filter": ["nori_readingform", "lowercase"]}
+              },
+              "tokenizer": {
+                "nori_mixed": {"type": "nori_tokenizer", "decompound_mode": "mixed"}
+              }
+            }
+          }
+        },
+        "mappings": {
+          "properties": {
+            "_meta":               {"type": "object", "enabled": false},
+            "id":                  {"type": "long"},
+            "recipe_id":           {"type": "long"},
+            "source":              {"type": "keyword"},
+            "name":                {"type": "text", "analyzer": "korean"},
+            "ingredient_names":    {"type": "text", "analyzer": "korean"},
+            "ingredient_item_ids": {"type": "keyword"},
+            "category":            {"type": "keyword"},
+            "cook_method":         {"type": "keyword"},
+            "cooking_time":        {"type": "keyword"},
+            "level_nm":            {"type": "keyword"},
+            "serving":             {"type": "keyword"},
+            "servable":            {"type": "boolean"},
+            "image_url":           {"type": "keyword", "index": false},
+            "kcal":                {"type": "float"},
+            "carb_g":              {"type": "float"},
+            "protein_g":           {"type": "float"},
+            "fat_g":               {"type": "float"}
+          }
+        }
+      }
+    }
+
+  provision_index_template.py: |
+    """레시피 인덱스의 매핑·별칭을 못박는다 (멱등).
+
+    ① ES 준비 대기(상한 있음)  ② 인덱스 템플릿 PUT + 검증
+    ③ 버전 인덱스 `recipes_v2` 없으면 생성(템플릿 상속)
+    ④ 별칭 `recipes_live` → `recipes_v2` 없으면 생성
+    ⑤ 🔴 드리프트 검사 — 서비스가 실제로 읽는 인덱스의 `cooking_time` 이 keyword 인지 확인
+
+    🔴 **파괴적 조치는 하지 않는다.** `recipes_live` 가 잘못된 매핑의 실체 인덱스로 이미
+       존재하면 고치려면 삭제가 필요한데, 그건 사람이 눈으로 보고 할 일이다
+       (ES 는 필드 타입 변경이 불가 ⇒ 재색인 + 별칭 교체가 유일한 경로).
+       ⇒ 이 Job 은 **그 상황을 시끄럽게 실패시키는 것**까지만 한다. 조용한 오작동보다 낫다.
+    """
+    import base64
+    import json
+    import os
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+    ES = "http://es-es-http.data.svc:9200"
+    TEMPLATE_NAME = "recipes"
+    ALIAS = "recipes_live"          # 서비스·PGSync 가 보는 이름 (온프렘과 동일)
+    CONCRETE = "recipes_v2"         # 실체 인덱스 (온프렘과 동일한 버전명)
+    # 이 필드가 keyword 가 아니면 조리시간 필터가 조용히 0건이 된다 — 그래서 이것을 검사한다.
+    GUARDED_FIELD = "cooking_time"
+    READY_ATTEMPTS = 30
+    READY_INTERVAL_SECONDS = 5
+
+    auth = base64.b64encode(
+        ("elastic:" + os.environ["ELASTICSEARCH_PASSWORD"]).encode()
+    ).decode()
+    HEADERS = {"Authorization": "Basic " + auth, "Content-Type": "application/json"}
+
+    def request(path, method="GET", body=None):
+        """HTTPError 를 감싸지 않고 올린다 — 호출부가 404(정상적 부재)와 그 외를 갈라야 한다."""
+        req = urllib.request.Request(
+            ES + path,
+            data=None if body is None else json.dumps(body).encode(),
+            method=method,
+            headers=HEADERS,
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return json.load(response)
+
+    def exists(path):
+        try:
+            request(path)
+            return True
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return False
+            raise
+
+    def fail(message):
+        print(message, file=sys.stderr)
+        sys.exit(1)
+
+    # ── ① ES 준비 대기 (es-users-job 과 같은 패턴 · 무한 대기 금지) ────────────
+    # 🔴 인증이 켜진 ES 는 준비돼 있어도 인증 없는 GET / 에 401 을 준다 → 헤더를 같이 보낸다.
+    #    401/403 은 영구 오류라 즉시 실패시킨다(재시도해도 안 풀린다).
+    def transient(exc):
+        if isinstance(exc, urllib.error.HTTPError):
+            return exc.code >= 500
+        return True
+
+    started = time.monotonic()
+    for attempt in range(1, READY_ATTEMPTS + 1):
+        try:
+            request("/")
+            break
+        except Exception as exc:  # noqa: BLE001 — 영구/일시를 갈라 보고한다
+            if not transient(exc):
+                fail(f"Elasticsearch auth/config error (attempt {attempt}): {exc}")
+            if attempt == READY_ATTEMPTS:
+                fail(
+                    f"Elasticsearch not ready after {attempt} attempts "
+                    f"({time.monotonic() - started:.0f}s) — last error: {exc}"
+                )
+            time.sleep(READY_INTERVAL_SECONDS)
+
+    # ── ② 인덱스 템플릿 (upsert) ──────────────────────────────────────────────
+    with open("/bootstrap/index_template.json", encoding="utf-8") as handle:
+        template = json.load(handle)
+
+    request("/_index_template/" + TEMPLATE_NAME, "PUT", template)
+
+    # PUT 성공만 믿지 않는다 — 실제로 그 필드가 keyword 로 들어갔는지 되읽어 확인한다.
+    applied = request("/_index_template/" + TEMPLATE_NAME)["index_templates"][0]
+    properties = applied["index_template"]["template"]["mappings"]["properties"]
+    if properties.get(GUARDED_FIELD, {}).get("type") != "keyword":
+        fail(f"index template applied but {GUARDED_FIELD} is not keyword: {properties.get(GUARDED_FIELD)}")
+    print(f"index template '{TEMPLATE_NAME}' ok ({len(properties)} fields)")
+
+    # ── ③ 버전 인덱스 (없을 때만 생성 — 템플릿을 상속한다) ─────────────────────
+    if exists("/" + CONCRETE):
+        print(f"index '{CONCRETE}' already exists — skip")
+    else:
+        request("/" + CONCRETE, "PUT")
+        print(f"index '{CONCRETE}' created from template")
+
+    # ── ④ 별칭 (없을 때만) ────────────────────────────────────────────────────
+    # 🔴 별칭이 실체 인덱스와 이름이 겹치면 ES 가 거부한다 — 그 경우는 ⑤ 가 진단한다.
+    if exists("/_alias/" + ALIAS):
+        print(f"alias '{ALIAS}' already present — skip")
+    else:
+        request("/_aliases", "POST", {"actions": [{"add": {"index": CONCRETE, "alias": ALIAS}}]})
+        print(f"alias '{ALIAS}' -> '{CONCRETE}' created")
+
+    # ── ⑤ 🔴 드리프트 검사 — 조용한 오작동을 시끄러운 실패로 바꾼다 ────────────
+    # 서비스가 실제로 읽는 이름(ALIAS)이 어디로 풀리든, 그 인덱스의 매핑을 직접 본다.
+    # 별칭이든 실체 인덱스든 `_mapping/field` 는 똑같이 답한다 — 그래서 구조와 무관하게 검사된다.
+    resolved = request(f"/{ALIAS}/_mapping/field/{GUARDED_FIELD}")
+    if not resolved:
+        fail(f"'{ALIAS}' resolves to nothing — PGSync 가 아직 색인하지 않았거나 이름이 어긋났다")
+
+    for index_name, payload in resolved.items():
+        mapping = payload["mappings"].get(GUARDED_FIELD, {}).get("mapping", {})
+        actual = mapping.get(GUARDED_FIELD, {}).get("type")
+        if actual != "keyword":
+            fail(
+                f"🔴 '{index_name}' 의 {GUARDED_FIELD} 가 '{actual}' 다 (keyword 여야 함).\n"
+                f"   → 조리시간 필터가 조용히 0건이 된다. ES 는 필드 타입 변경이 불가하므로\n"
+                f"     재색인 + 별칭 교체가 필요하다(사람이 수행):\n"
+                f"       PUT  /{CONCRETE}\n"
+                f"       POST /_reindex  {{\"source\":{{\"index\":\"{index_name}\"}},\"dest\":{{\"index\":\"{CONCRETE}\"}}}}\n"
+                f"       DELETE /{index_name}\n"
+                f"       POST /_aliases  {{\"actions\":[{{\"add\":{{\"index\":\"{CONCRETE}\",\"alias\":\"{ALIAS}\"}}}}]}}"
+            )
+        print(f"drift check ok: {index_name}.{GUARDED_FIELD} = keyword")
+
+    print("recipe index mapping is pinned")
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mp-es-index-template-provision
+  namespace: data
+  labels: {app: es-index-template-provision}
+  annotations:
+    argocd.argoproj.io/hook: Sync # 실패가 sync 실패로 드러나게 (PostSync 아님)
+    # 🔴 wave 1 = `mp-es-users-provision` 과 같은 층. 이 Job 은 자체 bounded 재시도를 갖고 있어
+    #    병렬로 떠도 ES 준비를 스스로 기다린다(exporter-bootstrap 이 wave 2 로 밀린 것과 사정이 다르다).
+    #    ES CR(wave 0)보다는 반드시 뒤여야 한다 — 없는 ES 를 기다리게 되기 때문.
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  # es-users-job 과 같은 이유 — 스크립트가 상한 있는 재시도를 하므로 파드 재시도는 두지 않는다.
+  # 재시도 파드는 445s 대기를 처음부터 다시 태워 같은 상한 경쟁을 벌인다.
+  backoffLimit: 0
+  # 단일 실행 worst-case ≈ 준비 대기 445s + 템플릿/인덱스/별칭/검사 6요청 × 10s = 505s.
+  # 620s 는 스크립트의 명시적 실패가 Job 타임아웃보다 **먼저** 오도록 여유를 둔 값이다.
+  activeDeadlineSeconds: 620
+  template:
+    metadata:
+      labels: {app: es-index-template-provision}
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      priorityClassName: app-normal
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        # 🔴 이미지 이름을 온프렘 Harbor 로 적는 것이 맞다 — 이 오버레이의 `images:` 트랜스포머가
+        #    ECR + arm64 태그로 바꿔준다(es-users-job 과 동일한 취급을 받아야 하므로 이름을 맞춘다).
+        - name: provision-index-template
+          image: 192.168.0.10/mealplanning/mp-pgsync:5b4e66c723bbee21bf41066d4736b72fa53aa994
+          command: ["python3", "/bootstrap/provision_index_template.py"]
+          env:
+            - name: ELASTICSEARCH_PASSWORD
+              valueFrom: {secretKeyRef: {name: es-es-elastic-user, key: elastic}}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+      volumes:
+        - name: bootstrap
+          configMap: {name: mp-es-index-template-bootstrap, defaultMode: 0444}

@@ -30,6 +30,12 @@ kind: Kustomization
 #    조용히 성공하고 엉뚱한 nodeSet 에 붙는다.
 resources:
   - ../../base
+  # 🔴 레시피 인덱스 매핑 고정 Job (2026-08-17 신설 · EKS 전용).
+  #    온프렘은 app 레포 `pipelines/ingest/index_recipes_es.py` 가 같은 일을 하지만 EKS 엔 그
+  #    파이프라인이 안 돈다(C-78 A5 = 맨 뒤) ⇒ PGSync 의 동적 매핑이 먼저 인덱스를 만들어
+  #    `cooking_time` 이 text 가 됐고 조리시간 필터가 통째로 0건이었다. 경위는 그 파일 머리말.
+  #    ⚠️ base 가 아니라 **여기**에 등록한다 — 온프렘은 이미 올바르고 C-83 동결 대상이다.
+  - index-template-job.yaml
 
 
 # ── 0-9 레지스트리 = ECR ────────────────────────────────────────────────────
