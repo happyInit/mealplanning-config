@@ -68,6 +68,8 @@ resources:
   # 2026-08-17 — 논리 덤프 트랙. base 의 온사이트(MinIO) 판정이 C-18 로 사라진 자리를 메운다.
   #   🔴 base 룰은 "CronJob 이 성공했나"를 봤지만 이건 **S3 실물**을 본다(2026-08-03 교훈).
   - rules-backup-pgdump.yaml
+  # 2026-08-17 — 랭킹 모델 적재 감시(체크리스트 1-21). EKS 전용인 이유는 그 파일 머리말에.
+  - rules-ranking.yaml
 patches:
   - target:
       group: monitoring.coreos.com
@@ -332,3 +334,28 @@ patches:
           ) > 0.05
           and on(service)
           (sum by(service) (increase(http_requests_total{namespace="app", service!~".*-(canary|preview)"}[15m])) >= 20)
+
+  # ══ `ranking-serving` 을 스크레이프 대상으로 복귀 (2026-08-17) ════════════════
+  # 🔴 base 는 이 서비스를 **명시적으로 제외**해 왔다 — 근거 주석이 *"`/metrics` 404"* 다.
+  #    사실이었다. 이 서비스에는 계측이 아예 없었고, 그래서 `rules.yaml` 도
+  #    *"ranking-serving 은 이 지표 미노출 — 정상"* 이라 적고 넘어갔다. **정상이 아니라 구멍이었다.**
+  # 🟢 앱 MR 로 `prometheus-fastapi-instrumentator` + `mp_ranking_model_loaded` 를 넣었으므로
+  #    제외를 걷는다. 이게 없으면 위 `rules-ranking.yaml` 의 두 알림이 **지표를 못 받아 무력**해진다.
+  # ⚠️ `frontend` 는 **그대로 제외**한다 — nginx 정적 서빙이라 계측이 없고 포트도 80 이다.
+  #
+  # 🔴 **EKS 에서만 건다.** 계측은 새 이미지에만 있고 온프렘은 C-83 으로 이미지가 2026-08-10 에
+  #    동결돼 있다. 온프렘에서 제외를 걷으면 `/metrics` 404 인 타깃이 생겨 **TargetDown 영구 발화**다.
+  # 🔴 `op: test` 로 base 의 제외 목록을 확인한다 — base 가 바뀌면(예: 누가 frontend 를 빼면)
+  #    렌더가 죽어서 우리가 엉뚱한 값을 덮어쓰는 것을 막는다.
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: ServiceMonitor
+      name: mp-app-services
+    patch: |
+      - op: test
+        path: /spec/selector/matchExpressions/1/values
+        value: [frontend, ranking-serving]
+      - op: replace
+        path: /spec/selector/matchExpressions/1/values
+        value: [frontend]

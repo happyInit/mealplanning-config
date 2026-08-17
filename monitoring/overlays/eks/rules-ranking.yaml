@@ -1,0 +1,61 @@
+# 랭킹 모델 적재 감시 — **EKS 전용** (2026-08-17 · 체크리스트 `1-21` 완결)
+#
+# ── 🔴 왜 필요한가 = 이 결함은 **에러를 내지 않는다** ─────────────────────────
+# `serve.py` 가 모델을 못 찾으면 경고 한 줄만 남기고 **규칙순 폴백으로 정상 기동**한다.
+# 파드는 Ready, `/health` 는 `status: ok`, `/rank/personalize` 도 200 을 준다.
+# 다만 `personalized:false` · `ml_score` 전부 0 · **입력 순서를 그대로 돌려준다** —
+# 즉 **AI 가 빠진 채로 통과한다.** 2026-08-16 감사(F-2)에서 실제로 그 상태였고,
+# 이미지 태그 하나만 어긋나도 그대로 되돌아간다. 사람이 `/health` 를 눌러 보기 전엔 모른다.
+#
+# 🔵 그 폴백 자체는 **의도된 설계**다(모델이 없어도 규칙순 서빙은 해야 한다).
+#    고칠 것은 폴백이 아니라 **폴백 중인 것을 아무도 모른다는 점**이다.
+#
+# ── EKS 전용인 이유 ───────────────────────────────────────────────────────────
+# 계측(`prometheus-fastapi-instrumentator` + `mp_ranking_model_loaded`)은 새 이미지에만 있다.
+# 온프렘은 C-83 으로 이미지가 2026-08-10 에 동결돼 있어 그 지표가 영영 없다.
+# ⇒ base 에 두면 온프렘에서 아래 `absent` 룰이 **영구 발화**한다.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-ranking
+  labels:
+    app.kubernetes.io/part-of: mealplanning
+spec:
+  groups:
+    - name: mp-ranking
+      rules:
+        # ── ① 모델이 안 실렸다 (본 사건) ────────────────────────────────────
+        - alert: MpRankingModelNotLoaded
+          expr: |
+            mp_ranking_model_loaded == 0
+          # 기동 직후 잠깐 0 일 수 있고(초기화 순서), 배포 롤아웃 중에도 스칠 수 있다.
+          # 15분은 "일시적 스침"과 "정말 없음"을 가르는 값이다.
+          for: 15m
+          labels: { severity: warning, environment: production, owner: app-platform }
+          annotations:
+            summary: "랭킹 서빙이 모델 없이 규칙순 폴백으로 돌고 있다"
+            description: >-
+              /rank/personalize 가 200 을 주지만 personalized=false 이고 입력 순서를 그대로
+              돌려준다 — 개인화가 사실상 꺼진 상태다. 🔴 에러가 안 나므로 이 알림 말고는 단서가 없다.
+              확인: `kubectl -n app exec deploy/mp-ranking-serving -- python -c
+              "import urllib.request;print(urllib.request.urlopen('http://localhost:8009/health').read())"`
+              의 model_source 가 이유를 준다(env_unset · file_missing · load_failed).
+              file_missing 이면 이미지 태그가 모델 없는 리비전으로 돌아갔는지 먼저 본다
+              (모델은 CI 가 s3://mp-ai-model-ap2 에서 받아 이미지에 굽는다 — C-20).
+
+        # ── ② 지표 자체가 사라졌다 (①이 침묵으로 위장되는 것을 막는다) ──────
+        # 🔴 ①은 `== 0` 이라 **시리즈가 없으면 발화하지 않는다.** 계측이 없는 이미지로
+        #    되돌아가면 ①은 조용해지고, 그 침묵은 "정상"과 구분되지 않는다.
+        #    ⇒ absent 로 그 경우를 따로 잡는다(`mp-backup` 의 ProbeMissing 과 같은 장치).
+        - alert: MpRankingMetricsMissing
+          expr: |
+            absent(mp_ranking_model_loaded)
+          for: 1h
+          labels: { severity: warning, environment: production, owner: app-platform }
+          annotations:
+            summary: "랭킹 서빙 지표가 1시간째 없다 — 계측이 빠졌거나 스크레이프가 끊겼다"
+            description: >-
+              MpRankingModelNotLoaded 가 판정 불가 상태다(침묵 = 정상 아님).
+              ① 파드가 떠 있는지 ② 이미지에 prometheus-fastapi-instrumentator 가 있는지
+              ③ ServiceMonitor mp-app-services 의 NotIn 목록에 ranking-serving 이
+              다시 들어가지 않았는지 순으로 본다.
