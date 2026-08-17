@@ -70,6 +70,9 @@ resources:
   - rules-backup-pgdump.yaml
   # 2026-08-17 — 랭킹 모델 적재 감시(체크리스트 1-21). EKS 전용인 이유는 그 파일 머리말에.
   - rules-ranking.yaml
+  # 2026-08-17 — 쿼터 포화·파드 생성 실패. 🔴 상용 규칙(KubeQuota*)이 **있는데도** 이번 사고를
+  #   못 잡았다(15분 지속 + info · Exceeded 는 애초에 발화 불가). 그 세 구멍은 그 파일 머리말에.
+  - rules-quota.yaml
 patches:
   - target:
       group: monitoring.coreos.com

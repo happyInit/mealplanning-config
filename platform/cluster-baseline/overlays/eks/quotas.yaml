@@ -23,6 +23,51 @@
 #      쿼터 초과는 파드가 Pending 도 아니고 **ReplicaSet 이 생성 실패**로 나므로 HPA 가 조용히 죽는다.
 #      0-27(CPU 요청 재조정)이 끝난 뒤 한 번 검산할 것.
 #
+# ══ ② 검산 완료 — app 쿼터 6→18Gi / 6→16 (2026-08-17) ═════════════════════════
+# **막고 있었다.** 위 경고가 예언한 그대로 일어났고 AWS Stage1 부하시험 2회차에서 잡혔다.
+#
+#   Error creating: pods "mp-account-58648dfc9b-..." is forbidden:
+#     exceeded quota: mp-app-quota, requested: requests.memory=384Mi,
+#     used: 6080Mi, limited: 6Gi
+#
+# 증상 3종이 전부 이 한 줄에서 나왔다:
+#   · HPA 가 account 5·recipe 8·price 8 을 요구했는데 **파드는 안 생김**(이벤트는 성공으로 남는다)
+#   · **Karpenter NodeClaim 0** — 쿼터 거부는 admission 단계라 `Pending` 파드가 생기지 않는다.
+#     Karpenter 는 Pending 파드에만 반응하므로 **쿼터가 병목인 한 영원히 뜨지 않는다**(C-45 무력화)
+#   · **Blue-Green 승격 정지** — green RS 가 `FailedCreate` 10회, 롤아웃 7분 멈춤(게이트는 통과했다)
+#
+# ── 🔴 왜 "6Gi 가 틀렸다"가 아니라 "맞는 값이 잘못된 곳에 왔다"인가 ────────────
+# 6Gi 는 **온프렘에서 정확한 값**이었다. 거기는 워커 4대 39Gi **고정**이고 그 안에서
+# app·data(PG·ES·Kafka·Redis)·관측이 예산을 나눠 쓴다 — 넘기면 PG 를 굶겨 노드가 터진다.
+# 부하시험 프레임도 그렇게 못박았다: *"HPA min/max — **max 는 app 6Gi Quota 상한**"*,
+# *"HPA max headroom + 블루그린 2배 + 카나리 surge 가 **같은 6Gi Quota** 를 다툼"*.
+# **고정 용량에서는 쿼터가 용량 계획을 하는 것이 맞다.**
+#
+# EKS 는 입력이 셋 다 다르다:
+#   · 노드   = 2대 28.6Gi + Karpenter 4대 ⇒ **85.8Gi 탄력**(C-45)
+#   · data   = Redis→ElastiCache(클러스터 **밖**·C-14) · Kafka 제거(C-44) ⇒ app 몫이 커졌다
+#   · 요청   = 0-27 로 account 500m→350m 등 EKS 오버레이에서 재조정
+# 세 입력이 바뀌었는데 결과만 복사돼 있었다. **재산출이 이관의 정규 후속작업**이다.
+#
+# ── 🔴 원칙: 쿼터는 노드보다 **느슨**해야 한다 ────────────────────────────────
+# 부족분이 `Pending` 으로 드러나야 오토스케일러가 신호를 받는다. 쿼터가 더 빡빡하면 부족이
+# `FailedCreate` 로 나타나 **아무도 손을 들지 않는다.** 쿼터의 일은 용량 계획이 아니라
+# **폭주 차단**(한 ns 가 클러스터를 다 먹는 것)이고, 그 역할은 18Gi 에서도 그대로다.
+#
+# ── 산출 근거 (선언한 것을 실현 가능하게 = 이번 범위) ─────────────────────────
+#   account 8 + BG green 8 = 16 × 384Mi/450m = 6,144Mi / 7,200m
+#   recipe  8 + BG green 8 = 16 × 256Mi/300m = 4,096Mi / 4,800m
+#   price   8              =  8 × 256Mi/250m = 2,048Mi / 2,000m
+#   나머지 13 파드                            = 3,392Mi / 1,490m
+#   ─────────────────────────────────────────────────────────
+#   합계 15.3Gi / 15.5  ⇒ **18Gi / 16** (여유 포함) ⇒ 노드 상한 85.8Gi / 24 아래
+#
+# ⚠️ 이 값은 **"선언한 HPA max 8 을 실현 가능하게" 까지**다. 같은 시험의 실측 수요는 더 크다
+#    (1500 VU 에서 account ≈7 · recipe ≈12 · price ≈12). **목표 부하를 정하면 한 번 더 올라간다** —
+#    그건 별건이고, 정할 때 HPA max·배포전략 surge·쿼터를 **한 예산표로** 같이 움직일 것.
+# 🔵 온프렘 쿼터는 6Gi 그대로다 — C-83 동결이자, 거기선 여전히 옳은 값이다.
+# 🔴 침묵은 값을 올려도 안 없어진다(벽이 옮겨질 뿐). 감시는 `monitoring/overlays/eks/rules-quota.yaml`.
+#
 # 🔴 `mp-ingress` 에는 **ResourceQuota 를 일부러 두지 않는다**(라이브도 없다) — #532③ 에서
 #    ns 를 가른 근거가 "쿼터 결합만 끊는다" 였다. 여기에 쿼터를 새로 걸면 그 결정을 되돌리는 것이다.
 ---
@@ -33,8 +78,9 @@ metadata:
   namespace: app
 spec:
   hard:
-    requests.cpu: "6"
-    requests.memory: 6Gi
+    # 🔴 온프렘(6 / 6Gi)과 **일부러 다르다.** 근거·산출은 위 "② 검산 완료" 절.
+    requests.cpu: "16"
+    requests.memory: 18Gi
 ---
 apiVersion: v1
 kind: ResourceQuota

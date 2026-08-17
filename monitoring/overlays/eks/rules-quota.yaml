@@ -1,0 +1,73 @@
+# ResourceQuota 포화 · 파드 생성 실패 감시 — **EKS 전용** (2026-08-17)
+#
+# ── 🔴 왜 필요한가 = 이 고장은 **소리를 내지 않는다** ─────────────────────────
+# 2026-08-17 Stage1 부하시험에서 app 쿼터가 **99.0%** 까지 찼고, HPA 는 8개로 늘렸다고
+# 이벤트를 남겼고, 실제 파드는 생기지 않았고, **알림은 0건이었다.**
+#
+# 기본 규칙(kube-prometheus-stack)이 있는데도 안 뜬 이유가 셋이다:
+#   · `KubeQuotaAlmostFull`(>90%) — `for: 15m` 인데 사고는 9.5분이었고, 게다가 `severity: info`
+#   · `KubeQuotaFullyUsed`(==1)   — 같은 이유(15m · info)
+#   · `KubeQuotaExceeded`(>1)     — 🔴 **쿼터는 초과가 안 된다**(admission 이 막으니까).
+#                                     한도를 사람이 낮췄을 때만 뜨는 규칙이라 이 사고엔 무력하다
+# 그리고 실제 증상인 **`FailedCreate` 에는 규칙이 아예 없었다.**
+#
+# 🔵 값을 18Gi 로 올려도 이 침묵은 안 없어진다 — **벽이 옮겨질 뿐**이다. 그래서 값과 감시는 한 세트다.
+#
+# ── EKS 전용인 이유 ───────────────────────────────────────────────────────────
+# 온프렘은 쿼터가 6Gi 로 **의도적으로 빡빡하고**(고정 39Gi 를 data 티어와 나눠 쓴다) 평시에도
+# 70~80%를 오간다 ⇒ base 에 두면 ①이 상시 발화한다. 임계는 사이트마다 달라야 한다.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mp-quota
+  labels:
+    app.kubernetes.io/part-of: mealplanning
+spec:
+  groups:
+    - name: mp-quota
+      rules:
+        # ── ① 쿼터가 차 간다 (선행 경보) ────────────────────────────────────
+        # 🔴 `for` 를 5분으로 잡는다 — 기본 15분은 **부하 스파이크보다 길어서** 정작 필요한
+        #    순간을 통째로 놓친다(이번 사고가 9.5분이었다). 5분이면 HPA 반응(1~2분)보다는
+        #    길어서 정상 확장에 소음을 내지 않는다.
+        - alert: MpAppQuotaNearLimit
+          expr: |
+            max by (namespace, resource) (
+              kube_resourcequota{namespace=~"app|pipeline", type="used"}
+              / on (namespace, resource) group_left
+              kube_resourcequota{namespace=~"app|pipeline", type="hard"}
+            ) > 0.9
+          for: 5m
+          labels: { severity: warning, environment: production, owner: app-platform }
+          annotations:
+            summary: "{{ $labels.namespace }} 쿼터 {{ $labels.resource }} 90% 초과 — 오토스케일·배포가 곧 막힌다"
+            description: >-
+              🔴 한도에 닿으면 파드가 Pending 이 아니라 **생성 실패**한다. 그러면
+              ① HPA 가 늘려도 파드가 안 생기고 ② Pending 이 없어 **Karpenter 도 반응하지 않으며**
+              ③ Blue-Green green 세트가 못 떠서 배포가 멈춘다 — 셋 다 조용하다.
+              확인: `kubectl -n {{ $labels.namespace }} get resourcequota -o yaml` 로 used/hard 대조,
+              `kubectl -n {{ $labels.namespace }} get events | grep FailedCreate` 로 실제 거부 확인.
+              한도 산출 근거 = `platform/cluster-baseline/overlays/eks/quotas.yaml` 의 "② 검산 완료" 절.
+
+        # ── ② 파드가 아예 안 만들어지고 있다 (본 증상) ──────────────────────
+        # 🔴 `Pending` 과 구분하는 것이 핵심이다. Pending 은 파드가 **존재**하고 자리를 기다리는
+        #    상태라 Karpenter 가 본다. 여기서 잡는 건 파드가 **존재조차 하지 않는** 상태 —
+        #    ReplicaSet 이 원하는 수(spec)와 실제 만들어진 수(status)의 격차다.
+        #    원인은 쿼터일 수도 PSA·webhook 거부일 수도 있다. 어느 쪽이든 조용하다는 점이 같다.
+        - alert: MpReplicaSetNotCreatingPods
+          expr: |
+            max by (namespace, replicaset) (
+              kube_replicaset_spec_replicas{namespace=~"app|pipeline"}
+              - kube_replicaset_status_replicas{namespace=~"app|pipeline"}
+            ) > 0
+          # 10분 — 정상 롤아웃/스케일아웃에서도 순간적으로 격차가 생긴다(파드 생성은 원자적이지 않다).
+          # 그건 초 단위로 닫히므로 10분이면 "만들려다 실패해서 못 만드는 중"만 남는다.
+          for: 10m
+          labels: { severity: warning, environment: production, owner: app-platform }
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.replicaset }} 가 파드를 못 만들고 있다 (Pending 아님)"
+            description: >-
+              ReplicaSet 이 원하는 수만큼 파드를 **생성하지 못한** 상태가 10분째다.
+              🔴 Pending 이 아니라 **파드가 없는** 것이므로 스케줄러·Karpenter 는 아무것도 못 한다.
+              사유: `kubectl -n {{ $labels.namespace }} describe rs {{ $labels.replicaset }}` 의
+              `ReplicaFailure/FailedCreate` 를 본다(쿼터 초과 · PodSecurity 거부 · webhook 거부 순으로 흔하다).
