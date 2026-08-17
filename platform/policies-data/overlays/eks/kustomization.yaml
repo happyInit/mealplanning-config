@@ -41,6 +41,10 @@ resources:
   - netpol-deny-imds.yaml
   - netpol-pg-onsite-s3.yaml
   - lambda-access.yaml
+  # 레시피 인덱스 매핑 고정 Job → ES :9200 (2026-08-17). 짝 = platform/es/overlays/eks.
+  # base 6-1 은 `es-users-provision` 라벨만 열어 둬서 이 Job 은 막힌다 — 그 실패가
+  # "파드 Running · 로그 없음 · 수분째 안 끝남" 으로 보여 원인이 안 드러난다(파일 머리말).
+  - netpol-es-index-template.yaml
 patches:
   # ── (C-14) Redis 파드 소멸 → 정책 삭제 ─────────────────────────────────────
   - patch: |-
