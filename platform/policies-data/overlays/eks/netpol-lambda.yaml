@@ -1,0 +1,71 @@
+# AI Lambda → PG·ES NetworkPolicy — 🔴 **아직 `resources` 에 넣지 않았다. 의도다.**
+#
+# ══ 왜 지금 안 켜나 ═══════════════════════════════════════════════════════════
+#
+# 허용 대상이 **노드 서브넷 `/20` 두 개**다. Cilium 이 ENI 모드라 **클러스터의 모든 파드가
+# 그 안에** 있으므로, 이걸 켜는 순간 `pipeline`·`observability`·`cost`·`kube-system` 파드까지
+# 전부 pooler 5432 에 L3 로 닿는다. tier-3 잠금(`netpol-pg.yaml` 이 `app` ns `tier: backend`
+# 로 좁혀 둔 것)이 그만큼 넓어진다.
+#
+# 🔴 **쓰는 함수가 없는 동안 그 넓힘이 존재할 이유가 없다.**
+#    ⇒ `kustomization.yaml` 의 `resources` 에 이 파일을 **함수 배포와 같은 시점에** 한 줄 넣는다.
+#    되돌리기도 그 한 줄이다.
+#
+# ══ 왜 `/20` 밖에 못 쓰나 ═════════════════════════════════════════════════════
+#
+# Lambda ENI 는 우리가 지정한 서브넷에서 IP 를 **자동 할당**받는다 — 고정할 수단이 없다.
+# 그리고 노드 서브넷을 써야만 NAT·VPC 엔드포인트 경로가 산다(데이터 서브넷은 «밖으로 나가는
+# 경로 없음» 이 산출물이다). ⇒ 지금 표현 가능한 가장 좁은 범위가 이 두 `/20` 이다.
+#
+# 🔵 **좁히는 길 = 전용 Lambda 서브넷**(예: `/24`). 그러면 ipBlock 이 그 하나로 줄고 파드는
+#    빠진다. 🔴 다만 `ec2:CreateSubnet` 은 guardrails 의 `DenyTouchingMigrationInfra` 대상이라
+#    **인프라 담당 몫**이고, 라우트테이블·NAT 연결까지 따라온다. 노드 SG 인그레스를 부탁드릴 때
+#    같이 검토하면 좋겠다.
+#
+# 🔵 그리고 이게 유일한 방어선은 아니다 — PG 는 `svc_*` 롤 비밀번호를 요구하고(pgbouncer
+#    `auth_query`), ES 도 인증이 켜져 있다. 네트워크는 **한 겹**이지 전부가 아니다.
+#
+# ══ 출발지가 Lambda ENI IP 인 근거 ════════════════════════════════════════════
+#
+# `lambda-access.yaml` 의 두 Service 가 `externalTrafficPolicy: Local` 이다. 그 모드는
+# **출발지 IP 보존을 보장**한다(SNAT 없음). 그래서 파드가 보는 주소가 노드 IP 가 아니라
+# Lambda ENI IP 이고, 아래 CIDR 이 그것을 덮는다.
+# ⚠️ `Cluster` 로 되돌리면 이 전제가 깨진다 — 그때는 노드 IP `/32` 2개로 바꿔야 한다.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-pg-pooler-lambda
+  namespace: data
+  labels: { app.kubernetes.io/part-of: mp-ai-lambda-access }
+spec:
+  # 🔴 pooler 만이다. PG **인스턴스**(`cnpg.io/podRole: instance`)는 열지 않는다 —
+  #    Lambda 는 pooler 를 지나야 하고, 그래야 커넥션 산수(overlays/eks 의 풀 계산)가 성립한다.
+  podSelector:
+    matchLabels:
+      cnpg.io/poolerName: pg-pooler
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.10.64.0/20 } # mp-subnet-node-ap-northeast-2a
+        - ipBlock: { cidr: 10.10.80.0/20 } # mp-subnet-node-ap-northeast-2b
+      ports:
+        - { protocol: TCP, port: 5432 } # 🔴 포트를 반드시 못박는다 — 열린 건 이 하나뿐이다
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mp-es-lambda
+  namespace: data
+  labels: { app.kubernetes.io/part-of: mp-ai-lambda-access }
+spec:
+  podSelector:
+    matchLabels:
+      elasticsearch.k8s.elastic.co/cluster-name: es
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.10.64.0/20 }
+        - ipBlock: { cidr: 10.10.80.0/20 }
+      ports:
+        - { protocol: TCP, port: 9200 } # 🔴 9300(transport)은 열지 않는다 — 클러스터 내부용이다

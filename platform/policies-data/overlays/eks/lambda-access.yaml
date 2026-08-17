@@ -22,9 +22,18 @@
 #
 #   Lambda(VPC · 노드 서브넷 ENI) → 노드 사설 IP:NodePort → Cilium → 파드
 #
-# 🔵 **노드 SG 를 손댈 필요가 없다** — 같은 오버레이의 `dashboard-access.yaml` 이 확인해 뒀다:
-#    *"NodePort 는 노드 SG 가 이미 전 범위로 열려 있어 포트를 막지 않는다."*
-#    ⇒ 「관리자가 SG 인그레스를 열어야 한다」는 종전 서술은 **철회**한다.
+# 🔴 **정정(2026-08-17) — 「노드 SG 를 손댈 필요가 없다」는 내 오독이었다.**
+#    `dashboard-access.yaml` 의 *"NodePort 는 노드 SG 가 이미 전 범위로 열려 있어"* 를
+#    나는 «출발지 전 범위» 로 읽었는데, 실측해 보니 **포트 전 범위**(30000-32767)이고
+#    **출발지는 `mp-sg-dashboard`(대시보드 EC2) SG 하나뿐**이다:
+#
+#        IpPermissions: tcp 30000-32767  from  sg-06b5470daa77b9cab (mp-sg-dashboard)
+#        그 밖의 인그레스도 전부 SG 참조 — CIDR 개방은 **0건**
+#
+#    ⇒ **노드 SG 에 「Lambda SG → 30094·30095」 인그레스가 필요하다. 관리자 몫이다.**
+#       노드 SG 는 `Project=mealplanning` 태그라 `DenySecurityGroupsNotOwnedByMpAi` 가
+#       우리를 막는다(실측 `ec2:AuthorizeSecurityGroupIngress` = explicitDeny).
+#       `docs/mp_aws_team_access.md §4` 의 *"구조상 관리자에게 남는 것 ①"* 이 바로 이것이다.
 #
 # 🔴 **대상 노드는 MNG 고정 2대다**(C-85 ⓑ 와 같은 이유). Karpenter(`mp-burst`) 노드를
 #    가리키면 consolidation 때 사라진다. Lambda 쪽은 psycopg 의 **다중 호스트**로 받는다:
@@ -33,19 +42,26 @@
 #       교체되면 끊긴다.** 대시보드는 nginx 502 를 알림에 걸어 막았고, Lambda 는 함수 에러율
 #       알람이 그 자리다(미설정 — 배포 후 과제).
 #
-# 🔴 **이 파일만으로는 아직 통하지 않는다. NetworkPolicy 가 따로 필요하다.**
-#    `data` ns 는 default-deny 이고 pooler ingress 가 `app` ns 의 `tier: backend` 로 제한돼 있다
-#    (`policies-data/base/netpol-pg.yaml`). 그런데 **허용할 출발지 IP 를 아직 못 정한다**:
-#      · `externalTrafficPolicy: Cluster` + Cilium 이라 파드가 보는 출발지가
-#        **원 클라이언트 IP 일 수도, 노드 IP 일 수도** 있다(백엔드 파드 위치에 따라 갈린다).
-#      · 전자면 ipBlock 이 **노드 서브넷 `/20` 두 개**가 되는데, 그건 **클러스터의 모든 파드**를
-#        포함한다 — tier-3 잠금이 실질적으로 풀린다.
-#      · 후자면 **노드 IP `/32` 2개**로 충분하다 — 훨씬 좁다.
-#    ⇒ **측정하고 정한다.** 추측으로 넓게 열면 그 과다허용은 조용히 남는다.
-#       측정 = 첫 Lambda 가 붙을 때 pooler 파드에서 실제 출발지를 확인(또는 Hubble).
+# ══ 🔵 `externalTrafficPolicy: Local` — 측정 대신 **스펙으로 확정한다** ═══════
 #
-# 🔵 그때까지 이 Service 들은 **무해하다** — 포트만 열리고 정책이 트래픽을 떨군다.
-#    Service 를 먼저 두는 이유는 «주소 지정» 이 선행이라서다(C-85 가 말한 진짜 벽).
+# NetworkPolicy 의 `ipBlock` 을 쓰려면 «파드가 보는 출발지» 를 알아야 하는데, 기본값
+# `Cluster` 에서는 그게 **원 클라이언트 IP 일 수도, SNAT 된 노드 IP 일 수도** 있다
+# (백엔드 파드가 어느 노드에 있느냐에 따라 갈린다). 간접 측정은 결론이 안 났다 —
+# 대시보드 경로의 Cilium 정책 드롭이 24h 0건이지만, 그건 «IP 가 보존된다» 와
+# «대시보드가 NodePort 를 안 쓴다» 둘 다와 맞는다.
+#
+# 🔵 그래서 **추측하지 않고 성질을 고정한다.** `Local` 은 쿠버네티스가 **출발지 IP 보존을
+#    보장**하는 모드다(그게 그 옵션의 정의다). ⇒ 파드가 보는 출발지 = **Lambda ENI IP**, 끝.
+#
+# 🔴 대가 = **백엔드 파드가 있는 노드만** 그 NodePort 를 받는다. 지금은 성립한다:
+#      pooler 2 파드 = MNG 노드 2대에 하나씩 · es 파드도 두 노드에 걸쳐 있다
+#    파드가 옮겨가면 그 노드는 거부하는데, Lambda 쪽 `PGHOST` 다중 호스트가 다른 노드로
+#    넘어간다. 🟢 오히려 낫다 — 죽은 경로로 트래픽을 흘리지 않는다.
+#
+# 🔴 **NetworkPolicy 는 아직 `resources` 에 안 넣는다**(`netpol-lambda.yaml` 참조).
+#    허용 대상이 **노드 서브넷 `/20` 두 개**인데 거기엔 **클러스터의 모든 파드**가 들어 있어
+#    tier-3 잠금이 그만큼 넓어진다. **쓰는 함수가 없는 동안 그 넓힘이 존재할 이유가 없다.**
+#    ⇒ 함수 배포와 **같은 시점에** 한 줄 추가한다. 좁히는 길은 그 파일 머리말에 적었다.
 ---
 apiVersion: v1
 kind: Service
@@ -59,6 +75,7 @@ spec:
   #    그 싸움이 조용히 반복된다. 같은 파드를 고르는 **새 Service** 를 옆에 세운다.
   selector:
     cnpg.io/poolerName: pg-pooler
+  externalTrafficPolicy: Local   # 🔵 출발지 IP 보존을 **보장**한다 — 머리말 참조
   ports:
     - { name: pgbouncer, port: 5432, targetPort: 5432, nodePort: 30094, protocol: TCP }
 ---
@@ -73,5 +90,6 @@ spec:
   # ECK 가 만드는 `es-es-http` 와 같은 파드를 고른다(그 Service 는 오퍼레이터 소유).
   selector:
     elasticsearch.k8s.elastic.co/cluster-name: es
+  externalTrafficPolicy: Local   # 🔵 위와 같은 이유
   ports:
     - { name: http, port: 9200, targetPort: 9200, nodePort: 30095, protocol: TCP }

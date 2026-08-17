@@ -10,9 +10,15 @@ kind: Kustomization
 # · (0-17) `netpol-kafka-egress.yaml` — **egress 무제한 3 워크로드**(브로커·entity-operator·exporter) 잠금
 # · (0-17) `netpol-deny-imds.yaml`    — ns 전체 IMDS deny(하한선)
 # · (C-18) `netpol-pg-onsite-s3.yaml` — 온사이트 덤프 목적지 MinIO → S3(+STS)
-# · (C-85) `lambda-access.yaml`      — AI Lambda → PG·ES **NodePort**. 🔵 LB 0개 · $0 ·
-#          노드 SG 무변경. 🔴 NetworkPolicy 는 **아직 없다** — 허용할 출발지 IP 를
-#          측정 전에는 못 정한다(파일 머리말). 그때까지 Service 만 있고 트래픽은 떨어진다.
+# · (C-85) `lambda-access.yaml`      — AI Lambda → PG·ES **NodePort**. 🔵 LB 0개 · $0.
+#          `externalTrafficPolicy: Local` 로 **출발지 IP 보존을 보장**시켰다(측정 대신 스펙).
+#          🔴 노드 SG 인그레스는 **관리자 몫**이다(내가 «불필요» 라고 한 것은 오독 — 파일 머리말).
+#
+# ── 🔴 담지 **않는** 것 (의도) ────────────────────────────────────────────────
+# · `netpol-lambda.yaml` — 위 경로를 실제로 통하게 하는 NetworkPolicy.
+#   허용 대상이 노드 서브넷 `/20` 두 개인데 Cilium ENI 모드라 **모든 파드가 그 안에** 있다.
+#   ⇒ tier-3 잠금이 넓어지므로 **쓰는 함수가 없는 동안 켜 두지 않는다.**
+#   함수 배포와 같은 시점에 아래 `resources` 에 한 줄 추가한다(되돌리기도 그 한 줄).
 #
 # ── 빼는 것 ──────────────────────────────────────────────────────────────────
 # · (C-14) `mp-redis` — Redis 가 ElastiCache for Valkey 로 나가면 **파드가 없어진다.**
