@@ -8,7 +8,14 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-chat-service
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-chat-service
-  newTag: 46e00d0ca78cbf076ebd1a313c3ff776e2ee920e
+  # ⟳ 2026-08-17 — 장바구니 버튼 홍수 수정(앱 MR !51) 반영.
+  # 🔴 **손으로 올린다.** CD 가 끊겨 있다 — 핀 갱신 주체인 Jenkins(호스트 C)가 정지 중이고
+  #    GitLab `config-pin` 은 `MP_ENABLE_CD` 미설정으로 기본 비활성이다(C-89 유예).
+  # ⚠️ K 머지 파이프라인(80)이 후속 커밋에 **자동 취소**되면서 `build:chat` 이 안 돌았다.
+  #    `SERVICES=chat` 로 수동 재실행(파이프라인 82)해서 구운 이미지다 — 머지만으로는 없었다.
+  # 🔵 종전 핀(46e00d0c) 이후 chat 에 닿는 변경은 **4파일뿐**이다(respond.py·config.py 주석·
+  #    ner.py 지연 import·신규 테스트). 커밋 수는 84 지만 이 서비스에 실제로 닿는 것은 그만큼이다.
+  newTag: f8f91f82fdc82693ae7be044b622e51926b1d875
 
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
