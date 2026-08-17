@@ -26,3 +26,19 @@ spec:
       port: 8004
       targetPort: 8004
       appProtocol: http
+    # ── 승격 게이트 전용 창구 (2026-08-17) ────────────────────────────────────
+    # 🔴 **이 포트가 없으면 배포가 막힌다.** app ns 는 mTLS STRICT 인데 argo-rollouts 컨트롤러는
+    #    사이드카가 없다 ⇒ 위 8004 로 평문 호출하면 **connection reset** 이다(2026-08-17 실측).
+    #    15020 은 pilot-agent 가 직접 서비스하고 **Istio 가 mTLS 대상에서 제외**하는 포트라
+    #    메시 밖에서도 평문으로 닿는다. 같은 클러스터에서 이미 증명돼 있다 —
+    #    **Prometheus(observability ns · 사이드카 없음)가 이 포트를 그렇게 긁고 있다.**
+    #
+    # 🔵 무엇을 주나 = Istio 가 재작성한 앱 readinessProbe 다. 실측 응답이 `/health` 와
+    #    **완전히 동일**하다: {"status":"ok","service":"account","release":"..."}
+    #    ⇒ 분석 템플릿은 URL 만 바뀌고 판정식(jsonPath·successCondition)은 그대로다.
+    #
+    # 🔴 이름을 `http-` 로 시작하지 않는다 — 메시 안에서 이 포트를 부르는 클라이언트가 없다
+    #    (부르는 쪽은 메시 밖 컨트롤러 하나뿐). Istio 관례대로 status-port 다.
+    - name: status-port
+      port: 15020
+      targetPort: 15020

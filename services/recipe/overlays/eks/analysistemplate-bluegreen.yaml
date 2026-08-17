@@ -14,7 +14,7 @@ spec:
       failureLimit: 0
       provider:
         web:
-          url: http://recipe-preview.app.svc:8001/health
+          url: http://recipe-preview.app.svc:15020/app-health/recipe/readyz
           timeoutSeconds: 5
           jsonPath: "{$.status}"
       successCondition: result == "ok"

@@ -15,3 +15,10 @@ spec:
       port: 8001
       targetPort: 8001
       appProtocol: http
+    # 승격 게이트 전용 창구 (2026-08-17) — 근거는 account 쪽 같은 파일 주석이 정본이다.
+    # 요약: app ns 는 mTLS STRICT 인데 argo-rollouts 컨트롤러엔 사이드카가 없어 8001 평문 호출이
+    # reset 된다. 15020 은 Istio 가 mTLS 에서 제외하는 pilot-agent 포트라 메시 밖에서도 닿고,
+    # 응답이 `/health` 와 동일해 판정식은 그대로 쓴다.
+    - name: status-port
+      port: 15020
+      targetPort: 15020

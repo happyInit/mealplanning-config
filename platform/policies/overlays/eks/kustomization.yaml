@@ -82,8 +82,20 @@ patches:
       #
       # 🔵 왜 EKS 오버레이인가 = BG 는 EKS 전용이다(C-27 · 온프렘은 ADR-0001 카나리이고,
       #    그 분석은 app ns 로 들어오지 않고 Prometheus 를 본다). 온프렘 형상은 안 건드린다(C-83).
-      # 🔵 포트 범위는 base ingress[0]·[1] 과 같은 8001–8011 로 맞춘다 — preview Service 는
-      #    서비스마다 포트가 다르므로(account 8004 · recipe 8002 …) 한 포트만 열면 다음 서비스에서 또 막힌다.
+      #
+      # ── 🔴 포트가 8004 가 아니라 **15020** 인 이유 (2026-08-17 2차 수습) ──────
+      # netpol 을 연 뒤 실측이 `timed out` → `Connection reset by peer` 로 바뀌었다.
+      # 패킷은 닿는데 **mTLS STRICT**(`mp-app-strict-mtls`)가 끊는 것이다 —
+      # argo-rollouts 컨트롤러에는 사이드카가 없어 평문밖에 못 보낸다.
+      # ⇒ 프로브를 Istio 가 **mTLS 에서 제외**하는 pilot-agent 포트로 옮겼다
+      #    (`:15020/app-health/<container>/readyz` · 응답은 `/health` 와 동일).
+      #    바로 위 ingress[2] 가 **Prometheus 에게 같은 포트를 이미 열어 준 것**과 같은 형태다 —
+      #    사이드카 없는 호출자가 STRICT 를 통과하는 정규 경로가 이것뿐이다.
+      #
+      # 🔴 그래서 앱 포트(8001–8011)는 **열지 않는다.** 열어 봐야 STRICT 가 끊어 쓸 수 없고,
+      #    쓰지도 못하는 구멍만 남는다. 승격 게이트에 필요한 것은 15020 하나다.
+      #    ⚠️ 앞으로 app 포트를 때리는 분석을 추가하려면 netpol 만으로 안 된다 —
+      #       컨트롤러를 메시에 넣거나 프로브를 15020 계열로 설계해야 한다.
       - op: add
         path: /spec/ingress/-
         value:
@@ -92,4 +104,4 @@ patches:
                 matchLabels:
                   kubernetes.io/metadata.name: argo-rollouts
           ports:
-            - { protocol: TCP, port: 8001, endPort: 8011 }
+            - { protocol: TCP, port: 15020 }
