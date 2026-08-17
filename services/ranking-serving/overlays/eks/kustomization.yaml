@@ -154,3 +154,35 @@ patches:
     kind: Deployment
     name: mp-ranking-serving
     version: v1
+
+# ══ Istio 지표 병합 어노테이션 (2026-08-17) ═══════════════════════════════════
+# 🔴 **이게 없으면 계측을 넣어도 Prometheus 에 아무것도 안 온다.** 실측으로 확인했다:
+#    ServiceMonitor 타깃은 `up`, `/metrics` 는 파드 안에서 200 인데
+#    병합 엔드포인트(`:15020/stats/prometheus`)는 **Envoy 지표 778줄뿐**이고
+#    `mp_ranking_*` 이 한 줄도 없었다.
+#
+# 🔴 왜 그런가 — mTLS STRICT 라 Prometheus 는 앱 포트를 직접 못 긁고(메시 밖이라 mTLS 를
+#    못 연다) **사이드카의 병합 엔드포인트**만 본다. 그런데 사이드카는 "앱 지표가 어디 있는지"를
+#    **주입 시점의 원본 `prometheus.io/*` 어노테이션**에서 읽는다(`ISTIO_PROMETHEUS_ANNOTATIONS`).
+#    ranking-serving 은 지표가 없던 서비스라 그 어노테이션이 없었고 ⇒ 병합할 대상이 없었다.
+#    실측: 이 파드의 사이드카에서 `ISTIO_PROMETHEUS_ANNOTATIONS` 가 **비어 있었다.**
+#    🔵 앱 서비스 11종은 base rollout/deployment 에 이 세 줄이 처음부터 있다(account:8004 등).
+#
+# ⚠️ **EKS 에만 건다.** 계측은 `a43b0ed`(파이프라인 #77)부터이고 온프렘은 C-83 으로 이미지가
+#    2026-08-10 에 동결돼 `/metrics` 가 없다. 온프렘에 붙이면 사이드카가 없는 엔드포인트를
+#    긁으려 해 병합이 실패한다.
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata: {name: mp-ranking-serving}
+    spec:
+      template:
+        metadata:
+          annotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/path: /metrics
+            prometheus.io/port: "8009"
+  target:
+    group: apps
+    kind: Deployment
+    name: mp-ranking-serving
