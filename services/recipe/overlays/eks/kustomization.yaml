@@ -24,6 +24,15 @@ images:
 #   CPU limits 없음(§13.7) — 검색 버스트는 요청 위로 뚫는다. 메모리는 손대지 않는다.
 #   ⚠️ 105% 가 눈에 걸리면 후속으로 AverageValue(210m) 전환이 정답이다(account 오버레이 주석 참조).
 
+# ── maxReplicas 4 → 8 (EKS 전용 · 2026-08-17) ─────────────────────────────────
+# 근거·함정은 `services/account/overlays/eks/kustomization.yaml` 의 같은 이름 절이 정본이다.
+# 요약: base 의 4 는 **고정 노드 수**에서 나온 값이고 AWS 는 Karpenter 로 노드가 온다(C-45).
+# 🔴 kubectl patch 는 ArgoCD 자동 싱크가 되돌린다(2026-08-17 시험 중 실제로 80초 만에 당했다)
+#    — 그래서 git 에 넣는다. 온프렘은 4 유지.
+#
+# recipe 를 함께 올리는 이유 = 2026-08-17 Stage1 실측에서 **정상상태 수요가 account 보다 크다**
+# (500 VU 기준 recipe 2.9 replica · account 1.6). 부하가 오르면 상한에 먼저 닿는 쪽이 recipe 다.
+
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
@@ -112,6 +121,12 @@ patches:
     - op: replace
       path: /spec/metrics/0/containerResource/target/averageUtilization
       value: 105
+    - op: test
+      path: /spec/maxReplicas
+      value: 4
+    - op: replace
+      path: /spec/maxReplicas
+      value: 8
   target:
     group: autoscaling
     kind: HorizontalPodAutoscaler

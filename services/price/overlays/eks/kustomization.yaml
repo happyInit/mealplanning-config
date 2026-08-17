@@ -4,6 +4,11 @@ namespace: app
 resources:
 - ../../base
 - serviceaccount.yaml
+# ── price HPA + 버스트 toleration (2026-08-17 · AWS Stage1 실측 후속) ──────────
+# 🔴 **EKS 전용이다.** 온프렘은 C-83 형상 동결이고 Karpenter 도 없어 늘려도 새 용량이 없다.
+#    근거·수치는 hpa.yaml 머리말(500 VU 시험의 5xx 149건이 전부 price 였다).
+#    HPA 와 toleration 은 한 세트다 — 아래 patch-burst-toleration.yaml 주석 참조.
+- hpa.yaml
 # EKS 이식 오버레이 — 이미지 레지스트리만 교체(Harbor→ECR). base 무수정.
 images:
 - name: 192.168.0.10/mealplanning/mp-price-service
@@ -11,8 +16,11 @@ images:
   newTag: "4a7fc5bc62ffc826c6adde462bee561292ee8da8"
 
 # ── 0-27 CPU 요청 재조정 (2026-08-10) ─────────────────────────────────────────
-# 300m → 150m. 🔴 base 의 300m 은 **HPA 를 켜기 위한 값이 아니다** — price 에는 HPA 가 없다
+# 300m → 150m. 🔴 base 의 300m 은 **HPA 를 켜기 위한 값이 아니었다** — 당시 price 에는 HPA 가 없었다
 # (§9.3: HPA 는 실측 근거가 있는 account·recipe 만). 2026-08-01 부하실측 정합으로 올린 값이지만
+# ⚠️ **2026-08-17 정정** — 이 오버레이에 HPA 가 생겼다(위 hpa.yaml). 그래서 이 150m 은 이제
+#    "스케줄러 예약 몫"인 동시에 **HPA 확장 기준선**이기도 하다(target 100% = 파드당 150m).
+#    이 값을 바꾸면 요청뿐 아니라 **확장 시점이 같이 움직인다** — 한쪽만 보고 고치지 말 것.
 # 그 부하는 **replica 1 짜리 서비스의 피크**였고, 요청은 피크가 아니라 **스케줄러가 예약해 두는 몫**이다.
 # CPU limits 가 없으므로(§13.7) 피크는 요청 위로 그대로 뚫는다 — 150m 로 내려도 처리량 천장은 그대로다.
 # 온프렘 base 는 300m 유지(사이트 분리 근거 = platform/es/overlays/eks 하단 주석).
@@ -138,6 +146,12 @@ patches:
     - op: add
       path: /spec/template/spec/containers/0/env/-
       value: {name: REDIS_SOCKET_TIMEOUT_S, value: "3.0"}
+  target:
+    group: apps
+    kind: Deployment
+    name: mp-price
+    version: v1
+- path: patch-burst-toleration.yaml
   target:
     group: apps
     kind: Deployment

@@ -37,6 +37,19 @@ images:
 #   ⚠️ 후속 후보 = metric 을 Utilization 대신 **AverageValue(350m)** 로 바꾸면 요청과 임계값이
 #      영구히 분리된다. 지금은 사이트 간 구조를 같게 두려고 퍼센트만 고쳤다(리뷰 가능한 최소 diff).
 
+# ── maxReplicas 4 → 8 (EKS 전용 · 2026-08-17) ─────────────────────────────────
+# base 의 max 4 는 **고정 노드 수에서 나온 값**이다(base/hpa.yaml: "노드 4대 · 커넥션 4×5=20").
+# AWS 는 그 전제가 다르다 — 부족하면 **노드가 온다**(C-45 Karpenter · NodePool `mp-burst`).
+# 진짜 천장은 replica 수가 아니라 NodePool 상한(cpu 16 = m7g.xlarge 4대)이고, 커넥션도
+# Pooler(PgBouncer transaction) 뒤라 8×5=40 이 max_client_conn 100 안쪽이다.
+#
+# 🔴 **kubectl patch 로는 못 버틴다 — 그래서 git 에 넣는다.** 2026-08-17 Stage1 시험에서
+#    스크립트가 4→8 로 올린 값을 **80초 뒤 ArgoCD 자동 싱크가 4 로 되돌렸다**(sync history #11,
+#    05:19:04Z). selfHeal 이 아니라 새 리비전 싱크였다 — 즉 시험·촬영 중에 config 레포 머지가
+#    하나만 들어와도 상한이 날아간다. 라이브 값과 git 값을 같게 두는 것이 유일한 방어다.
+#
+# ⚠️ 온프렘은 4 그대로다 — Karpenter 가 없어 늘려도 고정 5노드의 남은 CPU 를 먹을 뿐이다.
+
 # ── 0-2 ESO 백엔드 사이트 분기 (C-23) ──────────────────────────────────────────
 # onprem = `fb-kubernetes`(K8s provider, fb-secrets ns) 유지 · eks = `mp-aws-secrets`(Secrets Manager + IRSA).
 # 🔴 갈리는 것은 `secretStoreRef.name` **한 필드뿐**이다. `remoteRef` 는 한 엔트리도 안 바꾼다 —
@@ -125,6 +138,12 @@ patches:
     - op: replace
       path: /spec/metrics/0/containerResource/target/averageUtilization
       value: 100
+    - op: test
+      path: /spec/maxReplicas
+      value: 4
+    - op: replace
+      path: /spec/maxReplicas
+      value: 8
   target:
     group: autoscaling
     kind: HorizontalPodAutoscaler

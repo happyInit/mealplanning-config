@@ -1,0 +1,54 @@
+# price HPA — **EKS 전용** (2026-08-17 · Stage1 AWS 부하실측 후속)
+#
+# ── 🔴 왜 지금 켜는가 = 실측 근거가 생겼다 ────────────────────────────────────
+# base 의 HPA 정책(`services/account/base/hpa.yaml` 머리말)은 "실측 근거가 있는 서비스만"이고,
+# price 는 그 근거가 없어서 대상이 아니었다. 2026-08-17 AWS Stage1(500 VU · 9분 30초)에서
+# 근거가 나왔다 — **그 시험의 5xx 149건이 전부 price 였다.**
+#
+#     mp-price   replicas=1   cpu request=150m   CPU limit 없음   피크 사용 688m  ← 요청의 4.6배
+#     /api/prices/hotdeals   p95 309ms · **최대 31.77초**
+#     5xx 발생 시각 = 14:23(86건/분) · 14:28(102건/분)
+#
+# 같은 시험에서 HPA 가 붙은 account·recipe 는 5xx 0 이었다.
+# **스케일이 붙은 서비스는 버텼고 안 붙은 서비스가 무너졌다** — 이게 근거다.
+#
+# ── 🔴 온프렘에 안 거는 이유 (C-83) ───────────────────────────────────────────
+# 온프렘은 형상 동결이고, 무엇보다 **Karpenter 가 없다.** 온프렘에서 price 를 늘리면
+# 고정 5노드의 남은 CPU 를 먹을 뿐 새 용량이 생기지 않는다. AWS 에서만 의미가 있다.
+#
+# ── min 2 인 이유 ─────────────────────────────────────────────────────────────
+# base 는 `replicas: 1` 이라 파드 재시작·노드 교체 순간 hotdeals 가 통째로 끊긴다.
+# account HPA 머리말과 같은 논리 — 스파이크가 파드 하나를 때리는 동안 HPA 가 반응할
+# 시간(메트릭 지연 + 기동 + holdApplicationUntilProxyReady)이 없다.
+# 비용은 파드 1개(150m + 사이드카) 로, 노드 여유 안쪽이다.
+#
+# ── max 8 인 이유 ─────────────────────────────────────────────────────────────
+# account·recipe 와 같은 값으로 맞춘다(EKS 오버레이에서 4→8). 근거는 Karpenter 다 —
+# 온프렘의 max 4 는 **고정 노드 수**에서 나온 값이고, AWS 는 부족하면 노드가 온다(C-45).
+# NodePool `mp-burst` 상한(cpu 16 = m7g.xlarge 4대)이 진짜 천장이다.
+#
+# 🔴 `ContainerResource` 인 이유는 account 와 동일 — 파드에 Istio 사이드카가 함께 살고,
+#    사이드카 requests 가 작아서 파드 합산(`Resource`)으로 보면 프록시 진동이 신호를 덮는다.
+#    container 이름은 base deployment 의 `name: price` 와 정확히 일치해야 한다(불일치 = 메트릭 미수집).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mp-price
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1        # 🔴 account·recipe 와 다르다 — price 는 Rollout 이 아니라 Deployment 다
+    kind: Deployment
+    name: mp-price
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: price
+        target:
+          type: Utilization
+          # requests 150m(오버레이에서 300m→150m) 기준 · 파드당 150m 에서 확장.
+          # account·recipe 의 EKS 값과 같은 100 — 요청을 "예약 몫"으로 쓰고 그 위는 버스트로
+          # 뚫는 우리 QoS 전제(CPU limit 없음)와 맞는 값이다.
+          averageUtilization: 100

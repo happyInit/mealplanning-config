@@ -1,0 +1,16 @@
+# price: Karpenter 버스트 노드 toleration (1-43 · EKS 전용). 근거는 kustomization.yaml 머리말.
+#
+# 🔴 **HPA 와 한 세트다.** toleration 이 없으면 늘어난 파드가 `mp.io/burst=true:NoSchedule` 을
+#    못 견뎌 Karpenter 노드에 못 올라간다 ⇒ 기존 노드가 차는 순간 Pending 에 갇히고,
+#    "HPA 는 늘리는데 파드는 안 뜨는" 상태가 된다. HPA 만 켜고 이걸 빠뜨리면 그렇게 된다.
+#
+# 🔴 base 에 tolerations 가 없으므로 `add` 가 필드를 새로 만든다. base 가 나중에 tolerations 를
+#    갖게 되면 이 패치는 그것을 **통째로 덮는다** — 그때는 `/-` append 로 바꿔야 한다.
+#    (account·recipe 의 같은 파일과 동일한 규약)
+- op: add
+  path: /spec/template/spec/tolerations
+  value:
+    - key: mp.io/burst
+      operator: Equal
+      value: "true"
+      effect: NoSchedule

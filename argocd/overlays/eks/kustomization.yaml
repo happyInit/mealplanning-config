@@ -224,6 +224,21 @@ patches:
       - op: replace
         path: /spec/source/path
         value: services/price/overlays/eks
+      # ── price HPA 동반 조치 (EKS 전용 · 2026-08-17) ──────────────────────────
+      # 🔴 **이게 없으면 HPA 와 ArgoCD 가 서로 replicas 를 되쓴다.** base 는 `replicas: 1` 인데
+      #    EKS 오버레이에 HPA(min 2 · max 8)가 생겼다. HPA 가 늘리면 앱은 OutOfSync 가 되고,
+      #    싱크가 돌 때마다 1 로 되돌아간다 — 부하 중에 파드가 줄어드는 최악의 형태다.
+      #    account·recipe 는 base Application 에 같은 예외가 이미 있다(Rollout `/spec/replicas`).
+      #    price 만 없어서 여기서 EKS 에만 더한다 — 온프렘 price 에는 HPA 가 없으므로 불필요하다.
+      # 🔴 `add` 인 이유 = base price.yaml 에 `ignoreDifferences` 필드 자체가 없다.
+      #    base 가 나중에 그 필드를 갖게 되면 이 패치가 **통째로 덮는다**(그때는 `/-` append 로).
+      - op: add
+        path: /spec/ignoreDifferences
+        value:
+          - group: apps
+            kind: Deployment
+            jsonPointers:
+              - /spec/replicas
   - target: {group: argoproj.io, kind: Application, name: mp-ranking-serving}
     patch: |-
       - op: replace
