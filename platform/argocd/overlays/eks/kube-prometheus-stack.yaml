@@ -244,21 +244,10 @@ spec:
                 - matchers:
                     - alertname = "InfoInhibitor"
                   receiver: "null"
-                # Operations 대시보드의 IncidentCorrelator/이상징후 연계가 이 경로로 실 데이터를
-                # 받는다. continue:true라 아래 Slack 라우팅(기존 동작)은 그대로 유지된다 —
-                # 모든 alert가 operations-webhook에도 "추가로" 전달될 뿐, 대체하지 않는다.
-                # 수신처 SG는 이미 이 용도로 열려 있었다(sg-06b5470daa77b9cab, "EKS Alertmanager
-                # to operations-api webhook") — Operations 쪽 웹훅 수신 코드도 이미 있었고
-                # (POST /internal/alerts/alertmanager), 이 receiver/route만 빠져 있었다.
-                - receiver: operations-webhook
-                  continue: true
                 - matchers:
                     - severity = "critical"
                   receiver: slack-critical
                   repeat_interval: 1h
-                # Root receiver로 되돌아가지 않으므로, operations-webhook 이후의
-                # warning/info Alert를 #monitoring으로 전달하는 명시적 fallback이다.
-                - receiver: slack-default
             receivers:
               - name: "null"
               - name: operations-webhook
@@ -266,6 +255,9 @@ spec:
                   - url: http://10.10.0.72:8011/internal/alerts/alertmanager
                     send_resolved: true
               - name: slack-default
+                webhook_configs:
+                  - url: http://10.10.0.72:8011/internal/alerts/alertmanager
+                    send_resolved: true
                 slack_configs:
                   # 🔴 URL 본문이 아니라 **파일 경로**다 — 웹훅이 git 에 안 들어오는 이유가 이것이다.
                   #    경로 = /etc/alertmanager/secrets/<위 secrets[] 이름>/<키>
@@ -294,6 +286,9 @@ spec:
                       *현재 상태:*
                       • {{ .ValueString }}{{ end }}
               - name: slack-critical
+                webhook_configs:
+                  - url: http://10.10.0.72:8011/internal/alerts/alertmanager
+                    send_resolved: true
                 slack_configs:
                   - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_critical
                     channel: "#alerts-critical"
