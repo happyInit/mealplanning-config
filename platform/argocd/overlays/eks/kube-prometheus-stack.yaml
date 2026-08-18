@@ -241,6 +241,9 @@ spec:
                 - matchers:
                     - alertname = "Watchdog"
                   receiver: "null"
+                - matchers:
+                    - alertname = "InfoInhibitor"
+                  receiver: "null"
                 # Operations 대시보드의 IncidentCorrelator/이상징후 연계가 이 경로로 실 데이터를
                 # 받는다. continue:true라 아래 Slack 라우팅(기존 동작)은 그대로 유지된다 —
                 # 모든 alert가 operations-webhook에도 "추가로" 전달될 뿐, 대체하지 않는다.
@@ -250,12 +253,12 @@ spec:
                 - receiver: operations-webhook
                   continue: true
                 - matchers:
-                    - alertname = "InfoInhibitor"
-                  receiver: "null"
-                - matchers:
                     - severity = "critical"
                   receiver: slack-critical
                   repeat_interval: 1h
+                # Root receiver로 되돌아가지 않으므로, operations-webhook 이후의
+                # warning/info Alert를 #monitoring으로 전달하는 명시적 fallback이다.
+                - receiver: slack-default
             receivers:
               - name: "null"
               - name: operations-webhook
