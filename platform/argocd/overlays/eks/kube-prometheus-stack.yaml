@@ -280,7 +280,16 @@ spec:
                     # ⚠️ 온프렘 쪽은 건드리지 않았다(C-83 동결). 그쪽 제목은 접두사 없이 남으므로
                     #    **표기 없음 = 온프렘**이 규약이다(쿼리 규약 `site!="aws"` 와 같은 방향).
                     title: "{{ if eq .CommonLabels.severity \"critical\" }}🔴 [P1]{{ else if eq .CommonLabels.severity \"warning\" }}🟠 [P2]{{ else }}🟡 [P3]{{ end }}[{{ .Status | toUpper }}][{{ if .CommonLabels.site }}{{ .CommonLabels.site | toUpper }}{{ else }}ONPREM{{ end }}] {{ .CommonLabels.alertname }}"
-                    text: "{{ range .Alerts }}*대상:* {{ or .Labels.pod .Labels.instance .Labels.job .Labels.service \"미확인\" }}\\n*환경:* {{ or .Labels.namespace .Labels.cluster \"production\" }}\\n*발생:* {{ .StartsAt.Format \"2006-01-02 15:04 MST\" }} · *지속:* {{ .StartsAt | since }}\\n\\n*영향:*\\n• {{ .Annotations.summary }}\\n\\n*현재 상태:*\\n• {{ .ValueString }}{{ end }}"
+                    text: |-
+                      {{ range .Alerts }}*대상:* {{ or .Labels.pod .Labels.instance .Labels.job .Labels.service "미확인" }}
+                      *환경:* {{ or .Labels.namespace .Labels.cluster "production" }}
+                      *발생:* {{ .StartsAt.Format "2006-01-02 15:04 MST" }} · *지속:* {{ .StartsAt | since }}
+
+                      *영향:*
+                      • {{ .Annotations.summary }}
+
+                      *현재 상태:*
+                      • {{ .ValueString }}{{ end }}
               - name: slack-critical
                 slack_configs:
                   - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_critical
@@ -288,7 +297,16 @@ spec:
                     send_resolved: true
                     # 사이트 표기 이유·함정은 바로 위 slack-default 주석 참조.
                     title: "{{ if eq .CommonLabels.severity \"critical\" }}🔴 [P1]{{ else if eq .CommonLabels.severity \"warning\" }}🟠 [P2]{{ else }}🟡 [P3]{{ end }}[{{ .Status | toUpper }}][{{ if .CommonLabels.site }}{{ .CommonLabels.site | toUpper }}{{ else }}ONPREM{{ end }}] {{ .CommonLabels.alertname }}"
-                    text: "{{ range .Alerts }}*대상:* {{ or .Labels.pod .Labels.instance .Labels.job .Labels.service \"미확인\" }}\\n*환경:* {{ or .Labels.namespace .Labels.cluster \"production\" }}\\n*발생:* {{ .StartsAt.Format \"2006-01-02 15:04 MST\" }} · *지속:* {{ .StartsAt | since }}\\n\\n*영향:*\\n• {{ .Annotations.summary }}\\n\\n*현재 상태:*\\n• {{ .ValueString }}{{ end }}"
+                    text: |-
+                      {{ range .Alerts }}*대상:* {{ or .Labels.pod .Labels.instance .Labels.job .Labels.service "미확인" }}
+                      *환경:* {{ or .Labels.namespace .Labels.cluster "production" }}
+                      *발생:* {{ .StartsAt.Format "2006-01-02 15:04 MST" }} · *지속:* {{ .StartsAt | since }}
+
+                      *영향:*
+                      • {{ .Annotations.summary }}
+
+                      *현재 상태:*
+                      • {{ .ValueString }}{{ end }}
 
         # ── Grafana ───────────────────────────────────────────────────────────
         grafana:
