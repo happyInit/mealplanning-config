@@ -274,17 +274,18 @@ spec:
                     #      그래서 `{{ if }}` 로 쓴다.
                     # ⚠️ 온프렘 쪽은 건드리지 않았다(C-83 동결). 그쪽 제목은 접두사 없이 남으므로
                     #    **표기 없음 = 온프렘**이 규약이다(쿼리 규약 `site!="aws"` 와 같은 방향).
-                    title: "{{ if eq .CommonLabels.severity \"critical\" }}🔴 [P1]{{ else if eq .CommonLabels.severity \"warning\" }}🟠 [P2]{{ else }}🟡 [P3]{{ end }}[{{ .Status | toUpper }}][{{ if .CommonLabels.site }}{{ .CommonLabels.site | toUpper }}{{ else }}ONPREM{{ end }}] {{ .CommonLabels.alertname }}"
+                    title: "{{ if eq .CommonLabels.severity \"critical\" }}🔴 P1{{ else if eq .CommonLabels.severity \"warning\" }}🟠 P2{{ else }}🟡 P3{{ end }} | {{ .Status | toUpper }} | {{ if .CommonLabels.site }}{{ .CommonLabels.site | toUpper }}{{ else }}ONPREM{{ end }} | {{ .CommonLabels.alertname }}"
                     text: |-
-                      {{ range .Alerts }}*대상:* {{ or .Labels.pod .Labels.instance .Labels.job .Labels.service "미확인" }}
-                      *환경:* {{ or .Labels.namespace .Labels.cluster "production" }}
+                      {{ range .Alerts }}*대상:* {{ or .Labels.pod .Labels.instance .Labels.node .Labels.job .Labels.service .Labels.cluster "미확인" }}
+                      *환경:* {{ if .Labels.namespace }}namespace={{ .Labels.namespace }}{{ end }}{{ if and .Labels.namespace .Labels.cluster }} · {{ end }}{{ if .Labels.cluster }}cluster={{ .Labels.cluster }}{{ end }}{{ if and (not .Labels.namespace) (not .Labels.cluster) }}production{{ end }}
                       *발생:* {{ .StartsAt.Format "2006-01-02 15:04 MST" }} · *지속:* {{ .StartsAt | since }}
 
                       *영향:*
                       • {{ .Annotations.summary }}
 
+                      {{ if .ValueString }}
                       *현재 상태:*
-                      • {{ .ValueString }}{{ end }}
+                      • {{ .ValueString }}{{ end }}{{ end }}
               - name: slack-critical
                 webhook_configs:
                   - url: http://10.10.0.72:8011/internal/alerts/alertmanager
@@ -294,17 +295,18 @@ spec:
                     channel: "#alerts-critical"
                     send_resolved: true
                     # 사이트 표기 이유·함정은 바로 위 slack-default 주석 참조.
-                    title: "{{ if eq .CommonLabels.severity \"critical\" }}🔴 [P1]{{ else if eq .CommonLabels.severity \"warning\" }}🟠 [P2]{{ else }}🟡 [P3]{{ end }}[{{ .Status | toUpper }}][{{ if .CommonLabels.site }}{{ .CommonLabels.site | toUpper }}{{ else }}ONPREM{{ end }}] {{ .CommonLabels.alertname }}"
+                    title: "{{ if eq .CommonLabels.severity \"critical\" }}🔴 P1{{ else if eq .CommonLabels.severity \"warning\" }}🟠 P2{{ else }}🟡 P3{{ end }} | {{ .Status | toUpper }} | {{ if .CommonLabels.site }}{{ .CommonLabels.site | toUpper }}{{ else }}ONPREM{{ end }} | {{ .CommonLabels.alertname }}"
                     text: |-
-                      {{ range .Alerts }}*대상:* {{ or .Labels.pod .Labels.instance .Labels.job .Labels.service "미확인" }}
-                      *환경:* {{ or .Labels.namespace .Labels.cluster "production" }}
+                      {{ range .Alerts }}*대상:* {{ or .Labels.pod .Labels.instance .Labels.node .Labels.job .Labels.service .Labels.cluster "미확인" }}
+                      *환경:* {{ if .Labels.namespace }}namespace={{ .Labels.namespace }}{{ end }}{{ if and .Labels.namespace .Labels.cluster }} · {{ end }}{{ if .Labels.cluster }}cluster={{ .Labels.cluster }}{{ end }}{{ if and (not .Labels.namespace) (not .Labels.cluster) }}production{{ end }}
                       *발생:* {{ .StartsAt.Format "2006-01-02 15:04 MST" }} · *지속:* {{ .StartsAt | since }}
 
                       *영향:*
                       • {{ .Annotations.summary }}
 
+                      {{ if .ValueString }}
                       *현재 상태:*
-                      • {{ .ValueString }}{{ end }}
+                      • {{ .ValueString }}{{ end }}{{ end }}
 
         # ── Grafana ───────────────────────────────────────────────────────────
         grafana:
