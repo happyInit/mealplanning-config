@@ -8,7 +8,7 @@ resources:
 images:
 - name: 192.168.0.10/mealplanning/mp-frontend
   newName: 689192361171.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-frontend
-  newTag: "d7f44a485478273893a24a1d071e088f109cf69d"
+  newTag: "42df1fa3921ebd9963e039bff4ffd4cd0e4dacc2"
 
 # ── 0-6 hard TSC 완화 (2026-08-10) ────────────────────────────────────────────
 # hostname 축만 ScheduleAnyway · zone 축 DoNotSchedule 유지. 근거 전문 =
